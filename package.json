@@ -2,9 +2,7 @@
   "name": "shop-task-tracker",
   "private": true,
   "version": "0.1.0",
-  "engines": {
-    "node": "20.x"
-  },
+  "engines": { "node": "20.x" },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,10 +10,10 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.47.1",
     "next": "14.2.5",
     "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "@supabase/supabase-js": "^2.47.1"
+    "react-dom": "18.2.0"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",
