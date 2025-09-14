@@ -6,6 +6,8 @@ export default function App({ Component, pageProps }) {
     <>
       <Head>
         <title>Byford Pharmacy Chalkboard</title>
+    <link rel="icon" href="/favicon.png" />
+
       </Head>
       <Component {...pageProps} />
     </>
