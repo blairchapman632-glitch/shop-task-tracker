@@ -1,63 +1,55 @@
-export default function Home() {
-  const morningTasks = [
-    "Fridge Temp.",
-    "Sweep/vacuum floors",
-    "Clean benches",
-    "Clean screens",
-    "Clean Green Room",
-    "Fill Stock OTC",
-    "Fill Shop",
-    "Floor mopped",
-  ];
+import { useEffect, useState } from "react"
+import { supabase } from "../lib/supabaseClient"
 
-  const afternoonTasks = [
-    "Dry Clean",
-    "Out of stock tags",
-    "Pull stock forward",
-    "Dishes",
-    "Bins emptied",
-    "Floor swept",
-    "File scripts",
-    "Signs cleaned",
-    "Clean toilet room",
-    "Water plants",
-  ];
+export default function Home() {
+  const [morning, setMorning] = useState([])
+  const [afternoon, setAfternoon] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    const loadTasks = async () => {
+      setLoading(true)
+      setError(null)
+
+      const { data, error } = await supabase
+        .from("tasks")
+        .select("id,title,period,active")
+        .eq("active", true)
+
+      if (error) {
+        setError(error.message)
+      } else {
+        setMorning(data.filter(t => t.period === "morning"))
+        setAfternoon(data.filter(t => t.period === "afternoon"))
+      }
+
+      setLoading(false)
+    }
+
+    loadTasks()
+  }, [])
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <h1 className="text-3xl font-bold text-blue-600 mb-6">
-        Byford Pharmacy Chalkboard
-      </h1>
+    <div style={{ padding: 20 }}>
+      <h1>Byford Pharmacy Chalkboard</h1>
+      <p>Live tasks from Supabase</p>
 
-      <div className="grid grid-cols-2 gap-6">
-        <div>
-          <h2 className="text-xl font-semibold mb-3">Morning</h2>
-          <ul className="space-y-2">
-            {morningTasks.map((task, idx) => (
-              <li
-                key={idx}
-                className="p-3 bg-white rounded shadow hover:bg-blue-50"
-              >
-                {task}
-              </li>
-            ))}
-          </ul>
-        </div>
+      {loading && <p>Loading tasks…</p>}
+      {error && <p style={{ color: "red" }}>Error: {error}</p>}
 
-        <div>
-          <h2 className="text-xl font-semibold mb-3">Afternoon</h2>
-          <ul className="space-y-2">
-            {afternoonTasks.map((task, idx) => (
-              <li
-                key={idx}
-                className="p-3 bg-white rounded shadow hover:bg-blue-50"
-              >
-                {task}
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </div>
-  );
-}
+      {!loading && !error && (
+        <div style={{ display: "flex", gap: 40 }}>
+          <div>
+            <h2>Morning</h2>
+            <ul>
+              {morning.map(task => (
+                <li key={task.id}>{task.title}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h2>Afternoon</h2>
+            <ul>
+              {afternoon.
