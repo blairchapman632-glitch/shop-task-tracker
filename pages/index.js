@@ -1,34 +1,34 @@
-import { useEffect, useState } from "react"
-import { supabase } from "../lib/supabaseClient"
+import { useEffect, useState } from "react";
+import { supabase } from "../lib/supabaseClient";
 
 export default function Home() {
-  const [morning, setMorning] = useState([])
-  const [afternoon, setAfternoon] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [morning, setMorning] = useState([]);
+  const [afternoon, setAfternoon] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
 
   useEffect(() => {
-    const loadTasks = async () => {
-      setLoading(true)
-      setError(null)
+    const load = async () => {
+      setLoading(true);
+      setErr(null);
 
       const { data, error } = await supabase
         .from("tasks")
         .select("id,title,period,active")
-        .eq("active", true)
+        .eq("active", true);
 
       if (error) {
-        setError(error.message)
+        setErr(error.message);
       } else {
-        setMorning(data.filter(t => t.period === "morning"))
-        setAfternoon(data.filter(t => t.period === "afternoon"))
+        setMorning((data || []).filter(t => t.period === "morning"));
+        setAfternoon((data || []).filter(t => t.period === "afternoon"));
       }
 
-      setLoading(false)
-    }
+      setLoading(false);
+    };
 
-    loadTasks()
-  }, [])
+    load();
+  }, []);
 
   return (
     <div style={{ padding: 20 }}>
@@ -36,20 +36,37 @@ export default function Home() {
       <p>Live tasks from Supabase</p>
 
       {loading && <p>Loading tasks…</p>}
-      {error && <p style={{ color: "red" }}>Error: {error}</p>}
+      {err && <p style={{ color: "red" }}>Error: {err}</p>}
 
-      {!loading && !error && (
-        <div style={{ display: "flex", gap: 40 }}>
+      {!loading && !err && (
+        <div style={{ display: "flex", gap: 40, alignItems: "flex-start" }}>
           <div>
             <h2>Morning</h2>
-            <ul>
-              {morning.map(task => (
-                <li key={task.id}>{task.title}</li>
-              ))}
-            </ul>
+            {morning.length === 0 ? (
+              <p style={{ color: "#666" }}>No morning tasks yet.</p>
+            ) : (
+              <ul>
+                {morning.map(task => (
+                  <li key={task.id}>{task.title}</li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div>
             <h2>Afternoon</h2>
-            <ul>
-              {afternoon.
+            {afternoon.length === 0 ? (
+              <p style={{ color: "#666" }}>No afternoon tasks yet.</p>
+            ) : (
+              <ul>
+                {afternoon.map(task => (
+                  <li key={task.id}>{task.title}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
