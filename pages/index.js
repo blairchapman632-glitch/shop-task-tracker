@@ -26,7 +26,9 @@ export default function HomePage() {
       const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
         supabase
   .from("tasks")
-  .select("*"),
+  .select("id,title,active")
+  .order("title", { ascending: true }),
+
 
         supabase
           .from("staff")
@@ -37,7 +39,8 @@ export default function HomePage() {
       if (te) console.error("Tasks load error:", te.message);
       if (se) console.error("Staff load error:", se.message);
 
-      setTasks(t ?? []);
+      setTasks((t ?? []).filter(x => x.active !== false));
+
 
       setStaff((s ?? []).filter((x) => x.active !== false));
       setLoading(false);
