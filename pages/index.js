@@ -95,8 +95,13 @@ export default function HomePage() {
 
       burstConfetti();
     } catch (err) {
-      alert("Error: " + (err?.message ?? String(err)));
-    }
+  if (err?.message?.includes("completions_one_per_day")) {
+    alert("Already recorded today.");
+  } else {
+    alert("Error: " + (err?.message ?? String(err)));
+  }
+}
+
   };
 
   return (
