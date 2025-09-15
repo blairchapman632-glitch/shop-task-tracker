@@ -25,11 +25,9 @@ export default function HomePage() {
 
       const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
         supabase
-          .from("tasks")
-          .select("id,title,period,due_time,active")
-          .order("period", { ascending: true })
-          .order("due_time", { ascending: true })
-          .order("title", { ascending: true }),
+  .from("tasks")
+  .select("*"),
+
         supabase
           .from("staff")
           .select("id,name,photo_url,active")
@@ -39,7 +37,8 @@ export default function HomePage() {
       if (te) console.error("Tasks load error:", te.message);
       if (se) console.error("Staff load error:", se.message);
 
-      setTasks((t ?? []).filter((x) => x.active !== false));
+      setTasks(t ?? []);
+
       setStaff((s ?? []).filter((x) => x.active !== false));
       setLoading(false);
     };
