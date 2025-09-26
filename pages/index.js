@@ -45,28 +45,30 @@ export default function HomePage() {
     const load = async () => {
       setLoading(true);
 
-      const [
+  const [
   { data: t, error: te },
   { data: s, error: se },
   { data: c, error: ce }
 ] = await Promise.all([
+  // Get tasks (use * so it won't break if columns differ)
   supabase
     .from("tasks")
-    .select("id,title,active,due_time,period")
-    .order("period", { ascending: true })
-    .order("due_time", { ascending: true })
+    .select("*")
     .order("title", { ascending: true }),
 
+  // Get staff
   supabase
     .from("staff")
-    .select("id,name,photo_url,active")
+    .select("*")
     .order("name", { ascending: true }),
 
+  // Get today's completions
   supabase
     .from("completions")
-    .select("task_id")
-    .gte("created_at", new Date().toISOString().slice(0, 10)) // today only
+    .select("task_id, created_at")
+    .gte("created_at", new Date().toISOString().slice(0, 10))
 ]);
+
 
 
       if (te) console.error("Tasks load error:", te.message);
