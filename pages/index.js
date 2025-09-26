@@ -23,27 +23,41 @@ export default function HomePage() {
     const load = async () => {
       setLoading(true);
 
-      const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
-        supabase
-  .from("tasks")
-  .select("id,title,active")
-  .order("title", { ascending: true }),
+      const [
+  { data: t, error: te },
+  { data: s, error: se },
+  { data: c, error: ce }
+] = await Promise.all([
+  supabase
+    .from("tasks")
+    .select("id,title,active,due_time,period")
+    .order("period", { ascending: true })
+    .order("due_time", { ascending: true })
+    .order("title", { ascending: true }),
 
+  supabase
+    .from("staff")
+    .select("id,name,photo_url,active")
+    .order("name", { ascending: true }),
 
-        supabase
-          .from("staff")
-          .select("id,name,photo_url,active")
-          .order("name", { ascending: true }),
-      ]);
+  supabase
+    .from("completions")
+    .select("task_id")
+    .gte("created_at", new Date().toISOString().slice(0, 10)) // today only
+]);
+
 
       if (te) console.error("Tasks load error:", te.message);
       if (se) console.error("Staff load error:", se.message);
 
       setTasks((t ?? []).filter(x => x.active !== false));
+setStaff((s ?? []).filter((x) => x.active !== false));
 
+if (ce) console.error("Completions load error:", ce?.message);
+setCompletedTaskIds(new Set((c ?? []).map((x) => x.task_id)));
 
-      setStaff((s ?? []).filter((x) => x.active !== false));
-      setLoading(false);
+setLoading(false);
+
     };
 
     load();
