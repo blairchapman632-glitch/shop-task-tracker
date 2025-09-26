@@ -1,6 +1,28 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { recordCompletion } from "../lib/recordCompletion"; // JS helper you just made
+// Helper: decide if a task is overdue (uses local device time; your kiosk runs in WA)
+function isTaskOverdue(task) {
+  if (!task || !task.due_time) return false;
+
+  // Build today's due time (HH:MM from task.due_time)
+  const [hh, mm] = String(task.due_time).split(":").map(Number);
+  const now = new Date();
+  const due = new Date();
+  due.setHours(hh || 0, (mm || 0), 0, 0);
+
+  // Base rule: overdue if current time is past the task's due_time
+  let overdue = now > due;
+
+  // Extra rule for morning tasks: if it's past 12:00 and not done, consider overdue
+  if (task.period === "morning") {
+    const midday = new Date();
+    midday.setHours(12, 0, 0, 0);
+    overdue = overdue || now >= midday;
+  }
+
+  return overdue;
+}
 
 // --- Supabase browser client ---
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -164,32 +186,47 @@ setLoading(false);
                 const isDone = completedTaskIds.has(task.id);
                 return (
                   <button
-                    key={task.id}
-                    className={`w-full text-left p-3 rounded-xl border hover:shadow-sm active:scale-[0.99] ${
-                      isDone ? "bg-green-50 border-green-300" : ""
-                    }`}
-                    onClick={() => handleTaskTap(task)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm ${
-                            isDone ? "bg-green-500 text-white border-green-500" : ""
-                          }`}
-                          title={isDone ? "Completed" : "Tap to complete"}
-                        >
-                          {isDone ? "✓" : "•"}
-                        </span>
-                        <div>
-                          <div className="font-medium">{task.title}</div>
-                          {task.due_time ? (
-                            <div className="text-xs text-gray-500">Due: {task.due_time}</div>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="text-xs text-gray-500">{task.period ?? ""}</div>
-                    </div>
-                  </button>
+  key={task.id}
+  onClick={() => handleTaskTap(task)}
+  className={`w-full text-left p-3 rounded-xl border hover:shadow-sm active:scale-[0.99] ${
+    completedTaskIds.has(task.id)
+      ? "bg-green-50 border-green-300"
+      : isTaskOverdue(task)
+      ? "bg-red-50 border-red-300"
+      : ""
+  }`}
+>
+  <div className="flex items-center justify-between">
+    <div className="flex items-center gap-3">
+      <span
+        className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm ${
+          completedTaskIds.has(task.id)
+            ? "bg-green-500 text-white border-green-500"
+            : isTaskOverdue(task)
+            ? "bg-red-500 text-white border-red-500"
+            : ""
+        }`}
+        title={
+          completedTaskIds.has(task.id)
+            ? "Completed"
+            : isTaskOverdue(task)
+            ? "Overdue"
+            : "Tap to complete"
+        }
+      >
+        {completedTaskIds.has(task.id) ? "✓" : isTaskOverdue(task) ? "⏰" : "•"}
+      </span>
+      <div>
+        <div className="font-medium">{task.title}</div>
+        {task.due_time ? (
+          <div className="text-xs text-gray-500">Due: {task.due_time}</div>
+        ) : null}
+      </div>
+    </div>
+    <div className="text-xs text-gray-500">{task.period ?? ""}</div>
+  </div>
+</button>
+
                 );
               })}
             </div>
