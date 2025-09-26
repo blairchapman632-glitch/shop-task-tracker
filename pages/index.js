@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { recordCompletion } from "../lib/recordCompletion"; // JS helper you just made
 // Helper: decide if a task is overdue (uses local device time; your kiosk runs in WA)
-function isTaskOverdue(task) {
+function isTaskOverdue(task) { 
   if (!task || !task.due_time) return false;
 
   // Build today's due time (HH:MM from task.due_time)
