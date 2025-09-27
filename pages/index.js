@@ -1,11 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { recordCompletion } from "../lib/recordCompletion"; // JS helper
+import supabase from "../lib/supabaseClient";
 
-// --- Supabase browser client ---
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default function HomePage() {
   const [tasks, setTasks] = useState([]);
