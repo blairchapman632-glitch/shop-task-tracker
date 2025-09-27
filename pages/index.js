@@ -1,12 +1,12 @@
 // pages/index.js — Today view (date header + compact, time-ordered tasks)
-// Uses Supabase client at ../lib/supabaseClient
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "../lib/supabaseClient";
+// Uses named export { supabase } from ../lib/supabaseClient
+
+import { useEffect, useState } from "react";
+import { supabase } from "../lib/supabaseClient";
 
 const TZ = "Australia/Perth";
 
 function getPerthNow() {
-  // Create a Date that reflects Perth local time
   return new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
 }
 
@@ -18,19 +18,17 @@ function formatTodayPerth() {
     month: "short",
     year: "numeric",
   });
-  const ymd = perthNow.toLocaleDateString("en-CA", { timeZone: TZ }); // "YYYY-MM-DD"
+  const ymd = perthNow.toLocaleDateString("en-CA", { timeZone: TZ }); // YYYY-MM-DD
   const dow = perthNow.getDay(); // 0=Sun..6=Sat
   return { label, ymd, dow };
 }
 
 export default function HomePage() {
-  const supabase = useMemo(() => createClient(), []);
   const [{ label: todayLabel, ymd: todayYMD, dow }, setToday] = useState(formatTodayPerth());
   const [loading, setLoading] = useState(true);
   const [tasks, setTasks] = useState([]);
   const [error, setError] = useState(null);
 
-  // Keep the date header fresh if the iPad stays open
   useEffect(() => {
     const t = setInterval(() => setToday(formatTodayPerth()), 5 * 60 * 1000);
     return () => clearInterval(t);
@@ -62,20 +60,18 @@ export default function HomePage() {
           return t.days_of_week.includes(dow);
         }
         if (t.recurrence === "dated") {
-          return t.due_date === todayYMD; // exact match "YYYY-MM-DD"
+          return t.due_date === todayYMD;
         }
         return false;
       });
 
-      // Sort by due_time "HH:MM:SS"
       filtered.sort((a, b) => String(a.due_time).localeCompare(String(b.due_time)));
-
       setTasks(filtered);
       setLoading(false);
     })();
 
     return () => { cancelled = true; };
-  }, [supabase, todayYMD, dow]);
+  }, [todayYMD, dow]);
 
   return (
     <main className="min-h-screen w-full bg-white text-slate-900">
@@ -132,4 +128,9 @@ export default function HomePage() {
       </div>
     </main>
   );
+}
+
+// Prevents Vercel from trying to prerender this at build time
+export async function getServerSideProps() {
+  return { props: {} };
 }
