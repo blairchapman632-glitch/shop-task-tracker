@@ -50,19 +50,47 @@ export default function HomePage() {
       setTasks(activeTasks);
       setStaff((s ?? []).filter((x) => x.active !== false));
 
-      // Load today's completions so ticks appear on refresh
-      const { startISO, endISO } = getTodayBoundsISO();
-      const { data: comps, error: ce } = await supabase
-        .from("completions")
-        .select("task_id")
-        .gte("completed_at", startISO)
-        .lt("completed_at", endISO);
+      // Load today's completions so ticks + feed appear on refresh
+const { startISO, endISO } = getTodayBoundsISO();
+const { data: comps, error: ce } = await supabase
+  .from("completions")
+  .select("task_id, staff_id, completed_at")
+  .gte("completed_at", startISO)
+  .lt("completed_at", endISO)
+  .order("completed_at", { ascending: false });
 
-      if (ce) {
-        console.error("Completions load error:", ce.message);
-      } else {
-        const doneIds = new Set((comps ?? []).map((c) => c.task_id));
-        setCompletedTaskIds(doneIds);
+if (ce) {
+  console.error("Completions load error:", ce.message);
+} else {
+  // 1) Ticks
+  const doneIds = new Set((comps ?? []).map((c) => c.task_id));
+  setCompletedTaskIds(doneIds);
+
+  // 2) Activity feed (last 25)
+  const activeTasksMap = Object.fromEntries(
+    (activeTasks ?? []).map((t) => [t.id, t])
+  );
+  const activeStaff = (s ?? []).filter((x) => x.active !== false);
+  const activeStaffMap = Object.fromEntries(activeStaff.map((st) => [st.id, st]));
+
+  const feedItems = (comps ?? []).slice(0, 25).map((c) => {
+    const taskTitle = activeTasksMap[c.task_id]?.title ?? `Task #${c.task_id}`;
+    const staffName = activeStaffMap[c.staff_id]?.name ?? "Someone";
+    const timeStr = new Date(c.completed_at).toLocaleTimeString("en-AU", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return {
+      id: `c_${c.task_id}_${c.staff_id}_${c.completed_at}`,
+      taskTitle,
+      staffName,
+      timeStr,
+    };
+  });
+
+  setFeed(feedItems);
+}
+
       }
 
       setLoading(false);
