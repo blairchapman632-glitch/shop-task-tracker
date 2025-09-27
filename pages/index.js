@@ -1,226 +1,270 @@
-// pages/index.js — Today (tasks) + Staff grid (photos only, no actions yet)
-// Uses named export { supabase } from ../lib/supabaseClient
+import React, { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+import { recordCompletion } from "../lib/recordCompletion"; // JS helper
 
-import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabaseClient";
-
-const TZ = "Australia/Perth";
-
-function getPerthNow() {
-  return new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
-}
-
-function formatTodayPerth() {
-  const perthNow = getPerthNow();
-  const label = perthNow.toLocaleDateString("en-AU", {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-  const ymd = perthNow.toLocaleDateString("en-CA", { timeZone: TZ }); // YYYY-MM-DD
-  const dow = perthNow.getDay(); // 0=Sun..6=Sat
-  return { label, ymd, dow };
-}
-
-function initials(name) {
-  if (!name) return "";
-  const parts = String(name).trim().split(/\s+/);
-  const first = parts[0]?.[0] || "";
-  const second = parts.length > 1 ? parts[parts.length - 1][0] : "";
-  return (first + second).toUpperCase();
-}
+// --- Supabase browser client ---
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default function HomePage() {
-  const [{ label: todayLabel, ymd: todayYMD, dow }, setToday] = useState(formatTodayPerth());
-
-  const [tasksLoading, setTasksLoading] = useState(true);
   const [tasks, setTasks] = useState([]);
-  const [tasksError, setTasksError] = useState(null);
-
-  const [staffLoading, setStaffLoading] = useState(true);
   const [staff, setStaff] = useState([]);
-  const [staffError, setStaffError] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Keep the date header fresh if the iPad stays open
+  // Selection + UX
+  const [selectedStaffId, setSelectedStaffId] = useState(null);
+  const [completedTaskIds, setCompletedTaskIds] = useState(new Set()); // ticks persisted (loaded from DB)
+  const [feed, setFeed] = useState([]); // [{id, taskTitle, staffName, timeStr}]
+  const [showConfetti, setShowConfetti] = useState(false);
+
+  // Helper: get local (Perth) start/end of "today" to query completions
+  const getTodayBoundsISO = () => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    return { startISO: start.toISOString(), endISO: end.toISOString() };
+    // This uses the device's local time (you run the kiosk in Perth).
+  };
+
+  // Load tasks + staff + today's completions on mount
   useEffect(() => {
-    const t = setInterval(() => setToday(formatTodayPerth()), 5 * 60 * 1000);
-    return () => clearInterval(t);
+    const load = async () => {
+      setLoading(true);
+      const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
+        supabase
+          .from("tasks")
+          .select("id,title,active,period,due_time")
+          .order("title", { ascending: true }),
+        supabase
+          .from("staff")
+          .select("id,name,photo_url,active")
+          .order("name", { ascending: true }),
+      ]);
+
+      if (te) console.error("Tasks load error:", te.message);
+      if (se) console.error("Staff load error:", se.message);
+
+      const activeTasks = (t ?? []).filter((x) => x.active !== false);
+      setTasks(activeTasks);
+      setStaff((s ?? []).filter((x) => x.active !== false));
+
+      // Load today's completions so ticks appear on refresh
+      const { startISO, endISO } = getTodayBoundsISO();
+      const { data: comps, error: ce } = await supabase
+        .from("completions")
+        .select("task_id")
+        .gte("completed_at", startISO)
+        .lt("completed_at", endISO);
+
+      if (ce) {
+        console.error("Completions load error:", ce.message);
+      } else {
+        const doneIds = new Set((comps ?? []).map((c) => c.task_id));
+        setCompletedTaskIds(doneIds);
+      }
+
+      setLoading(false);
+    };
+
+    load();
   }, []);
 
-  // Load tasks for "today"
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setTasksLoading(true);
-      setTasksError(null);
+  const selectedStaff = staff.find((s) => s.id === selectedStaffId) || null;
+  const selectedStaffName = selectedStaff ? selectedStaff.name : null;
 
-      const { data, error } = await supabase
-        .from("tasks")
-        .select("id,title,recurrence,days_of_week,due_time,due_date,points,active")
-        .eq("active", true);
+  const progress = useMemo(() => {
+    const total = tasks.length;
+    const done = completedTaskIds.size;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    return { done, total, pct };
+  }, [tasks, completedTaskIds]);
 
-      if (cancelled) return;
+  // Tiny confetti burst
+  const burstConfetti = () => {
+    setShowConfetti(true);
+    setTimeout(() => setShowConfetti(false), 900);
+  };
 
-      if (error) {
-        setTasksError(error.message);
-        setTasksLoading(false);
+  // Tap a task (after selecting a staff member)
+  const handleTaskTap = async (task) => {
+    try {
+      if (!selectedStaffId) {
+        alert("Tap your photo first (right side), then tap the task.");
         return;
       }
 
-      const filtered = (data || []).filter((t) => {
-        if (!t?.active) return false;
-        if (t.recurrence === "daily") return true;
-        if (t.recurrence === "weekly") {
-          if (!Array.isArray(t.days_of_week)) return false;
-          return t.days_of_week.includes(dow);
-        }
-        if (t.recurrence === "dated") {
-          return t.due_date === todayYMD;
-        }
-        return false;
+      await recordCompletion(supabase, Number(task.id), Number(selectedStaffId));
+
+      // Visual tick immediately
+      setCompletedTaskIds((prev) => {
+        const next = new Set(prev);
+        next.add(task.id);
+        return next;
       });
 
-      filtered.sort((a, b) => String(a.due_time).localeCompare(String(b.due_time)));
-      setTasks(filtered);
-      setTasksLoading(false);
-    })();
+      // Add to Activity feed (keep last 25)
+      const timeStr = new Date().toLocaleTimeString("en-AU", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const entry = {
+        id:
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : String(Math.random()),
+        taskTitle: task.title,
+        staffName: selectedStaffName ?? "Someone",
+        timeStr,
+      };
+      setFeed((f) => [entry, ...f].slice(0, 25));
 
-    return () => { cancelled = true; };
-  }, [todayYMD, dow]);
-
-  // Load active staff (with photos)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setStaffLoading(true);
-      setStaffError(null);
-
-      const { data, error } = await supabase
-        .from("staff")
-        .select("id,name,photo_url,active")
-        .eq("active", true)
-        .order("name", { ascending: true });
-
-      if (cancelled) return;
-
-      if (error) {
-        setStaffError(error.message);
-        setStaffLoading(false);
-        return;
+      burstConfetti();
+    } catch (err) {
+      if (err?.message?.includes("completions_one_per_day")) {
+        alert("Already recorded today.");
+      } else {
+        alert("Error: " + (err?.message ?? String(err)));
+        console.error(err);
       }
-
-      setStaff(data || []);
-      setStaffLoading(false);
-    })();
-
-    return () => { cancelled = true; };
-  }, []);
+    }
+  };
 
   return (
-    <main className="min-h-screen w-full bg-white text-slate-900">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur">
-        <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">Byford Pharmacy Chalkboard</h1>
-          <div className="text-sm text-slate-600">{todayLabel}</div>
+    <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-hidden">
+      {/* Confetti overlay */}
+      {showConfetti && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="text-5xl md:text-6xl">🎉</div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold">Byford Pharmacy Chalkboard</h1>
+        <div className="text-sm">
+          <span className="px-2 py-1 rounded border">
+            Progress: {progress.done}/{progress.total} ({progress.pct}%)
+          </span>
         </div>
       </div>
 
-      {/* Content: two columns on iPad/desktop */}
-      <div className="mx-auto max-w-6xl px-4 py-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* LEFT: Today’s Tasks */}
-        <section>
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Today’s Tasks</h2>
-            <span className="text-xs text-slate-500">Ordered by time • Perth</span>
-          </div>
+      {loading ? (
+        <div className="p-6 border rounded-xl">Loading…</div>
+      ) : (
+        <div className="grid grid-cols-12 gap-4">
+          {/* LEFT: Task list */}
+          <div className="col-span-12 md:col-span-8">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xl font-semibold">Today’s Tasks</h2>
+              <div className="text-sm">
+                {selectedStaffId ? (
+                  <span className="px-2 py-1 rounded bg-green-100 border">
+                    Selected: {selectedStaffName}
+                  </span>
+                ) : (
+                  <span className="px-2 py-1 rounded bg-yellow-100 border">
+                    Tap your photo →
+                  </span>
+                )}
+              </div>
+            </div>
 
-          {tasksLoading && <div className="text-slate-500 text-sm">Loading tasks…</div>}
-          {tasksError && <div className="text-red-600 text-sm">Error: {tasksError}</div>}
-          {!tasksLoading && !tasksError && tasks.length === 0 && (
-            <div className="text-slate-500 text-sm">No tasks scheduled for today.</div>
-          )}
-
-          <ul className="divide-y rounded-xl border overflow-hidden">
-            {tasks.map((t) => {
-              const timeLabel = String(t.due_time || "").slice(0, 5);
-              const isDated = t.recurrence === "dated";
-              return (
-                <li
-                  key={t.id}
-                  className={[
-                    "flex items-center justify-between px-3 py-2",
-                    isDated ? "bg-amber-50" : "bg-white",
-                  ].join(" ")}
-                >
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{t.title}</div>
-                    <div className="text-xs text-slate-500">
-                      {isDated ? "Specific date" : t.recurrence === "weekly" ? "Weekly" : "Daily"}
-                    </div>
-                  </div>
-                  <div className="shrink-0 rounded-md border px-2 py-1 text-sm tabular-nums">
-                    {timeLabel}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-
-          <p className="mt-3 text-xs text-slate-500">Dated tasks are highlighted to stand out.</p>
-        </section>
-
-        {/* RIGHT: Staff grid (photos) */}
-        <section>
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Staff</h2>
-            <span className="text-xs text-slate-500">Tap later to assign tasks</span>
-          </div>
-
-          {staffLoading && <div className="text-slate-500 text-sm">Loading staff…</div>}
-          {staffError && <div className="text-red-600 text-sm">Error: {staffError}</div>}
-          {!staffLoading && !staffError && staff.length === 0 && (
-            <div className="text-slate-500 text-sm">No active staff.</div>
-          )}
-
-          <div className="grid grid-cols-3 gap-3">
-            {staff.map((s) => {
-              const hasPhoto = !!s.photo_url;
-              return (
-                <div
-                  key={s.id}
-                  className="flex flex-col items-center justify-center rounded-2xl border p-3 text-center bg-white"
-                >
-                  <div className="relative h-20 w-20 rounded-full overflow-hidden border">
-                    {hasPhoto ? (
-                      <img
-                        src={s.photo_url}
-                        alt={s.name}
-                        className="h-full w-full object-cover"
-                        onError={(e) => { e.currentTarget.style.display = "none"; }}
-                      />
-                    ) : null}
-                    {!hasPhoto && (
-                      <div className="flex h-full w-full items-center justify-center bg-slate-100">
-                        <span className="text-lg font-medium text-slate-600">
-                          {initials(s.name)}
+            <div className="space-y-3">
+              {tasks.map((task) => {
+                const isDone = completedTaskIds.has(task.id);
+                return (
+                  <button
+                    key={task.id}
+                    className={`w-full text-left p-3 rounded-xl border hover:shadow-sm active:scale-[0.99] ${
+                      isDone ? "bg-green-50 border-green-300" : ""
+                    }`}
+                    onClick={() => handleTaskTap(task)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm ${
+                            isDone ? "bg-green-500 text-white border-green-500" : ""
+                          }`}
+                          title={isDone ? "Completed" : "Tap to complete"}
+                        >
+                          {isDone ? "✓" : "•"}
                         </span>
+                        <div>
+                          <div className="font-medium">{task.title}</div>
+                          {task.due_time ? (
+                            <div className="text-xs text-gray-500">Due: {task.due_time}</div>
+                          ) : null}
+                        </div>
                       </div>
-                    )}
-                  </div>
-                  <div className="mt-2 w-full truncate text-sm font-medium">{s.name}</div>
-                </div>
-              );
-            })}
+                      <div className="text-xs text-gray-500">{task.period ?? ""}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </section>
-      </div>
+
+          {/* RIGHT: Staff panel + Activity feed */}
+          <div className="col-span-12 md:col-span-4 space-y-4">
+            <div>
+              <h2 className="text-xl font-semibold mb-3">Who’s doing it?</h2>
+
+              <div className="grid grid-cols-3 gap-3">
+                {staff.map((s) => {
+                  const isSelected = s.id === selectedStaffId;
+                  return (
+                    <button
+                      key={s.id}
+                      className={`flex flex-col items-center p-2 rounded-2xl border hover:bg-gray-50 ${
+                        isSelected ? "ring-2 ring-green-500" : ""
+                      }`}
+                      onClick={() => setSelectedStaffId(s.id)}
+                    >
+                      <img
+                        src={s.photo_url || "/placeholder.png"}
+                        alt={s.name}
+                        width={64}
+                        height={64}
+                        loading="lazy"
+                        decoding="async"
+                        className="w-16 h-16 rounded-full object-cover"
+                      />
+                      <span className="text-xs mt-1 text-center">{s.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-3 text-xs text-gray-500">
+                Tip: Tap your photo once, then tap each task you complete.
+              </div>
+            </div>
+
+            {/* Activity feed */}
+            <div className="border rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-medium">Activity</h3>
+                <span className="text-xs text-gray-500">{feed.length} recent</span>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-auto">
+                {feed.length === 0 ? (
+                  <div className="text-xs text-gray-500">No activity yet.</div>
+                ) : (
+                  feed.map((e) => (
+                    <div key={e.id} className="text-sm">
+                      <span className="font-medium">{e.staffName}</span>{" "}
+                      completed <span className="font-medium">“{e.taskTitle}”</span>{" "}
+                      at <span className="text-gray-600">{e.timeStr}</span>.
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
-}
-
-// Prevent Vercel from prerendering this at build time
-export async function getServerSideProps() {
-  return { props: {} };
 }
