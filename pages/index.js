@@ -188,40 +188,41 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="space-y-3">
-              {tasks.map((task) => {
-                const isDone = completedTaskIds.has(task.id);
-                return (
-                  <button
-                    key={task.id}
-                    className={`w-full text-left p-3 rounded-xl border hover:shadow-sm active:scale-[0.99] ${
-                      isDone ? "bg-green-50 border-green-300" : ""
-                    }`}
-                    onClick={() => handleTaskTap(task)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm ${
-                            isDone ? "bg-green-500 text-white border-green-500" : ""
-                          }`}
-                          title={isDone ? "Completed" : "Tap to complete"}
-                        >
-                          {isDone ? "✓" : "•"}
-                        </span>
-                        <div>
-                          <div className="font-medium">{task.title}</div>
-                          {task.due_time ? (
-                            <div className="text-xs text-gray-500">Due: {task.due_time}</div>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="text-xs text-gray-500">{task.period ?? ""}</div>
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  {tasks.map((task) => {
+    const isDone = completedTaskIds.has(task.id);
+    return (
+      <button
+        key={task.id}
+        className={`p-4 rounded-xl border text-left hover:shadow-md active:scale-[0.99] ${
+          isDone ? "bg-green-50 border-green-300" : "bg-white"
+        }`}
+        onClick={() => handleTaskTap(task)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm ${
+                isDone ? "bg-green-500 text-white border-green-500" : ""
+              }`}
+              title={isDone ? "Completed" : "Tap to complete"}
+            >
+              {isDone ? "✓" : "•"}
+            </span>
+            <div>
+              <div className="font-medium">{task.title}</div>
+              {task.due_time ? (
+                <div className="text-xs text-gray-500">Due: {task.due_time}</div>
+              ) : null}
             </div>
+          </div>
+          <div className="text-xs text-gray-500">{task.period ?? ""}</div>
+        </div>
+      </button>
+    );
+  })}
+</div>
+
           </div>
 
           {/* RIGHT: Staff panel + Activity feed */}
