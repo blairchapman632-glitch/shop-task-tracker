@@ -220,7 +220,8 @@ export default function HomePage() {
           </span>
 
           <div className="flex-1 min-w-0">
-            <div className="font-medium leading-snug line-clamp-2">{task.title}</div>
+           <div className="font-medium leading-snug break-words">{task.title}</div>
+
           </div>
 
           {task.period ? (
