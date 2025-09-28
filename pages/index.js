@@ -207,16 +207,7 @@ export default function HomePage() {
         isDone ? "bg-green-50 border-green-300" : "bg-white"
       }`}
       onClick={() => handleTaskTap(task)}
-    >{/* top-right: period pill */}
-<div className="flex justify-end mb-1">
-  {task.period ? (
-    <span className="text-[11px] px-2 py-0.5 rounded-full border bg-gray-50">
-      {task.period}
-    </span>
-  ) : (
-    <span className="text-[11px]">&nbsp;</span>
-  )}
-</div>
+  
 
 {/* middle: status dot + title on its own row (no squeezing) */}
 <div className="flex items-start gap-3 flex-1 overflow-hidden">
