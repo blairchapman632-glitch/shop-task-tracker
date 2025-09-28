@@ -196,7 +196,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
 
 
 
@@ -205,11 +205,10 @@ export default function HomePage() {
   return (
     <button
       key={task.id}
-      className={`p-2 rounded-lg border text-left hover:shadow-sm active:scale-[0.99] leading-snug h-18 flex flex-col ${
+      className={`p-2 rounded-lg border text-left hover:shadow-sm active:scale-[0.99] leading-snug h-16 flex flex-col ${
+  isDone ? "bg-green-50 border-green-300" : "bg-white"
+}`}
 
-
-        isDone ? "bg-green-50 border-green-300" : "bg-white"
-      }`}
       onClick={() => handleTaskTap(task)}
     >
       <div className="flex flex-col flex-1">
