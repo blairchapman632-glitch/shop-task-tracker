@@ -195,7 +195,8 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+
 
 
   {tasks.map((task) => {
@@ -203,7 +204,8 @@ export default function HomePage() {
   return (
     <button
       key={task.id}
-      className={`p-3 rounded-2xl border text-left hover:shadow-md active:scale-[0.99] leading-relaxed h-24 flex flex-col ${
+      className={`p-3 rounded-xl border text-left hover:shadow-sm active:scale-[0.99] leading-snug h-20 flex flex-col ${
+
         isDone ? "bg-green-50 border-green-300" : "bg-white"
       }`}
       onClick={() => handleTaskTap(task)}
