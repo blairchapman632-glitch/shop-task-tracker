@@ -196,7 +196,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
 
 
 
@@ -214,9 +214,11 @@ export default function HomePage() {
     >
       <div className="flex flex-col flex-1">
         <div className="flex items-start gap-3">
-              <div className="font-medium leading-snug break-words">
-            {task.title}
-          </div>
+            <div className="font-medium text-sm leading-snug break-words overflow-hidden"
+     style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+  {task.title}
+</div>
+
         </div>
 
        <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
@@ -247,7 +249,7 @@ export default function HomePage() {
           </div>
 
           {/* RIGHT: Staff panel + Activity feed */}
-          <div className="col-span-12 md:col-span-4 space-y-4">
+          <div className="col-span-12 md:col-span-5 space-y-4">
             <div>
               <h2 className="text-xl font-semibold mb-3">Who’s doing it?</h2>
 
