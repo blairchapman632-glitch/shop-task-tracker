@@ -209,28 +209,28 @@ export default function HomePage() {
     >
       <div className="flex flex-col flex-1">
         <div className="flex items-start gap-3">
-         {isDone && (
-  <span
-    className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border text-sm shrink-0 bg-green-500 text-white border-green-500"
-    title="Completed"
-  >
-    ✓
-  </span>
-)}
-
-
-          <div className="font-medium leading-snug break-words">
+              <div className="font-medium leading-snug break-words">
             {task.title}
           </div>
         </div>
 
-        {task.due_time ? (
-          <div className="mt-2 text-xs text-gray-500">
-            Due: {formatTime(task.due_time)}
-          </div>
-        ) : (
-          <div className="mt-2 text-xs">&nbsp;</div>
-        )}
+       <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+  {task.due_time ? (
+    <span>Due: {formatTime(task.due_time)}</span>
+  ) : (
+    <span>&nbsp;</span>
+  )}
+
+  {isDone && (
+    <span
+      className="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]"
+      title="Completed"
+    >
+      ✓
+    </span>
+  )}
+</div>
+
       </div>
     </button>
   );
