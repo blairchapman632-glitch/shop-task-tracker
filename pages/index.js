@@ -150,6 +150,11 @@ export default function HomePage() {
       }
     }
   };
+  const formatTime = (t) => {
+    if (!t) return null;
+    const [hh, mm] = String(t).split(":");
+    return `${hh}:${mm}`;
+  };
 
   return (
     <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-hidden">
@@ -193,38 +198,49 @@ export default function HomePage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
 
   {tasks.map((task) => {
-    const isDone = completedTaskIds.has(task.id);
-    return (
-      <button
-        key={task.id}
-       className={`p-5 rounded-xl border text-left hover:shadow-md active:scale-[0.99] leading-relaxed ${
+  const isDone = completedTaskIds.has(task.id);
+  return (
+    <button
+      key={task.id}
+      className={`p-5 rounded-2xl border text-left hover:shadow-md active:scale-[0.99] leading-relaxed h-36 flex flex-col justify-between ${
+        isDone ? "bg-green-50 border-green-300" : "bg-white"
+      }`}
+      onClick={() => handleTaskTap(task)}
+    >
+      <div className="h-36 flex flex-col justify-between">
+        {/* top row: status + title + period */}
+        <div className="flex items-start">
+          <span
+            className={`mt-0.5 mr-3 inline-flex h-7 w-7 items-center justify-center rounded-full border text-sm shrink-0 ${
+              isDone ? "bg-green-500 text-white border-green-500" : ""
+            }`}
+            title={isDone ? "Completed" : "Tap to complete"}
+          >
+            {isDone ? "✓" : "•"}
+          </span>
 
-          isDone ? "bg-green-50 border-green-300" : "bg-white"
-        }`}
-        onClick={() => handleTaskTap(task)}
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm ${
-                isDone ? "bg-green-500 text-white border-green-500" : ""
-              }`}
-              title={isDone ? "Completed" : "Tap to complete"}
-            >
-              {isDone ? "✓" : "•"}
-            </span>
-            <div>
-              <div className="font-medium">{task.title}</div>
-              {task.due_time ? (
-                <div className="text-xs text-gray-500">Due: {task.due_time}</div>
-              ) : null}
-            </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-medium leading-snug line-clamp-2">{task.title}</div>
           </div>
-          <div className="text-xs text-gray-500">{task.period ?? ""}</div>
+
+          {task.period ? (
+            <span className="ml-3 shrink-0 text-[11px] px-2 py-0.5 rounded-full border bg-gray-50">
+              {task.period}
+            </span>
+          ) : null}
         </div>
-      </button>
-    );
-  })}
+
+        {/* bottom row: due time */}
+        {task.due_time ? (
+          <div className="text-xs text-gray-500">Due: {formatTime(task.due_time)}</div>
+        ) : (
+          <div className="text-xs">&nbsp;</div>
+        )}
+      </div>
+    </button>
+  );
+})}
+
 </div>
 
           </div>
