@@ -248,17 +248,20 @@ export default function HomePage() {
           </div>
 
           {/* RIGHT: Staff panel + Activity feed */}
-          <div className="col-span-12 md:col-span-5 space-y-4">
+          <div className="col-span-12 md:col-span-5 grid grid-cols-2 gap-4">
+
             <div>
               <h2 className="text-xl font-semibold mb-3">Who’s doing it?</h2>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-2">
+
                 {staff.map((s) => {
                   const isSelected = s.id === selectedStaffId;
                   return (
                     <button
                       key={s.id}
-                      className={`flex flex-col items-center p-2 rounded-2xl border hover:bg-gray-50 ${
+                      className={`flex flex-col items-center p-1.5 rounded-xl border hover:bg-gray-50 ${
+
                         isSelected ? "ring-2 ring-green-500" : ""
                       }`}
                       onClick={() => setSelectedStaffId(s.id)}
@@ -270,15 +273,18 @@ export default function HomePage() {
                         height={64}
                         loading="lazy"
                         decoding="async"
-                        className="w-16 h-16 rounded-full object-cover"
+                        className="w-14 h-14 rounded-full object-cover"
+
                       />
-                      <span className="text-xs mt-1 text-center">{s.name}</span>
+                      <span className="text-[11px] mt-1 text-center">{s.name}</span>
+
                     </button>
                   );
                 })}
               </div>
 
-              <div className="mt-3 text-xs text-gray-500">
+              <div className="mt-2 text-[11px] text-gray-500">
+
                 Tip: Tap your photo once, then tap each task you complete.
               </div>
             </div>
