@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { recordCompletion } from "../lib/recordCompletion.js";
+
 import supabase from "../lib/supabaseClient";
 
 
