@@ -179,7 +179,8 @@ export default function HomePage() {
       ) : (
         <div className="grid grid-cols-12 gap-4">
           {/* LEFT: Task list */}
-          <div className="col-span-12 md:col-span-8">
+          <div className="col-span-12 md:col-span-7">
+
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-xl font-semibold">Today’s Tasks</h2>
               <div className="text-sm">
@@ -204,7 +205,8 @@ export default function HomePage() {
   return (
     <button
       key={task.id}
-      className={`p-3 rounded-xl border text-left hover:shadow-sm active:scale-[0.99] leading-snug h-20 flex flex-col ${
+      className={`p-2 rounded-lg border text-left hover:shadow-sm active:scale-[0.99] leading-snug h-18 flex flex-col ${
+
 
         isDone ? "bg-green-50 border-green-300" : "bg-white"
       }`}
