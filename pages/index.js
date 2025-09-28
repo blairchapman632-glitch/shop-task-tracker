@@ -202,39 +202,39 @@ export default function HomePage() {
   return (
     <button
       key={task.id}
-     className={`p-5 rounded-2xl border text-left hover:shadow-md active:scale-[0.99] leading-relaxed h-36 flex flex-col ${
-
+      className={`p-5 rounded-2xl border text-left hover:shadow-md active:scale-[0.99] leading-relaxed h-36 flex flex-col ${
         isDone ? "bg-green-50 border-green-300" : "bg-white"
       }`}
       onClick={() => handleTaskTap(task)}
-  
+    >
+      <div className="flex flex-col flex-1">
+        <div className="flex items-start gap-3">
+          <span
+            className={`mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border text-sm shrink-0 ${
+              isDone ? "bg-green-500 text-white border-green-500" : ""
+            }`}
+            title={isDone ? "Completed" : "Tap to complete"}
+          >
+            {isDone ? "✓" : "•"}
+          </span>
 
-{/* middle: status dot + title on its own row (no squeezing) */}
-<div className="flex items-start gap-3 flex-1 overflow-hidden">
-  <span
-    className={`mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border text-sm shrink-0 ${
-      isDone ? "bg-green-500 text-white border-green-500" : ""
-    }`}
-    title={isDone ? "Completed" : "Tap to complete"}
-  >
-    {isDone ? "✓" : "•"}
-  </span>
+          <div className="font-medium leading-snug break-words">
+            {task.title}
+          </div>
+        </div>
 
-  <div className="font-medium leading-snug whitespace-normal break-words">
-    {task.title}
-  </div>
-</div>
-
-{/* bottom: due time aligned across tiles */}
-{task.due_time ? (
-  <div className="mt-2 text-xs text-gray-500">Due: {formatTime(task.due_time)}</div>
-) : (
-  <div className="mt-2 text-xs">&nbsp;</div>
-)}
-
+        {task.due_time ? (
+          <div className="mt-2 text-xs text-gray-500">
+            Due: {formatTime(task.due_time)}
+          </div>
+        ) : (
+          <div className="mt-2 text-xs">&nbsp;</div>
+        )}
+      </div>
     </button>
   );
 })}
+
 
 </div>
 
