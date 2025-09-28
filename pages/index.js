@@ -195,7 +195,8 @@ export default function HomePage() {
     return (
       <button
         key={task.id}
-        className={`p-4 rounded-xl border text-left hover:shadow-md active:scale-[0.99] ${
+       className={`p-5 rounded-xl border text-left hover:shadow-md active:scale-[0.99] leading-relaxed ${
+
           isDone ? "bg-green-50 border-green-300" : "bg-white"
         }`}
         onClick={() => handleTaskTap(task)}
