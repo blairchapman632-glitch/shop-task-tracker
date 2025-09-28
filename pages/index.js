@@ -209,14 +209,15 @@ export default function HomePage() {
     >
       <div className="flex flex-col flex-1">
         <div className="flex items-start gap-3">
-          <span
-            className={`mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border text-sm shrink-0 ${
-              isDone ? "bg-green-500 text-white border-green-500" : ""
-            }`}
-            title={isDone ? "Completed" : "Tap to complete"}
-          >
-            {isDone ? "✓" : "•"}
-          </span>
+         {isDone && (
+  <span
+    className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border text-sm shrink-0 bg-green-500 text-white border-green-500"
+    title="Completed"
+  >
+    ✓
+  </span>
+)}
+
 
           <div className="font-medium leading-snug break-words">
             {task.title}
