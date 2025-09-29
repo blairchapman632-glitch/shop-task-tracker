@@ -236,54 +236,54 @@ export default function HomePage() {
               </div>
 
               {/* Right stack: Activity / Leaderboard / Notes */}
-              <div className="space-y-4 max-h-[calc(100vh-220px)] overflow-y-auto overscroll-contain pr-1 nice-scroll">
+              <div className="flex flex-col space-y-4 max-h-[calc(100vh-220px)] pr-1">
+  {/* Leaderboard (no scroll needed) */}
+  <div className="border rounded-xl p-3 bg-white">
+    <div className="flex items-center justify-between mb-2">
+      <h3 className="font-medium">Leaderboard (This Month)</h3>
+      <span className="text-xs text-gray-500">Top 3</span>
+    </div>
+    <ol className="text-sm space-y-1">
+      <li>1. —</li>
+      <li>2. —</li>
+      <li>3. —</li>
+    </ol>
+  </div>
 
-                {/* Activity */}
-                <div className="border rounded-xl p-3 bg-white">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-medium">Activity</h3>
-                    <span className="text-xs text-gray-500">{feed.length} recent</span>
-                  </div>
-                  <div className="space-y-2 max-h-64 overflow-auto">
-                    {feed.length === 0 ? (
-                      <div className="text-xs text-gray-500">No activity yet.</div>
-                    ) : (
-                      feed.map((e) => (
-                        <div key={e.id} className="text-sm">
-                          <span className="font-medium">{e.staffName}</span>{" "}
-                          completed <span className="font-medium">“{e.taskTitle}”</span>{" "}
-                          at <span className="text-gray-600">{e.timeStr}</span>.
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
+  {/* Notes (short, but scroll if long) */}
+  <div className="border rounded-xl p-3 bg-white flex-1 min-h-[6rem] overflow-y-auto nice-scroll">
+    <div className="flex items-center justify-between mb-2">
+      <h3 className="font-medium">Notes</h3>
+      <span className="text-xs text-gray-500">Today</span>
+    </div>
+    <div className="text-sm text-gray-600">
+      <div>- </div>
+      <div>- </div>
+    </div>
+  </div>
 
-                {/* Leaderboard */}
-                <div className="border rounded-xl p-3 bg-white">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-medium">Leaderboard (This Month)</h3>
-                    <span className="text-xs text-gray-500">Top 3</span>
-                  </div>
-                  <ol className="text-sm space-y-1">
-                    <li>1. —</li>
-                    <li>2. —</li>
-                    <li>3. —</li>
-                  </ol>
-                </div>
+  {/* Activity (fills rest of column, scrolls) */}
+  <div className="border rounded-xl p-3 bg-white flex-1 overflow-y-auto nice-scroll">
+    <div className="flex items-center justify-between mb-2">
+      <h3 className="font-medium">Activity</h3>
+      <span className="text-xs text-gray-500">{feed.length} recent</span>
+    </div>
+    <div className="space-y-2">
+      {feed.length === 0 ? (
+        <div className="text-xs text-gray-500">No activity yet.</div>
+      ) : (
+        feed.map((e) => (
+          <div key={e.id} className="text-sm">
+            <span className="font-medium">{e.staffName}</span>{" "}
+            completed <span className="font-medium">“{e.taskTitle}”</span>{" "}
+            at <span className="text-gray-600">{e.timeStr}</span>.
+          </div>
+        ))
+      )}
+    </div>
+  </div>
+</div>
 
-                {/* Notes */}
-                <div className="border rounded-xl p-3 bg-white">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-medium">Notes</h3>
-                    <span className="text-xs text-gray-500">Today</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    <div>- </div>
-                    <div>- </div>
-                  </div>
-                </div>
-              </div>
             </section>
           </div>
         )}
