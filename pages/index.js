@@ -179,7 +179,7 @@ export default function HomePage() {
       ) : (
         <div className="grid grid-cols-12 gap-4">
           {/* LEFT: Task list */}
-          <div className="col-span-12 md:col-span-7">
+          <div className="col-span-12 md:col-span-4">
 
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-xl font-semibold">Today’s Tasks</h2>
@@ -196,7 +196,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
 
 
 
@@ -248,7 +248,7 @@ export default function HomePage() {
           </div>
 
           {/* RIGHT: Staff panel + Activity feed */}
-          <div className="col-span-12 md:col-span-5 grid grid-cols-2 gap-4">
+          <div className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4">
 
             <div>
               <h2 className="text-xl font-semibold mb-3">Who’s doing it?</h2>
