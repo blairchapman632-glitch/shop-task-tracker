@@ -301,7 +301,8 @@ export default function HomePage() {
             </div>
 
                        {/* Right-side stack: Activity + Leaderboard + Notes */}
-            <div className="space-y-4">
+            <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
+
               {/* Activity feed */}
               <div className="border rounded-xl p-3">
                 <div className="flex items-center justify-between mb-2">
