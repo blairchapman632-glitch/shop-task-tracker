@@ -157,7 +157,8 @@ export default function HomePage() {
   };
 
   return (
-    <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-hidden">
+    <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-hidden bg-white rounded-2xl shadow-sm ring-1 ring-black/5">
+
       {/* Confetti overlay */}
       {showConfetti && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -177,7 +178,8 @@ export default function HomePage() {
 
 
           {/* LEFT: Task list */}
-         <div className="col-span-12 md:col-span-4">
+         <div className="col-span-12 md:col-span-4 md:border-r md:border-gray-200 md:pr-4">
+
 
 
 
@@ -255,7 +257,8 @@ export default function HomePage() {
        <div className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 h-full">
 
 
-            <div>
+            <div className="md:border-r md:border-gray-200 md:pr-4">
+
               <h2 className="text-xl font-semibold mb-3">Pharmily</h2>
 
              <div className="grid grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
