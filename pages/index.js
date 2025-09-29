@@ -275,7 +275,8 @@ export default function HomePage() {
   </div>
 
   {/* Activity (fills rest of column, scrolls) */}
-  <div className="border rounded-xl p-3 bg-white min-h-0 overflow-y-auto nice-scroll">
+  <div className="border rounded-xl p-3 bg-white min-h-[300px] overflow-y-auto nice-scroll">
+
 
 
 
