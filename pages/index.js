@@ -158,7 +158,8 @@ export default function HomePage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[calc(100vh-220px)] overflow-y-auto overscroll-contain pr-1 nice-scroll">
+
                 {tasks.map((task) => {
                   const isDone = completedTaskIds.has(task.id);
                   return (
@@ -198,11 +199,13 @@ export default function HomePage() {
             </section>
 
             {/* RIGHT: Staff + Activity */}
-            <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4">
+            <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 overflow-hidden">
+
               {/* Staff list */}
               <div className="divider-r md:pr-4">
                 <h2 className="section-title mb-3">Pharmily</h2>
-                <div className="grid grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
+                <div className="grid grid-cols-2 gap-2 max-h-[calc(100vh-220px)] overflow-y-auto overscroll-contain pr-1 nice-scroll">
+
                   {staff.map((s) => {
                     const isSelected = s.id === selectedStaffId;
                     return (
@@ -233,7 +236,8 @@ export default function HomePage() {
               </div>
 
               {/* Right stack: Activity / Leaderboard / Notes */}
-              <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
+              <div className="space-y-4 max-h-[calc(100vh-220px)] overflow-y-auto overscroll-contain pr-1 nice-scroll">
+
                 {/* Activity */}
                 <div className="border rounded-xl p-3 bg-white">
                   <div className="flex items-center justify-between mb-2">
