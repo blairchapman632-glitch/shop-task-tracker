@@ -200,7 +200,7 @@ export default function HomePage() {
             </section>
 
             {/* RIGHT: Staff + Activity */}
-           <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 overflow-visible">
+           <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 overflow-visible min-h-[calc(100vh-220px)]">
 
 
 
@@ -239,7 +239,8 @@ export default function HomePage() {
               </div>
 
               {/* Right stack: Activity / Leaderboard / Notes */}
-              <div className="flex flex-col space-y-4 pr-1 max-h-[calc(100vh-220px)] overflow-hidden">
+              <div className="flex flex-col flex-1 min-h-0 space-y-4 pr-1">
+
 
 
 
@@ -257,7 +258,8 @@ export default function HomePage() {
   </div>
 
     {/* Notes (capped height, scroll if long) */}
-  <div className="border rounded-xl p-3 bg-white max-h-[220px] overflow-y-auto nice-scroll">
+  <div className="border rounded-xl p-3 bg-white min-h-[180px] max-h-[300px] overflow-y-auto nice-scroll">
+
 
 
     <div className="flex items-center justify-between mb-2">
@@ -271,7 +273,8 @@ export default function HomePage() {
   </div>
 
   {/* Activity (fills rest of column, scrolls) */}
-  <div className="border rounded-xl p-3 bg-white flex-1 min-h-0 overflow-y-auto nice-scroll">
+  <div className="border rounded-xl p-3 bg-white flex-1 min-h-[260px] overflow-y-auto nice-scroll">
+
 
     <div className="flex items-center justify-between mb-2">
       <h3 className="font-medium">Activity</h3>
