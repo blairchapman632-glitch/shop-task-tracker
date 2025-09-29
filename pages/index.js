@@ -132,7 +132,8 @@ export default function HomePage() {
         )}
 
         {/* Header */}
-        <div className="px-4 md:px-6 pt-4 md:pt-6 pb-3 border-b border-gray-200">
+        <div className="px-4 md:px-6 pt-4 md:pt-6 pb-3 border-b-2 border-blue-500">
+
           <h1 className="h1-tight">Byford Pharmacy Chalkboard</h1>
         </div>
 
