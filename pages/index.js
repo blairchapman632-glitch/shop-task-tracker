@@ -250,8 +250,9 @@ export default function HomePage() {
     </ol>
   </div>
 
-  {/* Notes (short, but scroll if long) */}
-  <div className="border rounded-xl p-3 bg-white flex-1 min-h-[6rem] overflow-y-auto nice-scroll">
+    {/* Notes (capped height, scroll if long) */}
+  <div className="border rounded-xl p-3 bg-white max-h-[150px] overflow-y-auto nice-scroll">
+
     <div className="flex items-center justify-between mb-2">
       <h3 className="font-medium">Notes</h3>
       <span className="text-xs text-gray-500">Today</span>
