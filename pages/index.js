@@ -239,7 +239,8 @@ export default function HomePage() {
               </div>
 
               {/* Right stack: Activity / Leaderboard / Notes */}
-              <div className="flex flex-col flex-1 min-h-0 space-y-4 pr-1">
+             <div className="grid grid-rows-[auto_auto_1fr] min-h-0 max-h-[calc(100vh-220px)] pr-1 gap-4">
+
 
 
 
@@ -258,7 +259,8 @@ export default function HomePage() {
   </div>
 
     {/* Notes (capped height, scroll if long) */}
-  <div className="border rounded-xl p-3 bg-white min-h-[180px] max-h-[300px] overflow-y-auto nice-scroll">
+  <div className="border rounded-xl p-3 bg-white min-h-[144px] max-h-[240px] overflow-y-auto nice-scroll">
+
 
 
 
@@ -273,7 +275,8 @@ export default function HomePage() {
   </div>
 
   {/* Activity (fills rest of column, scrolls) */}
-  <div className="border rounded-xl p-3 bg-white flex-1 min-h-[260px] overflow-y-auto nice-scroll">
+  <div className="border rounded-xl p-3 bg-white min-h-0 overflow-y-auto nice-scroll">
+
 
 
     <div className="flex items-center justify-between mb-2">
