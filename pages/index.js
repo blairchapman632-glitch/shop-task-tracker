@@ -259,7 +259,7 @@ export default function HomePage() {
 
 
             <div>
-              <h2 className="text-xl font-semibold mb-3">Who’s doing it?</h2>
+              <h2 className="text-xl font-semibold mb-3">Pharmily</h2>
 
              <div className="grid grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
 
