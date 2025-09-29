@@ -177,10 +177,12 @@ export default function HomePage() {
       {loading ? (
         <div className="p-6 border rounded-xl">Loading…</div>
       ) : (
-       <div className="grid grid-cols-12 gap-4 h-[36rem]">
+      <div className="grid grid-cols-12 gap-4">
+
 
           {/* LEFT: Task list */}
-         <div className="col-span-12 md:col-span-4 h-full">
+         <div className="col-span-12 md:col-span-4">
+
 
 
             <div className="flex items-center justify-between mb-3">
@@ -198,7 +200,8 @@ export default function HomePage() {
               </div>
             </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 h-full overflow-y-auto pr-1">
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1">
+
 
 
 
@@ -258,7 +261,8 @@ export default function HomePage() {
             <div>
               <h2 className="text-xl font-semibold mb-3">Who’s doing it?</h2>
 
-              <div className="grid grid-cols-2 gap-2 h-full overflow-y-auto pr-1">
+              <div className="grid grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1">
+
 
 
 
