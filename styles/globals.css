@@ -2,31 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-gray-50 text-gray-900;
+/* App scaffold */
+html, body, #__next {
+  min-height: 100%;
 }
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+}
+
 /* Nicer slim scrollbars */
 .nice-scroll {
   /* Firefox */
   scrollbar-width: thin;
   scrollbar-color: rgba(0,0,0,.25) transparent;
 }
-
 /* Chrome/Edge/Safari */
-.nice-scroll::-webkit-scrollbar {
-  width: 8px;
-}
-.nice-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
+.nice-scroll::-webkit-scrollbar { width: 8px; }
+.nice-scroll::-webkit-scrollbar-track { background: transparent; }
 .nice-scroll::-webkit-scrollbar-thumb {
   background-color: rgba(0,0,0,.25);
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
-/* App backdrop */
-body {
-  background-color: #F9FAFB; /* Tailwind's gray-50 */
-}
 
+/* Optional: small utility tweaks for headings/chips used on the page */
+.h1-tight { @apply text-3xl md:text-4xl font-bold tracking-tight; }
+.section-title { @apply text-lg font-semibold uppercase tracking-wide text-gray-700; }
+.progress-chip { @apply text-xs md:text-sm bg-gray-100 text-gray-700 rounded-full px-2.5 py-0.5; }
+.card { @apply bg-white rounded-2xl shadow-sm ring-1 ring-black/5; }
+.divider-r { @apply md:border-r md:border-gray-200; }
