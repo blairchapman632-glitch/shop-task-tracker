@@ -121,7 +121,8 @@ export default function HomePage() {
   };
 
   return (
-    <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-hidden">
+    <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-visible">
+
       {/* App card on grey backdrop */}
       <div className="card overflow-hidden">
         {/* Confetti overlay */}
@@ -199,7 +200,8 @@ export default function HomePage() {
             </section>
 
             {/* RIGHT: Staff + Activity */}
-           <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 overflow-hidden h-[calc(100vh-220px)] min-h-0">
+           <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 overflow-visible">
+
 
 
               {/* Staff list */}
@@ -237,7 +239,8 @@ export default function HomePage() {
               </div>
 
               {/* Right stack: Activity / Leaderboard / Notes */}
-              <div className="flex flex-col h-full min-h-0 space-y-4 pr-1">
+              <div className="flex flex-col space-y-4 pr-1">
+
 
   {/* Leaderboard (no scroll needed) */}
   <div className="border rounded-xl p-3 bg-white">
