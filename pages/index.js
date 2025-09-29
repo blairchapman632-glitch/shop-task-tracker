@@ -165,14 +165,10 @@ export default function HomePage() {
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Byford Pharmacy Chalkboard</h1>
-        <div className="text-sm">
-          <span className="px-2 py-1 rounded border">
-            Progress: {progress.done}/{progress.total} ({progress.pct}%)
-          </span>
-        </div>
-      </div>
+      <div className="mb-4">
+  <h1 className="text-2xl font-bold">Byford Pharmacy Chalkboard</h1>
+</div>
+
 
       {loading ? (
         <div className="p-6 border rounded-xl">Loading…</div>
@@ -185,20 +181,21 @@ export default function HomePage() {
 
 
 
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xl font-semibold">Today’s Tasks</h2>
-              <div className="text-sm">
-                {selectedStaffId ? (
-                  <span className="px-2 py-1 rounded bg-green-100 border">
-                    Selected: {selectedStaffName}
-                  </span>
-                ) : (
-                  <span className="px-2 py-1 rounded bg-yellow-100 border">
-                    Tap your photo →
-                  </span>
-                )}
-              </div>
-            </div>
+         <div className="flex items-center justify-between mb-3">
+  <h2 className="text-xl font-semibold flex items-center gap-2">
+    Today’s Tasks
+    <span className="text-sm px-2 py-0.5 rounded border">
+      {progress.done}/{progress.total} ({progress.pct}%)
+    </span>
+  </h2>
+  {selectedStaffId && (
+    <span className="text-sm px-2 py-1 rounded bg-green-100 border">
+      Selected: {selectedStaffName}
+    </span>
+  )}
+</div>
+
+
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
 
