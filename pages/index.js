@@ -236,7 +236,8 @@ export default function HomePage() {
               </div>
 
               {/* Right stack: Activity / Leaderboard / Notes */}
-              <div className="flex flex-col space-y-4 max-h-[calc(100vh-220px)] pr-1">
+              <div className="flex flex-col space-y-4 h-full max-h-[calc(100vh-220px)] pr-1">
+
   {/* Leaderboard (no scroll needed) */}
   <div className="border rounded-xl p-3 bg-white">
     <div className="flex items-center justify-between mb-2">
