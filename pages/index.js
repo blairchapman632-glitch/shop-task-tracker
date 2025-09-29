@@ -199,7 +199,8 @@ export default function HomePage() {
             </section>
 
             {/* RIGHT: Staff + Activity */}
-            <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 overflow-hidden">
+           <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 overflow-hidden h-[calc(100vh-220px)] min-h-0">
+
 
               {/* Staff list */}
               <div className="divider-r md:pr-4">
@@ -236,7 +237,7 @@ export default function HomePage() {
               </div>
 
               {/* Right stack: Activity / Leaderboard / Notes */}
-              <div className="flex flex-col space-y-4 h-full max-h-[calc(100vh-220px)] pr-1">
+              <div className="flex flex-col h-full min-h-0 space-y-4 pr-1">
 
   {/* Leaderboard (no scroll needed) */}
   <div className="border rounded-xl p-3 bg-white">
@@ -252,7 +253,8 @@ export default function HomePage() {
   </div>
 
     {/* Notes (capped height, scroll if long) */}
-  <div className="border rounded-xl p-3 bg-white max-h-[150px] overflow-y-auto nice-scroll">
+  <div className="border rounded-xl p-3 bg-white max-h-[220px] overflow-y-auto nice-scroll">
+
 
     <div className="flex items-center justify-between mb-2">
       <h3 className="font-medium">Notes</h3>
@@ -265,7 +267,8 @@ export default function HomePage() {
   </div>
 
   {/* Activity (fills rest of column, scrolls) */}
-  <div className="border rounded-xl p-3 bg-white flex-1 overflow-y-auto nice-scroll">
+  <div className="border rounded-xl p-3 bg-white flex-1 min-h-0 overflow-y-auto nice-scroll">
+
     <div className="flex items-center justify-between mb-2">
       <h3 className="font-medium">Activity</h3>
       <span className="text-xs text-gray-500">{feed.length} recent</span>
