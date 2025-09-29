@@ -7,7 +7,7 @@ html, body, #__next {
   min-height: 100%;
 }
 body {
-  @apply bg-gray-50 text-gray-900 antialiased;
+  @apply bg-blue-100 text-gray-900 antialiased;
 }
 
 /* Nicer slim scrollbars */
