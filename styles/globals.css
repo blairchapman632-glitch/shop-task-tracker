@@ -25,3 +25,8 @@ body {
   border: 2px solid transparent;
   background-clip: content-box;
 }
+/* App backdrop */
+body {
+  background-color: #F9FAFB; /* Tailwind's gray-50 */
+}
+
