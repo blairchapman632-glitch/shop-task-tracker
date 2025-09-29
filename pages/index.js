@@ -200,7 +200,7 @@ export default function HomePage() {
               </div>
             </div>
 
-         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
 
 
 
@@ -261,7 +261,7 @@ export default function HomePage() {
             <div>
               <h2 className="text-xl font-semibold mb-3">Who’s doing it?</h2>
 
-              <div className="grid grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1">
+             <div className="grid grid-cols-2 gap-2 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
 
 
 
@@ -301,7 +301,8 @@ export default function HomePage() {
             </div>
 
                        {/* Right-side stack: Activity + Leaderboard + Notes */}
-            <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1">
+          <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-1 nice-scroll">
+
 
               {/* Activity feed */}
               <div className="border rounded-xl p-3">
