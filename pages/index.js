@@ -289,26 +289,55 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Activity feed */}
-            <div className="border rounded-xl p-3">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-medium">Activity</h3>
-                <span className="text-xs text-gray-500">{feed.length} recent</span>
+                       {/* Right-side stack: Activity + Leaderboard + Notes */}
+            <div className="space-y-4">
+              {/* Activity feed */}
+              <div className="border rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium">Activity</h3>
+                  <span className="text-xs text-gray-500">{feed.length} recent</span>
+                </div>
+                <div className="space-y-2 max-h-64 overflow-auto">
+                  {feed.length === 0 ? (
+                    <div className="text-xs text-gray-500">No activity yet.</div>
+                  ) : (
+                    feed.map((e) => (
+                      <div key={e.id} className="text-sm">
+                        <span className="font-medium">{e.staffName}</span>{" "}
+                        completed <span className="font-medium">“{e.taskTitle}”</span>{" "}
+                        at <span className="text-gray-600">{e.timeStr}</span>.
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-              <div className="space-y-2 max-h-64 overflow-auto">
-                {feed.length === 0 ? (
-                  <div className="text-xs text-gray-500">No activity yet.</div>
-                ) : (
-                  feed.map((e) => (
-                    <div key={e.id} className="text-sm">
-                      <span className="font-medium">{e.staffName}</span>{" "}
-                      completed <span className="font-medium">“{e.taskTitle}”</span>{" "}
-                      at <span className="text-gray-600">{e.timeStr}</span>.
-                    </div>
-                  ))
-                )}
+
+              {/* Monthly Leaderboard (placeholder) */}
+              <div className="border rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium">Leaderboard (This Month)</h3>
+                  <span className="text-xs text-gray-500">Top 3</span>
+                </div>
+                <ol className="text-sm space-y-1">
+                  <li>1. —</li>
+                  <li>2. —</li>
+                  <li>3. —</li>
+                </ol>
+              </div>
+
+              {/* Staff Notes (placeholder) */}
+              <div className="border rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium">Notes</h3>
+                  <span className="text-xs text-gray-500">Today</span>
+                </div>
+                <div className="text-sm text-gray-600">
+                  <div>- </div>
+                  <div>- </div>
+                </div>
               </div>
             </div>
+
           </div>
         </div>
       )}
