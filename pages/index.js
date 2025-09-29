@@ -239,7 +239,8 @@ export default function HomePage() {
               </div>
 
               {/* Right stack: Activity / Leaderboard / Notes */}
-              <div className="flex flex-col space-y-4 pr-1">
+              <div className="flex flex-col space-y-4 pr-1 max-h-[calc(100vh-220px)] overflow-hidden">
+
 
 
   {/* Leaderboard (no scroll needed) */}
