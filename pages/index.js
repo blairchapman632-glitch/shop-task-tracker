@@ -134,18 +134,19 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Header */}
-<div className="px-4 md:px-6 pt-4 md:pt-6 pb-3 border-b-2 border-blue-500">
-  <div className="flex items-center justify-between">
+    {/* Header */}
+        <div className="px-4 md:px-6 pt-4 md:pt-6 pb-3 border-b-2 border-blue-500">
+  <div className="flex items-center justify-between border-4 border-red-500 bg-yellow-200 p-2 relative z-[9999]">
     <h1 className="h1-tight">Byford Pharmacy Chalkboard</h1>
-    <Link
+    <a
       href="/admin"
-      className="ml-4 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+      style={{ padding: "8px 12px", border: "3px solid #000", background: "#ff0", fontWeight: 700, position: "relative", zIndex: 99999 }}
     >
-      Admin
-    </Link>
+      ADMIN TEST
+    </a>
   </div>
 </div>
+
 
 
         {/* Content grid */}
