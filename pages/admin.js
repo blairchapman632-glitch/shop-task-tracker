@@ -336,7 +336,7 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                   </div>
-                ))}
+                )}
 
                 {/* Legend */}
                 <div className="mt-6 inline-flex flex-wrap items-center gap-2 text-xs text-gray-500">
