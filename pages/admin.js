@@ -75,6 +75,27 @@ export default function AdminPage() {
   const [q, setQ] = useState("");
   const [freqFilter, setFreqFilter] = useState("all");
   const [activeFilter, setActiveFilter] = useState("all");
+  
+// Modal + form state
+const [showTaskModal, setShowTaskModal] = useState(false);
+const [taskForm, setTaskForm] = useState({
+  id: null,                 // null = new; number/string = editing (later)
+  title: "",
+  frequency: "daily",       // daily | few_days_per_week | weekly | monthly | specific_date
+  days_of_week: [],         // for few_days_per_week: array of [0..6]
+  weekly_day: null,         // for weekly: number [0..6]
+  day_of_month: "",         // for monthly: 1..31
+  specific_date: "",        // for specific_date: "YYYY-MM-DD"
+  due_time: "",             // "HH:MM"
+  points: 1,
+  active: true,
+});
+useEffect(() => {
+  if (!showTaskModal) return;
+  const onKey = (e) => e.key === "Escape" && setShowTaskModal(false);
+  window.addEventListener("keydown", onKey);
+  return () => window.removeEventListener("keydown", onKey);
+}, [showTaskModal]);
 
   useEffect(() => {
     let isMounted = true;
@@ -235,6 +256,28 @@ export default function AdminPage() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+             <button
+  type="button"
+  onClick={() => {
+    setTaskForm({
+      id: null,
+      title: "",
+      frequency: "daily",
+      days_of_week: [],
+      weekly_day: null,
+      day_of_month: "",
+      specific_date: "",
+      due_time: "",
+      points: 1,
+      active: true,
+    });
+    setShowTaskModal(true);
+  }}
+  className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
+>
+  + New Task
+</button>
+
                     <input
                       type="text"
                       value={q}
@@ -361,6 +404,197 @@ export default function AdminPage() {
             )}
           </div>
         </div>
+            {showTaskModal && (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center"
+    aria-modal="true"
+    role="dialog"
+  >
+    {/* Backdrop */}
+    <div
+      className="absolute inset-0 bg-black/40"
+      onClick={() => setShowTaskModal(false)}
+    />
+
+    {/* Modal card */}
+    <div className="relative z-10 w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">
+          {taskForm.id ? "Edit Task" : "New Task"}
+        </h2>
+        <button
+          className="rounded-md p-1 hover:bg-gray-100"
+          onClick={() => setShowTaskModal(false)}
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Form */}
+      <div className="space-y-4">
+        {/* Title */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Title</label>
+          <input
+            value={taskForm.title}
+            onChange={(e) => setTaskForm((f) => ({ ...f, title: e.target.value }))}
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+            placeholder="e.g., Mop front area"
+          />
+        </div>
+
+        {/* Frequency */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Frequency</label>
+          <select
+            value={taskForm.frequency}
+            onChange={(e) => setTaskForm((f) => ({ ...f, frequency: e.target.value }))}
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+          >
+            <option value="daily">Daily</option>
+            <option value="few_days_per_week">Few days / week</option>
+            <option value="weekly">Weekly (choose a day)</option>
+            <option value="monthly">Monthly (choose a date)</option>
+            <option value="specific_date">Specific date</option>
+          </select>
+        </div>
+
+        {/* Few days per week: multi-select buttons */}
+        {taskForm.frequency === "few_days_per_week" && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Days of week</label>
+            <div className="mt-2 grid grid-cols-7 gap-2 text-sm">
+              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d, idx) => {
+                const selected = taskForm.days_of_week.includes(idx);
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() =>
+                      setTaskForm((f) => ({
+                        ...f,
+                        days_of_week: selected
+                          ? f.days_of_week.filter((x) => x !== idx)
+                          : [...f.days_of_week, idx],
+                      }))
+                    }
+                    className={`rounded-lg border px-2 py-1 ${selected ? "bg-blue-600 text-white border-blue-600" : "bg-white"}`}
+                  >
+                    {d}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Weekly: single day select */}
+        {taskForm.frequency === "weekly" && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Weekly day</label>
+            <select
+              value={taskForm.weekly_day ?? ""}
+              onChange={(e) =>
+                setTaskForm((f) => ({ ...f, weekly_day: e.target.value === "" ? null : Number(e.target.value) }))
+              }
+              className="mt-1 w-48 rounded-lg border border-gray-300 px-3 py-2"
+            >
+              <option value="">— choose —</option>
+              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d, idx) => (
+                <option key={d} value={idx}>{d}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Monthly: day number */}
+        {taskForm.frequency === "monthly" && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Day of month</label>
+            <input
+              type="number"
+              min={1}
+              max={31}
+              value={taskForm.day_of_month}
+              onChange={(e) => setTaskForm((f) => ({ ...f, day_of_month: e.target.value }))}
+              className="mt-1 w-32 rounded-lg border border-gray-300 px-3 py-2"
+              placeholder="e.g., 15"
+            />
+          </div>
+        )}
+
+        {/* Specific date */}
+        {taskForm.frequency === "specific_date" && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Date</label>
+            <input
+              type="date"
+              value={taskForm.specific_date}
+              onChange={(e) => setTaskForm((f) => ({ ...f, specific_date: e.target.value }))}
+              className="mt-1 w-56 rounded-lg border border-gray-300 px-3 py-2"
+            />
+          </div>
+        )}
+
+        {/* Due time */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Due time</label>
+          <input
+            type="time"
+            value={taskForm.due_time}
+            onChange={(e) => setTaskForm((f) => ({ ...f, due_time: e.target.value }))}
+            className="mt-1 w-40 rounded-lg border border-gray-300 px-3 py-2"
+          />
+        </div>
+
+        {/* Points + Active */}
+        <div className="flex items-center gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Points</label>
+            <input
+              type="number"
+              min={0}
+              value={taskForm.points}
+              onChange={(e) => setTaskForm((f) => ({ ...f, points: Number(e.target.value || 0) }))}
+              className="mt-1 w-28 rounded-lg border border-gray-300 px-3 py-2"
+            />
+          </div>
+
+          <label className="mt-6 inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={taskForm.active}
+              onChange={(e) => setTaskForm((f) => ({ ...f, active: e.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            Active
+          </label>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="mt-6 flex justify-end gap-2">
+        <button
+          type="button"
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50"
+          onClick={() => setShowTaskModal(false)}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white opacity-60 cursor-not-allowed"
+          disabled
+          title="Save comes in the next step"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
       </main>
     </div>
   );
