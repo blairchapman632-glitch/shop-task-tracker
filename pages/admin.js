@@ -12,6 +12,77 @@ const FREQ_LABELS = {
 };
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// --- VALIDATION (insert below your constants/helpers) ---
+function validateTaskForm(f) {
+  if (!f.title?.trim()) return { ok: false, msg: "Title is required" };
+  if (!f.frequency) return { ok: false, msg: "Frequency is required" };
+  // Require due time for now (keeps kiosk expectations simple)
+  if (!f.due_time) return { ok: false, msg: "Due time is required" };
+
+  switch (f.frequency) {
+    case "few_days_per_week":
+      if (!Array.isArray(f.days_of_week) || f.days_of_week.length === 0) {
+        return { ok: false, msg: "Choose at least one weekday" };
+      }
+      break;
+    case "weekly":
+      if (f.weekly_day === null || f.weekly_day === undefined || f.weekly_day === "") {
+        return { ok: false, msg: "Choose the weekly day" };
+      }
+      break;
+    case "monthly":
+      if (!f.day_of_month || Number(f.day_of_month) < 1 || Number(f.day_of_month) > 31) {
+        return { ok: false, msg: "Enter a day of month (1–31)" };
+      }
+      break;
+    case "specific_date":
+      if (!f.specific_date) return { ok: false, msg: "Pick a date" };
+      break;
+    default:
+      // "daily" has no extra fields
+      break;
+  }
+  return { ok: true };
+}
+
+// Normalize form → row (omit irrelevant fields)
+function mapFormToRow(f) {
+  const base = {
+    title: f.title.trim(),
+    frequency: f.frequency,
+    due_time: f.due_time || null,  // keep as "HH:MM" string column or time column
+    points: Number.isFinite(f.points) ? f.points : 0,
+    active: !!f.active,
+  };
+  if (f.frequency === "few_days_per_week") {
+    base.days_of_week = f.days_of_week || [];
+    base.weekly_day = null;
+    base.day_of_month = null;
+    base.specific_date = null;
+  } else if (f.frequency === "weekly") {
+    base.weekly_day = Number(f.weekly_day);
+    base.days_of_week = [];
+    base.day_of_month = null;
+    base.specific_date = null;
+  } else if (f.frequency === "monthly") {
+    base.day_of_month = Number(f.day_of_month);
+    base.days_of_week = [];
+    base.weekly_day = null;
+    base.specific_date = null;
+  } else if (f.frequency === "specific_date") {
+    base.specific_date = f.specific_date; // "YYYY-MM-DD"
+    base.days_of_week = [];
+    base.weekly_day = null;
+    base.day_of_month = null;
+  } else {
+    // daily
+    base.days_of_week = [];
+    base.weekly_day = null;
+    base.day_of_month = null;
+    base.specific_date = null;
+  }
+  return base;
+}
 
 function freqPretty(task) {
   const f = task.frequency || null;
@@ -96,7 +167,48 @@ useEffect(() => {
   window.addEventListener("keydown", onKey);
   return () => window.removeEventListener("keydown", onKey);
 }, [showTaskModal]);
+// --- SAVE HANDLER (insert below modal state/effects) ---
+const [saving, setSaving] = useState(false);
 
+async function handleSaveTask() {
+  const v = validateTaskForm(taskForm);
+  if (!v.ok) {
+    alert(v.msg); // simple + visible; we’ll replace with a toast later
+    return;
+  }
+
+  const row = mapFormToRow(taskForm);
+
+  try {
+    setSaving(true);
+
+    if (taskForm.id) {
+      // EDIT (future step) — not used yet
+      const { error } = await supabase
+        .from("tasks")
+        .update(row)
+        .eq("id", taskForm.id);
+      if (error) throw error;
+    } else {
+      // INSERT (this milestone)
+      const { error } = await supabase
+        .from("tasks")
+        .insert([row]);
+      if (error) throw error;
+    }
+
+    // Close modal and hard refresh to re-query (simple + robust)
+    setShowTaskModal(false);
+    window.location.reload();
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Failed to save task");
+  } finally {
+    setSaving(false);
+  }
+}
+
+  
   useEffect(() => {
     let isMounted = true;
 
@@ -583,13 +695,14 @@ useEffect(() => {
           Cancel
         </button>
         <button
-          type="button"
-          className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white opacity-60 cursor-not-allowed"
-          disabled
-          title="Save comes in the next step"
-        >
-          Save
-        </button>
+  type="button"
+  onClick={handleSaveTask}
+  className={`rounded-lg px-3 py-2 text-sm font-medium text-white ${saving ? "bg-blue-400 cursor-wait" : "bg-blue-600 hover:bg-blue-700"}`}
+  disabled={saving}
+>
+  {saving ? "Saving..." : "Save"}
+</button>
+
       </div>
     </div>
   </div>
