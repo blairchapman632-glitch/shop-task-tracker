@@ -13,64 +13,50 @@ const FREQ_LABELS = {
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // --- VALIDATION (insert below your constants/helpers) ---
-function validateTaskForm(f) {
-  if (!f.title?.trim()) return { ok: false, msg: "Title is required" };
-  if (!f.frequency) return { ok: false, msg: "Frequency is required" };
-  // Require due time for now (keeps kiosk expectations simple)
-  if (!f.due_time) return { ok: false, msg: "Due time is required" };
-
-  switch (f.frequency) {
-    case "few_days_per_week":
-      if (!Array.isArray(f.days_of_week) || f.days_of_week.length === 0) {
-        return { ok: false, msg: "Choose at least one weekday" };
-      }
-      break;
-    case "weekly":
-      if (f.weekly_day === null || f.weekly_day === undefined || f.weekly_day === "") {
-        return { ok: false, msg: "Choose the weekly day" };
-      }
-      break;
-    case "monthly":
-      if (!f.day_of_month || Number(f.day_of_month) < 1 || Number(f.day_of_month) > 31) {
-        return { ok: false, msg: "Enter a day of month (1–31)" };
-      }
-      break;
-    case "specific_date":
-      if (!f.specific_date) return { ok: false, msg: "Pick a date" };
-      break;
-    default:
-      // "daily" has no extra fields
-      break;
-  }
-  return { ok: true };
+switch (f.frequency) {
+  case "weekly":
+    if (!Array.isArray(f.days_of_week) || f.days_of_week.length === 0) {
+      return { ok: false, msg: "Choose at least one weekday" };
+    }
+    break;
+  case "monthly":
+    if (!f.day_of_month || Number(f.day_of_month) < 1 || Number(f.day_of_month) > 31) {
+      return { ok: false, msg: "Enter a day of month (1–31)" };
+    }
+    break;
+  case "specific_date":
+    if (!f.specific_date) return { ok: false, msg: "Pick a date" };
+    break;
+  default:
+    // "daily" has no extra fields
+    break;
 }
 
+
 // Normalize form → row (omit irrelevant fields)
+// Normalize form → DB row (weekly uses days_of_week only)
 function mapFormToRow(f) {
   const base = {
     title: f.title.trim(),
-    frequency: f.frequency,
-    due_time: f.due_time || null,  // keep as "HH:MM" string column or time column
+    frequency: f.frequency,          // "daily" | "weekly" | "monthly" | "specific_date"
+    due_time: f.due_time || null,    // "HH:MM"
     points: Number.isFinite(f.points) ? f.points : 0,
     active: !!f.active,
   };
-  if (f.frequency === "few_days_per_week") {
-    base.days_of_week = f.days_of_week || [];
-    base.weekly_day = null;
-    base.day_of_month = null;
-    base.specific_date = null;
-  } else if (f.frequency === "weekly") {
-    base.weekly_day = Number(f.weekly_day);
-    base.days_of_week = [];
+
+  if (f.frequency === "weekly") {
+    // ONE OR MANY days in a single field
+    base.days_of_week = Array.isArray(f.days_of_week) ? f.days_of_week : [];
+    base.weekly_day = null;      // no longer used
     base.day_of_month = null;
     base.specific_date = null;
   } else if (f.frequency === "monthly") {
-    base.day_of_month = Number(f.day_of_month);
+    base.day_of_month = f.day_of_month ? Number(f.day_of_month) : null;
     base.days_of_week = [];
     base.weekly_day = null;
     base.specific_date = null;
   } else if (f.frequency === "specific_date") {
-    base.specific_date = f.specific_date; // "YYYY-MM-DD"
+    base.specific_date = f.specific_date || null; // "YYYY-MM-DD"
     base.days_of_week = [];
     base.weekly_day = null;
     base.day_of_month = null;
@@ -81,6 +67,7 @@ function mapFormToRow(f) {
     base.day_of_month = null;
     base.specific_date = null;
   }
+
   return base;
 }
 
@@ -560,65 +547,50 @@ async function handleSaveTask() {
         <div>
           <label className="block text-sm font-medium text-gray-700">Frequency</label>
           <select
-            value={taskForm.frequency}
-            onChange={(e) => setTaskForm((f) => ({ ...f, frequency: e.target.value }))}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
-          >
-            <option value="daily">Daily</option>
-            <option value="few_days_per_week">Few days / week</option>
-            <option value="weekly">Weekly (choose a day)</option>
-            <option value="monthly">Monthly (choose a date)</option>
-            <option value="specific_date">Specific date</option>
-          </select>
+  value={taskForm.frequency}
+  onChange={(e) => setTaskForm((f) => ({ ...f, frequency: e.target.value }))}
+  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+>
+  <option value="daily">Daily</option>
+  <option value="weekly">Weekly (pick one or many days)</option>
+  <option value="monthly">Monthly (choose a date)</option>
+  <option value="specific_date">Specific date</option>
+</select>
+
         </div>
 
         {/* Few days per week: multi-select buttons */}
-        {taskForm.frequency === "few_days_per_week" && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Days of week</label>
-            <div className="mt-2 grid grid-cols-7 gap-2 text-sm">
-              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d, idx) => {
-                const selected = taskForm.days_of_week.includes(idx);
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() =>
-                      setTaskForm((f) => ({
-                        ...f,
-                        days_of_week: selected
-                          ? f.days_of_week.filter((x) => x !== idx)
-                          : [...f.days_of_week, idx],
-                      }))
-                    }
-                    className={`rounded-lg border px-2 py-1 ${selected ? "bg-blue-600 text-white border-blue-600" : "bg-white"}`}
-                  >
-                    {d}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+       
 
         {/* Weekly: single day select */}
         {taskForm.frequency === "weekly" && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Weekly day</label>
-            <select
-              value={taskForm.weekly_day ?? ""}
-              onChange={(e) =>
-                setTaskForm((f) => ({ ...f, weekly_day: e.target.value === "" ? null : Number(e.target.value) }))
-              }
-              className="mt-1 w-48 rounded-lg border border-gray-300 px-3 py-2"
-            >
-              <option value="">— choose —</option>
-              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d, idx) => (
-                <option key={d} value={idx}>{d}</option>
-              ))}
-            </select>
-          </div>
-        )}
+  <div>
+    <label className="block text-sm font-medium text-gray-700">Days of week</label>
+    <div className="mt-2 grid grid-cols-7 gap-2 text-sm">
+      {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d, idx) => {
+        const selected = taskForm.days_of_week.includes(idx);
+        return (
+          <button
+            key={d}
+            type="button"
+            onClick={() =>
+              setTaskForm((f) => ({
+                ...f,
+                days_of_week: selected
+                  ? f.days_of_week.filter((x) => x !== idx)
+                  : [...f.days_of_week, idx],
+              }))
+            }
+            className={`rounded-lg border px-2 py-1 ${selected ? "bg-blue-600 text-white border-blue-600" : "bg-white"}`}
+          >
+            {d}
+          </button>
+        );
+      })}
+    </div>
+    <p className="mt-1 text-xs text-gray-500">Tip: pick one day for “once a week”, or several days for “multiple days per week”.</p>
+  </div>
+)}
 
         {/* Monthly: day number */}
         {taskForm.frequency === "monthly" && (
