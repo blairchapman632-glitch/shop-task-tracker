@@ -5,33 +5,51 @@ import supabase from "../lib/supabaseClient"; // works for .js or .ts client
 
 const FREQ_LABELS = {
   daily: "Daily",
-  few_days_per_week: "Few days / week",
-  weekly: "Weekly",
+  weekly: "Weekly (one or many days)",
   monthly: "Monthly",
   specific_date: "Specific date",
 };
 
+
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-// --- VALIDATION (insert below your constants/helpers) ---
-switch (f.frequency) {
-  case "weekly":
-    if (!Array.isArray(f.days_of_week) || f.days_of_week.length === 0) {
-      return { ok: false, msg: "Choose at least one weekday" };
-    }
-    break;
-  case "monthly":
-    if (!f.day_of_month || Number(f.day_of_month) < 1 || Number(f.day_of_month) > 31) {
-      return { ok: false, msg: "Enter a day of month (1–31)" };
-    }
-    break;
-  case "specific_date":
-    if (!f.specific_date) return { ok: false, msg: "Pick a date" };
-    break;
-  default:
-    // "daily" has no extra fields
-    break;
+// --- VALIDATION: all returns stay inside this function ---
+function validateTaskForm(f) {
+  if (!f.title?.trim()) return { ok: false, msg: "Title is required" };
+  if (!f.frequency) return { ok: false, msg: "Frequency is required" };
+  if (!f.due_time) return { ok: false, msg: "Due time is required" };
+
+  switch (f.frequency) {
+    case "weekly":
+      if (!Array.isArray(f.days_of_week) || f.days_of_week.length === 0) {
+        return { ok: false, msg: "Choose at least one weekday" };
+      }
+      break;
+
+    case "monthly":
+      if (
+        !f.day_of_month ||
+        Number(f.day_of_month) < 1 ||
+        Number(f.day_of_month) > 31
+      ) {
+        return { ok: false, msg: "Enter a day of month (1–31)" };
+      }
+      break;
+
+    case "specific_date":
+      if (!f.specific_date) {
+        return { ok: false, msg: "Pick a date" };
+      }
+      break;
+
+    default:
+      // daily has no extra fields
+      break;
+  }
+
+  return { ok: true };
 }
 
+// --- VALIDATION (insert below your constants/helpers) ---
 
 // Normalize form → row (omit irrelevant fields)
 // Normalize form → DB row (weekly uses days_of_week only)
@@ -81,13 +99,9 @@ function freqDetail(task) {
   const f = task.frequency || null;
   if (!f) return "—";
 
-  if (f === "few_days_per_week") {
+  if (f === "weekly") {
     const arr = Array.isArray(task.days_of_week) ? task.days_of_week : [];
     return arr.length ? arr.map((n) => DOW[n] ?? "?").join(", ") : "—";
-  }
-  if (f === "weekly") {
-    const n = typeof task.weekly_day === "number" ? task.weekly_day : null;
-    return n != null ? DOW[n] : "—";
   }
   if (f === "monthly") {
     const d = task.day_of_month;
@@ -96,8 +110,10 @@ function freqDetail(task) {
   if (f === "specific_date") {
     return task.specific_date ?? "—";
   }
+  // daily or anything else
   return "—";
 }
+
 
 function timePretty(t) {
   if (!t) return "—";
