@@ -144,6 +144,10 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tasks, setTasks] = useState([]);
+  // A4 — Bulk selection
+const [selectedIds, setSelectedIds] = useState(new Set());
+const [bulkBusy, setBulkBusy] = useState(false);
+
 // 3.3a — Edit modal state
 const [editingTask, setEditingTask] = useState(null);   // the row being edited
 const [draft, setDraft] = useState({});                 // form values for the modal
@@ -493,6 +497,105 @@ async function handleDeleteTask(taskId) {
       })
       .map((t) => t);
   }, [tasks, q, freqFilter, activeFilter]);
+// A4 — selection helpers
+function toggleOne(id) {
+  setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+}
+function clearSelection() {
+  setSelectedIds(new Set());
+}
+function toggleSelectAllCurrent() {
+  // Uses the current filtered rows (shown in the table)
+  setSelectedIds((prev) => {
+    const allIds = filtered.map((t) => t.id);
+    const allSelected = allIds.length > 0 && allIds.every((id) => prev.has(id));
+    if (allSelected) {
+      const next = new Set(prev);
+      for (const id of allIds) next.delete(id);
+      return next;
+    } else {
+      const next = new Set(prev);
+      for (const id of allIds) next.add(id);
+      return next;
+    }
+  });
+}
+
+// A4 — common refresh after bulk update
+async function refreshTasks() {
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("*")
+    .order("title", { ascending: true });
+  if (error) throw error;
+
+  const normalized = (data || []).map((t) => ({
+    id: t.id,
+    title: t.title ?? "",
+    active: typeof t.active === "boolean" ? t.active : true,
+    points: Number.isFinite(t.points) ? t.points : 1,
+    due_time: t.due_time ?? null,
+    frequency: t.frequency ?? null,
+    days_of_week: t.days_of_week ?? null,
+    weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
+    day_of_month: t.day_of_month ?? null,
+    specific_date: t.specific_date ?? null,
+    sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+  }));
+  normalized.sort((a, b) => {
+    const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
+    if (si !== 0) return si;
+    return (a.title || "").localeCompare(b.title || "");
+  });
+  setTasks(normalized);
+}
+
+// A4 — bulk actions
+async function handleBulkActivate(activeFlag) {
+  const ids = Array.from(selectedIds);
+  if (ids.length === 0) { alert("Select at least one task."); return; }
+  try {
+    setBulkBusy(true);
+    const { error } = await supabase.from("tasks").update({ active: !!activeFlag }).in("id", ids);
+    if (error) throw error;
+    await refreshTasks();
+    clearSelection();
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Bulk update failed");
+  } finally {
+    setBulkBusy(false);
+  }
+}
+
+async function handleBulkSetPoints() {
+  const ids = Array.from(selectedIds);
+  if (ids.length === 0) { alert("Select at least one task."); return; }
+  const val = prompt("Set points for selected tasks (number):", "1");
+  if (val === null) return; // cancelled
+  const points = Number(val);
+  if (!Number.isFinite(points) || points < 0) {
+    alert("Please enter a valid number (0 or more).");
+    return;
+  }
+  try {
+    setBulkBusy(true);
+    const { error } = await supabase.from("tasks").update({ points }).in("id", ids);
+    if (error) throw error;
+    await refreshTasks();
+    clearSelection();
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Bulk update failed");
+  } finally {
+    setBulkBusy(false);
+  }
+}
 
   const TabButton = ({ id, children, disabled }) => {
     const isActive = activeTab === id;
@@ -642,6 +745,46 @@ async function handleDeleteTask(taskId) {
                     </div>
                   )}
                 </div>
+{/* A4 — Bulk toolbar */}
+{selectedIds.size > 0 && !loading && !err && (
+  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
+    <span className="font-medium">
+      {selectedIds.size} selected
+    </span>
+    <button
+      type="button"
+      disabled={bulkBusy}
+      onClick={() => handleBulkActivate(true)}
+      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
+    >
+      Activate
+    </button>
+    <button
+      type="button"
+      disabled={bulkBusy}
+      onClick={() => handleBulkActivate(false)}
+      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
+    >
+      Deactivate
+    </button>
+    <button
+      type="button"
+      disabled={bulkBusy}
+      onClick={handleBulkSetPoints}
+      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
+    >
+      Set Points…
+    </button>
+    <button
+      type="button"
+      disabled={bulkBusy}
+      onClick={clearSelection}
+      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
+    >
+      Clear
+    </button>
+  </div>
+)}
 
                 {/* Table */}
                 {!loading && !err && (
@@ -649,6 +792,15 @@ async function handleDeleteTask(taskId) {
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="text-left text-gray-600">
+                  <th className="w-8 p-2">
+  <input
+    type="checkbox"
+    onChange={() => toggleSelectAllCurrent()}
+    checked={filtered.length > 0 && filtered.every((t) => selectedIds.has(t.id))}
+    aria-label="Select all on page"
+  />
+</th>
+
                           <th className="w-10 p-2">#</th>
                           <th className="p-2">Title</th>
                           <th className="p-2">Frequency</th>
@@ -673,7 +825,16 @@ async function handleDeleteTask(taskId) {
                             key={t.id || `row-${i}`}
                             className="border-t border-gray-100 hover:bg-gray-50"
                           >
-                            <td className="p-2 align-top text-gray-400">
+                            <td className="p-2 align-top">
+  <input
+    type="checkbox"
+    checked={selectedIds.has(t.id)}
+    onChange={() => toggleOne(t.id)}
+    aria-label={`Select ${t.title || "Untitled"}`}
+  />
+</td>
+
+                              <td className="p-2 align-top text-gray-400">
                               {(t.sort_index ?? 1000) === 1000 ? i + 1 : t.sort_index}
                             </td>
                             <td className="p-2 align-top">
