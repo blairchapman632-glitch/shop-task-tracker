@@ -312,7 +312,8 @@ async function saveEdit() {
 // A3.3b — delete a row with confirm
 async function handleDelete(row) {
   if (!row || !row.id) return;
-  const ok = confirm(`Delete "${row.title || "Untitled"}"? This cannot be undone.`);
+  const ok = typeof window !== "undefined" && window.confirm(`Delete "${row.title || "Untitled"}"? This cannot be undone.`);
+
   if (!ok) return;
 
   try {
@@ -626,7 +627,7 @@ async function handleDelete(row) {
                                <td className="p-2 align-top whitespace-nowrap">
   <button
     type="button"
-    onClick={() => openEdit(t)}
+    onClick={(e) => { e.preventDefault(); e.stopPropagation(); openEdit(t); }}
     className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
     title="Edit this task"
   >
@@ -634,7 +635,8 @@ async function handleDelete(row) {
   </button>
   <button
     type="button"
-    onClick={() => handleDelete(t)}
+    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(t); }}
+
     disabled={deletingId === t.id}
     className="ml-2 rounded-lg border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
     title="Delete this task"
