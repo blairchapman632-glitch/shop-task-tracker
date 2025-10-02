@@ -144,6 +144,10 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tasks, setTasks] = useState([]);
+// 3.3a — Edit modal state
+const [editingTask, setEditingTask] = useState(null);   // the row being edited
+const [draft, setDraft] = useState({});                 // form values for the modal
+const [saving, setSaving] = useState(false);
 
   // Filters
   const [q, setQ] = useState("");
@@ -263,6 +267,80 @@ async function handleSaveTask() {
       isMounted = false;
     };
   }, []);
+// 3.3a — open editor for a row
+function openEdit(row) {
+  setEditingTask(row);
+  setDraft({
+    title: row.title || "",
+    active: !!row.active,
+    points: Number.isFinite(row.points) ? row.points : 1,
+    due_time: row.due_time || "",
+    frequency: row.frequency || "daily",
+    days_of_week: Array.isArray(row.days_of_week) ? row.days_of_week : [],
+    weekly_day: typeof row.weekly_day === "number" ? row.weekly_day : null,
+    day_of_month: row.day_of_month || null,
+    specific_date: row.specific_date || "",
+    sort_index: Number.isFinite(row.sort_index) ? row.sort_index : 1000,
+  });
+}
+
+function closeEdit() {
+  setEditingTask(null);
+  setDraft({});
+}
+
+async function saveEdit() {
+  if (!editingTask) return;
+  try {
+    setSaving(true);
+
+    const payload = {
+      title: draft.title,
+      active: !!draft.active,
+      points: Number(draft.points) || 1,
+      due_time: draft.due_time || null,
+      frequency: draft.frequency || null,
+      days_of_week: draft.frequency === "few_days_per_week" ? draft.days_of_week : null,
+      weekly_day: draft.frequency === "weekly" ? (draft.weekly_day ?? null) : null,
+      day_of_month: draft.frequency === "monthly" ? (Number(draft.day_of_month) || null) : null,
+      specific_date: draft.frequency === "specific_date" ? (draft.specific_date || null) : null,
+      sort_index: Number.isFinite(Number(draft.sort_index)) ? Number(draft.sort_index) : 1000,
+    };
+
+    const { error } = await supabase.from("tasks").update(payload).eq("id", editingTask.id);
+    if (error) throw error;
+
+    // Quick refresh: requery and normalise like initial load
+    const { data, error: e2 } = await supabase.from("tasks").select("*").order("title", { ascending: true });
+    if (e2) throw e2;
+
+    const normalized = (data || []).map((t) => ({
+      id: t.id,
+      title: t.title ?? "",
+      active: typeof t.active === "boolean" ? t.active : true,
+      points: Number.isFinite(t.points) ? t.points : 1,
+      due_time: t.due_time ?? null,
+      frequency: t.frequency ?? null,
+      days_of_week: t.days_of_week ?? null,
+      weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
+      day_of_month: t.day_of_month ?? null,
+      specific_date: t.specific_date ?? null,
+      sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+    }));
+    normalized.sort((a, b) => {
+      const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
+      if (si !== 0) return si;
+      return (a.title || "").localeCompare(b.title || "");
+    });
+    setTasks(normalized);
+
+    closeEdit();
+  } catch (err) {
+    alert(err.message || String(err));
+  } finally {
+    setSaving(false);
+  }
+}
 
   const filtered = useMemo(() => {
     return tasks
@@ -453,6 +531,8 @@ async function handleSaveTask() {
                           <th className="p-2">Due</th>
                           <th className="p-2">Points</th>
                           <th className="p-2">Active</th>
+                  <th className="p-2">Actions</th>
+
                         </tr>
                       </thead>
                       <tbody>
@@ -489,6 +569,17 @@ async function handleSaveTask() {
                                 <Chip tone="gray">Inactive</Chip>
                               )}
                             </td>
+                                <td className="p-2 align-top">
+  <button
+    type="button"
+    onClick={() => openEdit(t)}
+    className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+    title="Edit this task"
+  >
+    Edit
+  </button>
+</td>
+
                           </tr>
                         ))}
                       </tbody>
@@ -691,6 +782,177 @@ async function handleSaveTask() {
   {saving ? "Saving..." : "Save"}
 </button>
 
+      </div>
+    </div>
+  </div>
+)}
+{/* 3.3a — Edit Modal */}
+{editingTask && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className="w-full max-w-xl rounded-2xl bg-white shadow-lg">
+      <div className="border-b p-4 flex items-center justify-between">
+        <h3 className="text-base font-semibold">Edit task</h3>
+        <button type="button" onClick={closeEdit} className="rounded-md border px-2 py-1 text-sm">
+          Close
+        </button>
+      </div>
+
+      <div className="p-4 space-y-3">
+        {/* Title */}
+        <label className="block text-sm">
+          <span className="text-gray-700">Title</span>
+          <input
+            type="text"
+            value={draft.title || ""}
+            onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+          />
+        </label>
+
+        {/* Active + Points */}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={!!draft.active}
+              onChange={(e) => setDraft((d) => ({ ...d, active: e.target.checked }))}
+            />
+            Active
+          </label>
+          <label className="block text-sm">
+            <span className="text-gray-700">Points</span>
+            <input
+              type="number"
+              min="0"
+              value={draft.points ?? 1}
+              onChange={(e) => setDraft((d) => ({ ...d, points: e.target.value }))}
+              className="mt-1 w-full rounded-lg border px-3 py-2"
+            />
+          </label>
+        </div>
+
+        {/* Due time */}
+        <label className="block text-sm">
+          <span className="text-gray-700">Due time</span>
+          <input
+            type="time"
+            value={draft.due_time || ""}
+            onChange={(e) => setDraft((d) => ({ ...d, due_time: e.target.value }))}
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+          />
+        </label>
+
+        {/* Frequency */}
+        <label className="block text-sm">
+          <span className="text-gray-700">Frequency</span>
+          <select
+            value={draft.frequency || "daily"}
+            onChange={(e) => setDraft((d) => ({ ...d, frequency: e.target.value }))}
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+          >
+            <option value="daily">Daily</option>
+            <option value="few_days_per_week">Few days / week</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="specific_date">Specific date</option>
+          </select>
+        </label>
+
+        {/* Conditional fields */}
+        {draft.frequency === "few_days_per_week" && (
+          <div className="text-sm">
+            <span className="text-gray-700">Days of week</span>
+            <div className="mt-1 grid grid-cols-7 gap-2">
+              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((label, idx) => (
+                <label key={idx} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={Array.isArray(draft.days_of_week) ? draft.days_of_week.includes(idx) : false}
+                    onChange={(e) => {
+                      setDraft((d) => {
+                        const arr = Array.isArray(d.days_of_week) ? [...d.days_of_week] : [];
+                        if (e.target.checked) {
+                          if (!arr.includes(idx)) arr.push(idx);
+                        } else {
+                          const pos = arr.indexOf(idx);
+                          if (pos >= 0) arr.splice(pos, 1);
+                        }
+                        return { ...d, days_of_week: arr.sort((a,b)=>a-b) };
+                      });
+                    }}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {draft.frequency === "weekly" && (
+          <label className="block text-sm">
+            <span className="text-gray-700">Weekly day</span>
+            <select
+              value={draft.weekly_day ?? ""}
+              onChange={(e) => setDraft((d) => ({ ...d, weekly_day: e.target.value === "" ? null : Number(e.target.value) }))}
+              className="mt-1 w-full rounded-lg border px-3 py-2"
+            >
+              <option value="">—</option>
+              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((label, idx) => (
+                <option key={idx} value={idx}>{label}</option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {draft.frequency === "monthly" && (
+          <label className="block text-sm">
+            <span className="text-gray-700">Day of month (1–31)</span>
+            <input
+              type="number"
+              min="1" max="31"
+              value={draft.day_of_month ?? ""}
+              onChange={(e) => setDraft((d) => ({ ...d, day_of_month: e.target.value ? Number(e.target.value) : null }))}
+              className="mt-1 w-full rounded-lg border px-3 py-2"
+            />
+          </label>
+        )}
+
+        {draft.frequency === "specific_date" && (
+          <label className="block text-sm">
+            <span className="text-gray-700">Specific date</span>
+            <input
+              type="date"
+              value={draft.specific_date ? String(draft.specific_date).slice(0,10) : ""}
+              onChange={(e) => setDraft((d) => ({ ...d, specific_date: e.target.value }))}
+              className="mt-1 w-full rounded-lg border px-3 py-2"
+            />
+          </label>
+        )}
+
+        {/* sort_index */}
+        <label className="block text-sm">
+          <span className="text-gray-700">Sort index (smaller = higher)</span>
+          <input
+            type="number"
+            value={draft.sort_index ?? 1000}
+            onChange={(e) => setDraft((d) => ({ ...d, sort_index: Number(e.target.value) }))}
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+          />
+        </label>
+      </div>
+
+      <div className="border-t p-4 flex items-center justify-end gap-2">
+        <button type="button" onClick={closeEdit} className="rounded-lg border px-3 py-2 text-sm">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={saveEdit}
+          className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm disabled:opacity-60"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
       </div>
     </div>
   </div>
