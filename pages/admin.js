@@ -596,6 +596,110 @@ async function handleBulkSetPoints() {
     setBulkBusy(false);
   }
 }
+// A4 — bulk set frequency (prompt-driven)
+async function handleBulkSetFrequency() {
+  const ids = Array.from(selectedIds);
+  if (ids.length === 0) { alert("Select at least one task."); return; }
+
+  // 1) Choose frequency
+  const freq = prompt(
+    'Set frequency: enter one of\n- daily\n- few_days_per_week\n- weekly\n- monthly\n- specific_date',
+    'daily'
+  );
+  if (freq === null) return; // cancel
+  const f = String(freq).trim();
+
+  // 2) Collect extra values based on frequency
+  let payload = { frequency: f, days_of_week: null, weekly_day: null, day_of_month: null, specific_date: null };
+
+  if (f === 'few_days_per_week') {
+    const inp = prompt('Enter days 0-6 separated by commas (0=Sun…6=Sat). Example: 1,3,5 for Mon,Wed,Fri', '1,3,5');
+    if (inp === null) return;
+    const parts = String(inp).split(',').map(s => s.trim()).filter(Boolean);
+    const arr = Array.from(new Set(parts.map(n => parseInt(n,10)).filter(n => Number.isInteger(n) && n>=0 && n<=6))).sort((a,b)=>a-b);
+    if (arr.length === 0) { alert('No valid days entered.'); return; }
+    payload.days_of_week = arr;
+  } else if (f === 'weekly') {
+    const d = prompt('Enter weekly day 0-6 (0=Sun…6=Sat)', '1');
+    if (d === null) return;
+    const val = parseInt(String(d).trim(), 10);
+    if (!Number.isInteger(val) || val < 0 || val > 6) { alert('Invalid day.'); return; }
+    payload.weekly_day = val;
+  } else if (f === 'monthly') {
+    const m = prompt('Enter day of month (1–31)', '1');
+    if (m === null) return;
+    const val = parseInt(String(m).trim(), 10);
+    if (!Number.isInteger(val) || val < 1 || val > 31) { alert('Invalid day of month.'); return; }
+    payload.day_of_month = val;
+  } else if (f === 'specific_date') {
+    const dt = prompt('Enter date as YYYY-MM-DD', new Date().toISOString().slice(0,10));
+    if (dt === null) return;
+    const s = String(dt).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) { alert('Invalid date format.'); return; }
+    payload.specific_date = s;
+  } else if (f !== 'daily') {
+    alert('Unsupported frequency value.');
+    return;
+  }
+
+  try {
+    setBulkBusy(true);
+    const { error } = await supabase
+      .from('tasks')
+      .update(payload)
+      .in('id', ids);
+    if (error) throw error;
+
+    await refreshTasks();
+    clearSelection();
+  } catch (err) {
+    console.error(err);
+    alert(err.message || 'Bulk update failed');
+  } finally {
+    setBulkBusy(false);
+  }
+}
+// A4 — bulk delete selected
+async function handleBulkDelete() {
+  const ids = Array.from(selectedIds);
+  if (ids.length === 0) { alert("Select at least one task."); return; }
+
+  const ok = typeof window !== 'undefined' &&
+             window.confirm(`Delete ${ids.length} selected task(s)? This cannot be undone.`);
+  if (!ok) return;
+
+  try {
+    setBulkBusy(true);
+    const { data, error } = await supabase
+      .from('tasks')
+      .delete()
+      .in('id', ids)
+      .select('id'); // return deleted rows so we can verify
+
+    if (error) {
+      const msg = (error.message || '').toLowerCase();
+      if (msg.includes('foreign key') || msg.includes('violates')) {
+        alert('Cannot delete one or more selected tasks because they have linked history (completions). Try deactivating instead.');
+      } else {
+        alert(error.message || 'Bulk delete failed');
+      }
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      alert('No rows were deleted. Check permissions.');
+      return;
+    }
+
+    await refreshTasks();
+    clearSelection();
+  } catch (err) {
+    console.error(err);
+    alert(err.message || 'Bulk delete failed');
+  } finally {
+    setBulkBusy(false);
+  }
+}
 
   const TabButton = ({ id, children, disabled }) => {
     const isActive = activeTab === id;
@@ -771,6 +875,24 @@ async function handleBulkSetPoints() {
       type="button"
       disabled={bulkBusy}
       onClick={handleBulkSetPoints}
+<button
+  type="button"
+  disabled={bulkBusy}
+  onClick={handleBulkSetFrequency}
+<button
+  type="button"
+  disabled={bulkBusy}
+  onClick={handleBulkDelete}
+  className="rounded-lg border border-red-300 bg-white px-2.5 py-1 text-red-700 hover:bg-red-50 disabled:opacity-60"
+>
+  Delete…
+</button>
+
+  className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
+>
+  Set Frequency…
+</button>
+
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
       Set Points…
