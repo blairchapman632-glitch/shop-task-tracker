@@ -16,6 +16,34 @@ export default function HomePage() {
   const [showConfetti, setShowConfetti] = useState(false);
 
   // Local “today” bounds (device time = Perth kiosk)
+  // ——— 3.3b helper: decide if a task should show today ———
+function isTaskForToday(task, now = new Date()) {
+  const dow = now.getDay();                 // 0=Sun … 6=Sat
+  const todayISO = now.toISOString().slice(0, 10); // "YYYY-MM-DD"
+
+  const freq = task.frequency || "daily";   // default to daily if missing
+  switch (freq) {
+    case "daily":
+      return true;
+
+    case "few_days_per_week":
+      return Array.isArray(task.days_of_week) && task.days_of_week.includes(dow);
+
+    case "weekly":
+      return typeof task.weekly_day === "number" && task.weekly_day === dow;
+
+    case "monthly":
+      return Number(task.day_of_month) === now.getDate();
+
+    case "specific_date":
+      return typeof task.specific_date === "string" && task.specific_date.slice(0, 10) === todayISO;
+
+    default:
+      // If unknown / missing, show it (acts like daily) so nothing "disappears" unexpectedly.
+      return true;
+  }
+}
+
   const getTodayBoundsISO = () => {
     const start = new Date(); start.setHours(0,0,0,0);
     const end = new Date();   end.setHours(23,59,59,999);
@@ -39,9 +67,23 @@ export default function HomePage() {
       if (se) console.error("Staff load error:", se.message);
 
       const activeTasks = (t ?? []).filter((x) => x.active !== false);
-      const activeStaff = (s ?? []).filter((x) => x.active !== false);
-      setTasks(activeTasks);
-      setStaff(activeStaff);
+
+// NEW: keep only tasks relevant for today (based on frequency rules)
+const todayTasks = activeTasks.filter((task) => isTaskForToday(task));
+
+// (Optional) stable sort: by sort_index (if set), then by title
+todayTasks.sort((a, b) => {
+  const siA = Number.isFinite(a.sort_index) ? a.sort_index : 1000;
+  const siB = Number.isFinite(b.sort_index) ? b.sort_index : 1000;
+  if (siA !== siB) return siA - siB;
+  return (a.title || "").localeCompare(b.title || "");
+});
+
+setTasks(todayTasks);
+
+const activeStaff = (s ?? []).filter((x) => x.active !== false);
+setStaff(activeStaff);
+
 
       const { startISO, endISO } = getTodayBoundsISO();
       const { data: comps, error: ce } = await supabase
