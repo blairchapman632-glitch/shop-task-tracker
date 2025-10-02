@@ -226,13 +226,20 @@ setStaff(activeStaff);
                   {progress.done}/{progress.total} ({progress.pct}%)
                 </span>
               </div>
-              {selectedStaffId && (
-                <div className="mb-2">
-                  <span className="text-xs md:text-sm bg-green-100 text-green-800 rounded-full px-2 py-0.5">
-                    Selected: {selectedStaffName}
-                  </span>
-                </div>
-              )}
+             {selectedStaffId ? (
+  <div className="mb-2">
+    <span className="text-xs md:text-sm bg-green-100 text-green-800 rounded-full px-2 py-0.5">
+      Selected: {selectedStaffName}
+    </span>
+  </div>
+) : (
+  <div className="mb-2">
+    <span className="text-xs md:text-sm bg-blue-50 text-blue-800 rounded-md px-2 py-1 border border-blue-200">
+      Tip: Tap your photo on the right, then tap a task here.
+    </span>
+  </div>
+)}
+
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[calc(100vh-220px)] overflow-y-auto overscroll-contain pr-1 nice-scroll">
 
@@ -240,12 +247,13 @@ setStaff(activeStaff);
                   const isDone = completedTaskIds.has(task.id);
                   return (
                     <button
-                      key={task.id}
-                      className={`p-2 rounded-lg border text-left hover:shadow-sm active:scale-[0.99] leading-snug h-16 flex flex-col ${
-                        isDone ? "bg-green-50 border-green-300" : "bg-white"
-                      }`}
-                      onClick={() => handleTaskTap(task)}
-                    >
+  key={task.id}
+  className={`p-2 rounded-lg border text-left active:scale-[0.99] leading-snug h-16 flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
+    isDone ? "bg-green-50 border-green-300" : "bg-white"
+  } ${selectedStaffId ? "hover:ring-2 hover:ring-blue-300 hover:border-blue-300" : "opacity-100"}`}
+  onClick={() => handleTaskTap(task)}
+>
+
                       <div className="flex flex-col flex-1">
                         <div className="flex items-start gap-3">
                           <div
