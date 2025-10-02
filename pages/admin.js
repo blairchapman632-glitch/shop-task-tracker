@@ -855,6 +855,7 @@ async function handleBulkDelete() {
     <span className="font-medium">
       {selectedIds.size} selected
     </span>
+
     <button
       type="button"
       disabled={bulkBusy}
@@ -863,6 +864,7 @@ async function handleBulkDelete() {
     >
       Activate
     </button>
+
     <button
       type="button"
       disabled={bulkBusy}
@@ -871,32 +873,34 @@ async function handleBulkDelete() {
     >
       Deactivate
     </button>
+
     <button
       type="button"
       disabled={bulkBusy}
       onClick={handleBulkSetPoints}
-<button
-  type="button"
-  disabled={bulkBusy}
-  onClick={handleBulkSetFrequency}
-<button
-  type="button"
-  disabled={bulkBusy}
-  onClick={handleBulkDelete}
-  className="rounded-lg border border-red-300 bg-white px-2.5 py-1 text-red-700 hover:bg-red-50 disabled:opacity-60"
->
-  Delete…
-</button>
-
-  className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
->
-  Set Frequency…
-</button>
-
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
       Set Points…
     </button>
+
+    <button
+      type="button"
+      disabled={bulkBusy}
+      onClick={handleBulkSetFrequency}
+      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
+    >
+      Set Frequency…
+    </button>
+
+    <button
+      type="button"
+      disabled={bulkBusy}
+      onClick={handleBulkDelete}
+      className="rounded-lg border border-red-300 bg-white px-2.5 py-1 text-red-700 hover:bg-red-50 disabled:opacity-60"
+    >
+      Delete…
+    </button>
+
     <button
       type="button"
       disabled={bulkBusy}
@@ -907,6 +911,7 @@ async function handleBulkDelete() {
     </button>
   </div>
 )}
+
 
                 {/* Table */}
                 {!loading && !err && (
