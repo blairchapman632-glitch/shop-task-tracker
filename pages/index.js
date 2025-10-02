@@ -27,7 +27,12 @@ export default function HomePage() {
     const load = async () => {
       setLoading(true);
       const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
-        supabase.from("tasks").select("id,title,active,period,due_time").order("title", { ascending: true }),
+        supabase
+  .from("tasks")
+  .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,sort_index")
+  .order("sort_index", { ascending: true })
+  .order("title", { ascending: true }),
+
         supabase.from("staff").select("id,name,photo_url,active").order("name", { ascending: true }),
       ]);
       if (te) console.error("Tasks load error:", te.message);
