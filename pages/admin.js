@@ -149,6 +149,7 @@ const [editingTask, setEditingTask] = useState(null);   // the row being edited
 const [draft, setDraft] = useState({});                 // form values for the modal
 const [editSaving, setEditSaving] = useState(false);
 const [deletingId, setDeletingId] = useState(null);     // row.id currently being deleted
+const [confirmDelete, setConfirmDelete] = useState(null); // holds the row to confirm-delete
 
 
   // Filters
@@ -312,9 +313,7 @@ async function saveEdit() {
 // A3.3b — delete a row with confirm
 async function handleDelete(row) {
   if (!row || !row.id) return;
-  const ok = typeof window !== "undefined" && window.confirm(`Delete "${row.title || "Untitled"}"? This cannot be undone.`);
-
-  if (!ok) return;
+  
 
   try {
     setDeletingId(row.id);
@@ -357,9 +356,11 @@ async function handleDelete(row) {
   } catch (err) {
     console.error(err);
     alert(err.message || "Delete failed");
-  } finally {
-    setDeletingId(null);
-  }
+ } finally {
+  setDeletingId(null);
+  setConfirmDelete(null);
+}
+
 }
 
     const { error } = await supabase.from("tasks").update(payload).eq("id", editingTask.id);
@@ -635,7 +636,8 @@ async function handleDelete(row) {
   </button>
   <button
     type="button"
-    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(t); }}
+  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDelete(t); }}
+
 
     disabled={deletingId === t.id}
     className="ml-2 rounded-lg border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
@@ -1017,6 +1019,39 @@ async function handleDelete(row) {
           className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm disabled:opacity-60"
         >
           {editSaving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+{/* A3.3b — Confirm Delete Modal */}
+{confirmDelete && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center">
+    {/* Backdrop */}
+    <div className="absolute inset-0 bg-black/40" onClick={() => setConfirmDelete(null)} />
+
+    {/* Dialog */}
+    <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-4 shadow-lg">
+      <h3 className="text-base font-semibold">Delete task?</h3>
+      <p className="mt-2 text-sm text-gray-600">
+        “{confirmDelete.title || "Untitled"}” will be permanently removed.
+      </p>
+
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => setConfirmDelete(null)}
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => handleDelete(confirmDelete)}
+          disabled={deletingId === confirmDelete.id}
+          className="rounded-lg bg-red-600 text-white px-3 py-2 text-sm disabled:opacity-60"
+        >
+          {deletingId === confirmDelete.id ? "Deleting…" : "Delete"}
         </button>
       </div>
     </div>
