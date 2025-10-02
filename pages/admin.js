@@ -148,6 +148,7 @@ export default function AdminPage() {
 const [editingTask, setEditingTask] = useState(null);   // the row being edited
 const [draft, setDraft] = useState({});                 // form values for the modal
 const [editSaving, setEditSaving] = useState(false);
+const [deletingId, setDeletingId] = useState(null);     // row.id currently being deleted
 
 
   // Filters
@@ -308,6 +309,57 @@ async function saveEdit() {
       specific_date: draft.frequency === "specific_date" ? (draft.specific_date || null) : null,
       sort_index: Number.isFinite(Number(draft.sort_index)) ? Number(draft.sort_index) : 1000,
     };
+// A3.3b — delete a row with confirm
+async function handleDelete(row) {
+  if (!row || !row.id) return;
+  const ok = confirm(`Delete "${row.title || "Untitled"}"? This cannot be undone.`);
+  if (!ok) return;
+
+  try {
+    setDeletingId(row.id);
+
+    const { error } = await supabase.from("tasks").delete().eq("id", row.id);
+    if (error) {
+      // Friendlier message if there are linked completions blocking delete
+      const msg = (error.message || "").toLowerCase();
+      if (msg.includes("foreign key") || msg.includes("violates")) {
+        alert("Cannot delete this task because it has linked history (completions). Consider deactivating it instead.");
+      } else {
+        alert(error.message || "Delete failed");
+      }
+      return;
+    }
+
+    // Refresh rows (same normalise/sort as initial load)
+    const { data, error: e2 } = await supabase.from("tasks").select("*").order("title", { ascending: true });
+    if (e2) throw e2;
+
+    const normalized = (data || []).map((t) => ({
+      id: t.id,
+      title: t.title ?? "",
+      active: typeof t.active === "boolean" ? t.active : true,
+      points: Number.isFinite(t.points) ? t.points : 1,
+      due_time: t.due_time ?? null,
+      frequency: t.frequency ?? null,
+      days_of_week: t.days_of_week ?? null,
+      weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
+      day_of_month: t.day_of_month ?? null,
+      specific_date: t.specific_date ?? null,
+      sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+    }));
+    normalized.sort((a, b) => {
+      const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
+      if (si !== 0) return si;
+      return (a.title || "").localeCompare(b.title || "");
+    });
+    setTasks(normalized);
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Delete failed");
+  } finally {
+    setDeletingId(null);
+  }
+}
 
     const { error } = await supabase.from("tasks").update(payload).eq("id", editingTask.id);
     if (error) throw error;
@@ -571,7 +623,7 @@ async function saveEdit() {
                                 <Chip tone="gray">Inactive</Chip>
                               )}
                             </td>
-                                <td className="p-2 align-top">
+                               <td className="p-2 align-top whitespace-nowrap">
   <button
     type="button"
     onClick={() => openEdit(t)}
@@ -579,6 +631,15 @@ async function saveEdit() {
     title="Edit this task"
   >
     Edit
+  </button>
+  <button
+    type="button"
+    onClick={() => handleDelete(t)}
+    disabled={deletingId === t.id}
+    className="ml-2 rounded-lg border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+    title="Delete this task"
+  >
+    {deletingId === t.id ? "Deleting…" : "Delete"}
   </button>
 </td>
 
