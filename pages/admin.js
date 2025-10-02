@@ -397,6 +397,69 @@ async function handleDelete(row) {
    setEditSaving(false);
   }
 }
+// A3.3b — delete by id; return deleted rows so we know it ran
+async function handleDeleteTask(taskId) {
+  if (!taskId) return;
+  try {
+    setDeletingId(taskId);
+
+    // Ask PostgREST to return the deleted rows so we can verify
+    const { data, error } = await supabase
+      .from("tasks")
+      .delete()
+      .eq("id", taskId)
+      .select("id"); // <- IMPORTANT: ensures we get rows back if deletion happened
+
+    if (error) {
+      const msg = (error.message || "").toLowerCase();
+      if (msg.includes("foreign key") || msg.includes("violates")) {
+        alert("Cannot delete this task because it has linked history (completions). Consider deactivating it instead.");
+      } else {
+        alert(error.message || "Delete failed");
+      }
+      return;
+    }
+
+    // If no row was returned, nothing was deleted (id mismatch / policy)
+    if (!data || data.length === 0) {
+      alert(`Delete did not remove any rows (id: ${taskId}). Check the id type/permissions.`);
+      return;
+    }
+
+    // Refresh rows (same normalise/sort as initial load)
+    const { data: refreshed, error: e2 } = await supabase
+      .from("tasks")
+      .select("*")
+      .order("title", { ascending: true });
+    if (e2) throw e2;
+
+    const normalized = (refreshed || []).map((t) => ({
+      id: t.id,
+      title: t.title ?? "",
+      active: typeof t.active === "boolean" ? t.active : true,
+      points: Number.isFinite(t.points) ? t.points : 1,
+      due_time: t.due_time ?? null,
+      frequency: t.frequency ?? null,
+      days_of_week: t.days_of_week ?? null,
+      weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
+      day_of_month: t.day_of_month ?? null,
+      specific_date: t.specific_date ?? null,
+      sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+    }));
+    normalized.sort((a, b) => {
+      const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
+      if (si !== 0) return si;
+      return (a.title || "").localeCompare(b.title || "");
+    });
+    setTasks(normalized);
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Delete failed");
+  } finally {
+    setDeletingId(null);
+    setConfirmDelete(null);
+  }
+}
 
   const filtered = useMemo(() => {
     return tasks
@@ -1047,7 +1110,8 @@ async function handleDelete(row) {
         </button>
         <button
           type="button"
-          onClick={() => handleDelete(confirmDelete)}
+          onClick={() => handleDeleteTask(confirmDelete.id)}
+
           disabled={deletingId === confirmDelete.id}
           className="rounded-lg bg-red-600 text-white px-3 py-2 text-sm disabled:opacity-60"
         >
