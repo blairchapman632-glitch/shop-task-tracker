@@ -181,6 +181,12 @@ useEffect(() => {
 const [saving, setSaving] = useState(false);
 
 async function handleSaveTask() {
+  // Safe-mode validation: require a title
+if (!taskForm?.title || !taskForm.title.trim()) {
+  alert("Please enter a task title before saving.");
+  return;
+}
+
   const v = validateTaskForm(taskForm);
   if (!v.ok) {
     alert(v.msg); // simple + visible; we’ll replace with a toast later
