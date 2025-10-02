@@ -43,6 +43,14 @@ function isTaskForToday(task, now = new Date()) {
       return true;
   }
 }
+// ——— 3.3c helper: convert "HH:MM" or "HH:MM:SS" → minutes since midnight ———
+function timeToMinutes(t) {
+  if (!t) return Number.POSITIVE_INFINITY; // puts "no due time" last
+  const parts = String(t).split(":");
+  const hh = parseInt(parts[0] || "0", 10);
+  const mm = parseInt(parts[1] || "0", 10);
+  return (hh * 60) + mm;
+}
 
   const getTodayBoundsISO = () => {
     const start = new Date(); start.setHours(0,0,0,0);
@@ -71,13 +79,21 @@ function isTaskForToday(task, now = new Date()) {
 // NEW: keep only tasks relevant for today (based on frequency rules)
 const todayTasks = activeTasks.filter((task) => isTaskForToday(task));
 
-// (Optional) stable sort: by sort_index (if set), then by title
+// (Optional) stable sort: by sort_index → due_time (HH:MM) → title
 todayTasks.sort((a, b) => {
   const siA = Number.isFinite(a.sort_index) ? a.sort_index : 1000;
   const siB = Number.isFinite(b.sort_index) ? b.sort_index : 1000;
   if (siA !== siB) return siA - siB;
+
+  // next: earlier due_time first; tasks with no due_time go last
+  const tA = timeToMinutes(a.due_time);
+  const tB = timeToMinutes(b.due_time);
+  if (tA !== tB) return tA - tB;
+
+  // finally: title A→Z
   return (a.title || "").localeCompare(b.title || "");
 });
+
 
 setTasks(todayTasks);
 
