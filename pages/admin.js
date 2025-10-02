@@ -147,7 +147,8 @@ export default function AdminPage() {
 // 3.3a — Edit modal state
 const [editingTask, setEditingTask] = useState(null);   // the row being edited
 const [draft, setDraft] = useState({});                 // form values for the modal
-const [saving, setSaving] = useState(false);
+const [editSaving, setEditSaving] = useState(false);
+
 
   // Filters
   const [q, setQ] = useState("");
@@ -292,7 +293,8 @@ function closeEdit() {
 async function saveEdit() {
   if (!editingTask) return;
   try {
-    setSaving(true);
+    setEditSaving(true);
+
 
     const payload = {
       title: draft.title,
@@ -338,7 +340,7 @@ async function saveEdit() {
   } catch (err) {
     alert(err.message || String(err));
   } finally {
-    setSaving(false);
+   setEditSaving(false);
   }
 }
 
@@ -947,11 +949,11 @@ async function saveEdit() {
         </button>
         <button
           type="button"
-          disabled={saving}
+          disabled={editSaving}
           onClick={saveEdit}
           className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm disabled:opacity-60"
         >
-          {saving ? "Saving…" : "Save"}
+          {editSaving ? "Saving…" : "Save"}
         </button>
       </div>
     </div>
