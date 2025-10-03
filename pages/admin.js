@@ -689,8 +689,8 @@ async function handleBulkSetFrequency() {
   const ids = Array.from(selectedIds);
   if (ids.length === 0) { alert("Select at least one task."); return; }
 
-  // 1) Choose frequency (legacy prompt flow)
-  const freq = prompt(
+  // Removed legacy prompt-based bulk set frequency (now handled by modal)
+
     'Set frequency: enter one of\n- daily\n- weekly\n- monthly\n- specific_date',
     'daily'
   );
@@ -900,19 +900,7 @@ async function handleBulkDelete() {
 >
   + New Task
 </button>
-{selectedIds.size > 0 && (
-  <button
-    type="button"
-    onClick={() => {
-      setBulkDraft({ frequency: "daily", days_of_week: [], day_of_month: "", specific_date: "" });
-      setShowBulkFreq(true);
-    }}
-    className="ml-2 inline-flex items-center rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
-    title="Bulk set frequency"
-  >
-    Bulk: Set Frequency… ({selectedIds.size} selected)
-  </button>
-)}
+
 
                     <input
                       type="text"
@@ -994,14 +982,18 @@ async function handleBulkDelete() {
       Set Points…
     </button>
 
-    <button
-      type="button"
-      disabled={bulkSaving}
-      onClick={handleBulkSetFrequency}
-      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
-    >
-      Set Frequency…
-    </button>
+   <button
+  type="button"
+  disabled={selectedIds.size === 0}
+  onClick={() => {
+    setBulkDraft({ frequency: "daily", days_of_week: [], day_of_month: "", specific_date: "" });
+    setShowBulkFreq(true);
+  }}
+  className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
+>
+  Set Frequency…
+</button>
+
 
     <button
       type="button"
