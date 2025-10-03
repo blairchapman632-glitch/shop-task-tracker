@@ -162,9 +162,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tasks, setTasks] = useState([]);
-  // A4 — Bulk selection
-const [selectedIds, setSelectedIds] = useState(new Set());
-const [bulkBusy, setBulkBusy] = useState(false);
+ 
 
 // 3.3a — Edit modal state
 const [editingTask, setEditingTask] = useState(null);   // the row being edited
