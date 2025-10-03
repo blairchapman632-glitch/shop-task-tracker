@@ -113,6 +113,23 @@ function freqDetail(task) {
   // daily or anything else
   return "—";
 }
+// Live preview builder for Edit/Bulk forms
+function freqPreviewFromDraft(d) {
+  const f = d.frequency;
+  if (f === "daily") return "Daily";
+  if (f === "weekly") {
+    const arr = Array.isArray(d.days_of_week) ? d.days_of_week : [];
+    const labels = arr.sort((a,b)=>a-b).map((n) => DOW[n] ?? "?");
+    return `Weekly${labels.length ? ` (${labels.join("/")})` : ""}`;
+  }
+  if (f === "monthly") {
+    return d.day_of_month ? `Monthly (Day ${d.day_of_month})` : "Monthly";
+  }
+  if (f === "specific_date") {
+    return d.specific_date ? `Specific date (${String(d.specific_date).slice(0,10)})` : "Specific date";
+  }
+  return "—";
+}
 
 
 function timePretty(t) {
@@ -308,18 +325,62 @@ async function saveEdit() {
     setEditSaving(true);
 
 
+        // Validate like Add Task
+    {
+      const f = draft.frequency || "daily";
+      if (f === "weekly") {
+        const arr = Array.isArray(draft.days_of_week) ? draft.days_of_week : [];
+        if (arr.length === 0) {
+          alert("Choose at least one weekday for Weekly.");
+          setEditSaving(false);
+          return;
+        }
+      }
+      if (f === "monthly") {
+        const n = Number(draft.day_of_month);
+        if (!n || n < 1 || n > 31) {
+          alert("Enter a valid day of month (1–31).");
+          setEditSaving(false);
+          return;
+        }
+      }
+      if (f === "specific_date") {
+        const sd = draft.specific_date ? String(draft.specific_date).slice(0,10) : "";
+        if (!sd || !/^\d{4}-\d{2}-\d{2}$/.test(sd)) {
+          alert("Enter a valid date (YYYY-MM-DD).");
+          setEditSaving(false);
+          return;
+        }
+      }
+    }
+
+    // Map to DB write rules
+    const f = draft.frequency || "daily";
     const payload = {
       title: draft.title,
       active: !!draft.active,
       points: Number(draft.points) || 1,
       due_time: draft.due_time || null,
-      frequency: draft.frequency || null,
-      days_of_week: draft.frequency === "few_days_per_week" ? draft.days_of_week : null,
-      weekly_day: draft.frequency === "weekly" ? (draft.weekly_day ?? null) : null,
-      day_of_month: draft.frequency === "monthly" ? (Number(draft.day_of_month) || null) : null,
-      specific_date: draft.frequency === "specific_date" ? (draft.specific_date || null) : null,
+      frequency: f,
+      // clear all special fields by default
+      days_of_week: [],
+      weekly_day: null,
+      day_of_month: null,
+      specific_date: null,
       sort_index: Number.isFinite(Number(draft.sort_index)) ? Number(draft.sort_index) : 1000,
     };
+
+    if (f === "weekly") {
+      payload.days_of_week = Array.isArray(draft.days_of_week) ? draft.days_of_week : [];
+    } else if (f === "monthly") {
+      payload.day_of_month = Number(draft.day_of_month) || null;
+    } else if (f === "specific_date") {
+      payload.specific_date = draft.specific_date
+        ? String(draft.specific_date).slice(0,10)
+        : null;
+    }
+    // daily leaves others null/empty per rules
+
 // A3.3b — delete a row with confirm
 async function handleDelete(row) {
   if (!row || !row.id) return;
@@ -1269,64 +1330,99 @@ async function handleBulkDelete() {
         {/* Frequency */}
         <label className="block text-sm">
           <span className="text-gray-700">Frequency</span>
-          <select
-            value={draft.frequency || "daily"}
-            onChange={(e) => setDraft((d) => ({ ...d, frequency: e.target.value }))}
-            className="mt-1 w-full rounded-lg border px-3 py-2"
-          >
-            <option value="daily">Daily</option>
-            <option value="few_days_per_week">Few days / week</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-            <option value="specific_date">Specific date</option>
-          </select>
+         <select
+  value={draft.frequency || "daily"}
+  onChange={(e) => {
+    const v = e.target.value;
+    // reset now-irrelevant fields when switching modes
+    setDraft((d) => ({
+      ...d,
+      frequency: v,
+      days_of_week: v === "weekly" ? (Array.isArray(d.days_of_week) ? d.days_of_week : []) : [],
+      day_of_month: v === "monthly" ? (d.day_of_month ?? "") : "",
+      specific_date: v === "specific_date" ? (d.specific_date || "") : "",
+    }));
+  }}
+  className="mt-1 w-full rounded-lg border px-3 py-2"
+>
+  <option value="daily">Daily</option>
+  <option value="weekly">Weekly</option>
+  <option value="monthly">Monthly</option>
+  <option value="specific_date">Specific date</option>
+</select>
+
         </label>
 
         {/* Conditional fields */}
-        {draft.frequency === "few_days_per_week" && (
-          <div className="text-sm">
-            <span className="text-gray-700">Days of week</span>
-            <div className="mt-1 grid grid-cols-7 gap-2">
-              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((label, idx) => (
-                <label key={idx} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={Array.isArray(draft.days_of_week) ? draft.days_of_week.includes(idx) : false}
-                    onChange={(e) => {
-                      setDraft((d) => {
-                        const arr = Array.isArray(d.days_of_week) ? [...d.days_of_week] : [];
-                        if (e.target.checked) {
-                          if (!arr.includes(idx)) arr.push(idx);
-                        } else {
-                          const pos = arr.indexOf(idx);
-                          if (pos >= 0) arr.splice(pos, 1);
-                        }
-                        return { ...d, days_of_week: arr.sort((a,b)=>a-b) };
-                      });
-                    }}
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
+ {/* removed: few_days_per_week (deprecated) */}
 
-        {draft.frequency === "weekly" && (
-          <label className="block text-sm">
-            <span className="text-gray-700">Weekly day</span>
-            <select
-              value={draft.weekly_day ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, weekly_day: e.target.value === "" ? null : Number(e.target.value) }))}
-              className="mt-1 w-full rounded-lg border px-3 py-2"
-            >
-              <option value="">—</option>
-              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((label, idx) => (
-                <option key={idx} value={idx}>{label}</option>
-              ))}
-            </select>
-          </label>
-        )}
+
+      {draft.frequency === "weekly" && (
+  <div className="text-sm">
+    <span className="text-gray-700">Days of week</span>
+    <div className="mt-2 grid grid-cols-7 gap-2">
+      {DOW.map((label, idx) => {
+        const selected = Array.isArray(draft.days_of_week) && draft.days_of_week.includes(idx);
+        return (
+          <button
+            type="button"
+            key={idx}
+            onClick={() =>
+              setDraft((d) => {
+                const arr = Array.isArray(d.days_of_week) ? [...d.days_of_week] : [];
+                const pos = arr.indexOf(idx);
+                if (pos >= 0) { arr.splice(pos, 1); }
+                else { arr.push(idx); }
+                return { ...d, days_of_week: arr.sort((a,b)=>a-b) };
+              })
+            }
+            className={`rounded-lg border px-2 py-1 ${selected ? "bg-blue-600 text-white border-blue-600" : "bg-white"}`}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+
+    {/* Quick presets */}
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button
+        type="button"
+        className="rounded-md border px-2 py-1"
+        onClick={() => setDraft((d) => ({ ...d, days_of_week: [1,2,3,4,5] }))}
+      >
+        Mon–Fri
+      </button>
+      <button
+        type="button"
+        className="rounded-md border px-2 py-1"
+        onClick={() => setDraft((d) => ({ ...d, days_of_week: [6,0] }))}
+      >
+        Sat–Sun
+      </button>
+      <button
+        type="button"
+        className="rounded-md border px-2 py-1"
+        onClick={() => setDraft((d) => ({ ...d, days_of_week: [0,1,2,3,4,5,6] }))}
+      >
+        All
+      </button>
+      <button
+        type="button"
+        className="rounded-md border px-2 py-1"
+        onClick={() => setDraft((d) => ({ ...d, days_of_week: [] }))}
+      >
+        Clear
+      </button>
+    </div>
+
+    {/* Live preview */}
+    <p className="mt-2 text-xs text-gray-500">
+      Preview: {freqPreviewFromDraft(draft)}
+    </p>
+  </div>
+)}
+
 
         {draft.frequency === "monthly" && (
           <label className="block text-sm">
