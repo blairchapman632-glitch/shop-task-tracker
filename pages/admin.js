@@ -691,53 +691,8 @@ async function handleBulkSetFrequency() {
 
   // Removed legacy prompt-based bulk set frequency (now handled by modal)
 
-    'Set frequency: enter one of\n- daily\n- weekly\n- monthly\n- specific_date',
-    'daily'
-  );
-  if (freq === null) return; // cancel
-  const f = String(freq).trim();
+    // Removed legacy prompt-based bulk set frequency (replaced by modal)
 
-  // 2) Collect extra values based on frequency (aligned to new rules)
-  let payload = {
-    frequency: f,
-    days_of_week: [],
-    weekly_day: null,     // no longer used; kept null for compatibility
-    day_of_month: null,
-    specific_date: null,
-  };
-
-  if (f === 'weekly') {
-    const inp = prompt(
-      'Enter days 0-6 separated by commas (0=Sun…6=Sat). Example: 1,3,5 for Mon,Wed,Fri',
-      '1,3,5'
-    );
-    if (inp === null) return;
-    const parts = String(inp).split(',').map(s => s.trim()).filter(Boolean);
-    const arr = Array.from(
-      new Set(
-        parts
-          .map(n => parseInt(n, 10))
-          .filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
-      )
-    ).sort((a, b) => a - b);
-    if (arr.length === 0) { alert('No valid days entered.'); return; }
-    payload.days_of_week = arr;
-  } else if (f === 'monthly') {
-    const m = prompt('Enter day of month (1–31)', '1');
-    if (m === null) return;
-    const val = parseInt(String(m).trim(), 10);
-    if (!Number.isInteger(val) || val < 1 || val > 31) { alert('Invalid day of month.'); return; }
-    payload.day_of_month = val;
-  } else if (f === 'specific_date') {
-    const dt = prompt('Enter date as YYYY-MM-DD', new Date().toISOString().slice(0,10));
-    if (dt === null) return;
-    const s = String(dt).trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) { alert('Invalid date format.'); return; }
-    payload.specific_date = s;
-  } else if (f !== 'daily') {
-    alert('Unsupported frequency value.');
-    return;
-  }
 
 
   try {
