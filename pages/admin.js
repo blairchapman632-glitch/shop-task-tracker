@@ -5,10 +5,11 @@ import supabase from "../lib/supabaseClient"; // works for .js or .ts client
 
 const FREQ_LABELS = {
   daily: "Daily",
-  weekly: "Weekly (one or many days)",
+  weekly: "Weekly",
   monthly: "Monthly",
   specific_date: "Specific date",
 };
+
 
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -183,15 +184,17 @@ const [showTaskModal, setShowTaskModal] = useState(false);
 const [taskForm, setTaskForm] = useState({
   id: null,                 // null = new; number/string = editing (later)
   title: "",
-  frequency: "daily",       // daily | few_days_per_week | weekly | monthly | specific_date
-  days_of_week: [],         // for few_days_per_week: array of [0..6]
-  weekly_day: null,         // for weekly: number [0..6]
+  frequency: "daily",       // daily | weekly | monthly | specific_date
+  days_of_week: [],         // for weekly: array of [0..6]
+  // weekly_day deprecated: keep for backward-compat; not used by new UI
+  weekly_day: null,
   day_of_month: "",         // for monthly: 1..31
   specific_date: "",        // for specific_date: "YYYY-MM-DD"
   due_time: "",             // "HH:MM"
   points: 1,
   active: true,
 });
+
 useEffect(() => {
   if (!showTaskModal) return;
   const onKey = (e) => e.key === "Escape" && setShowTaskModal(false);
@@ -662,30 +665,39 @@ async function handleBulkSetFrequency() {
   const ids = Array.from(selectedIds);
   if (ids.length === 0) { alert("Select at least one task."); return; }
 
-  // 1) Choose frequency
+  // 1) Choose frequency (legacy prompt flow)
   const freq = prompt(
-    'Set frequency: enter one of\n- daily\n- few_days_per_week\n- weekly\n- monthly\n- specific_date',
+    'Set frequency: enter one of\n- daily\n- weekly\n- monthly\n- specific_date',
     'daily'
   );
   if (freq === null) return; // cancel
   const f = String(freq).trim();
 
-  // 2) Collect extra values based on frequency
-  let payload = { frequency: f, days_of_week: null, weekly_day: null, day_of_month: null, specific_date: null };
+  // 2) Collect extra values based on frequency (aligned to new rules)
+  let payload = {
+    frequency: f,
+    days_of_week: [],
+    weekly_day: null,     // no longer used; kept null for compatibility
+    day_of_month: null,
+    specific_date: null,
+  };
 
-  if (f === 'few_days_per_week') {
-    const inp = prompt('Enter days 0-6 separated by commas (0=Sun…6=Sat). Example: 1,3,5 for Mon,Wed,Fri', '1,3,5');
+  if (f === 'weekly') {
+    const inp = prompt(
+      'Enter days 0-6 separated by commas (0=Sun…6=Sat). Example: 1,3,5 for Mon,Wed,Fri',
+      '1,3,5'
+    );
     if (inp === null) return;
     const parts = String(inp).split(',').map(s => s.trim()).filter(Boolean);
-    const arr = Array.from(new Set(parts.map(n => parseInt(n,10)).filter(n => Number.isInteger(n) && n>=0 && n<=6))).sort((a,b)=>a-b);
+    const arr = Array.from(
+      new Set(
+        parts
+          .map(n => parseInt(n, 10))
+          .filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+      )
+    ).sort((a, b) => a - b);
     if (arr.length === 0) { alert('No valid days entered.'); return; }
     payload.days_of_week = arr;
-  } else if (f === 'weekly') {
-    const d = prompt('Enter weekly day 0-6 (0=Sun…6=Sat)', '1');
-    if (d === null) return;
-    const val = parseInt(String(d).trim(), 10);
-    if (!Number.isInteger(val) || val < 0 || val > 6) { alert('Invalid day.'); return; }
-    payload.weekly_day = val;
   } else if (f === 'monthly') {
     const m = prompt('Enter day of month (1–31)', '1');
     if (m === null) return;
@@ -702,6 +714,7 @@ async function handleBulkSetFrequency() {
     alert('Unsupported frequency value.');
     return;
   }
+
 
   try {
     setBulkBusy(true);
@@ -877,12 +890,12 @@ async function handleBulkDelete() {
                       onChange={(e) => setFreqFilter(e.target.value)}
                       title="Filter by frequency"
                     >
-                      <option value="all">All frequencies</option>
-                      <option value="daily">Daily</option>
-                      <option value="few_days_per_week">Few days / week</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly</option>
-                      <option value="specific_date">Specific date</option>
+                     <option value="">All</option>
+<option value="daily">Daily</option>
+<option value="weekly">Weekly</option>
+<option value="monthly">Monthly</option>
+<option value="specific_date">Specific date</option>
+
                     </select>
                     <select
                       className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
