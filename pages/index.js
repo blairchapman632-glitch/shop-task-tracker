@@ -264,11 +264,12 @@ setStaff(activeStaff);
                       <div className="flex flex-col flex-1">
                         <div className="flex items-start gap-3">
                           <div
-                            className="font-medium text-sm leading-snug break-words overflow-hidden"
-                            style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
-                          >
-                            {task.title}
-                          </div>
+  className="font-medium text-[13px] leading-tight break-words overflow-hidden"
+  style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+>
+  {task.title}
+</div>
+
                         </div>
 
                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
