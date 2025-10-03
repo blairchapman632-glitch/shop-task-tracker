@@ -648,7 +648,7 @@ async function handleBulkActivate(activeFlag) {
   const ids = Array.from(selectedIds);
   if (ids.length === 0) { alert("Select at least one task."); return; }
   try {
-    setBulkBusy(true);
+    setBulkSaving(true);
     const { error } = await supabase.from("tasks").update({ active: !!activeFlag }).in("id", ids);
     if (error) throw error;
     await refreshTasks();
@@ -657,7 +657,7 @@ async function handleBulkActivate(activeFlag) {
     console.error(err);
     alert(err.message || "Bulk update failed");
   } finally {
-    setBulkBusy(false);
+    setBulkSaving(false);
   }
 }
 
@@ -672,7 +672,7 @@ async function handleBulkSetPoints() {
     return;
   }
   try {
-    setBulkBusy(true);
+    setBulkSaving(true);
     const { error } = await supabase.from("tasks").update({ points }).in("id", ids);
     if (error) throw error;
     await refreshTasks();
@@ -681,7 +681,7 @@ async function handleBulkSetPoints() {
     console.error(err);
     alert(err.message || "Bulk update failed");
   } finally {
-    setBulkBusy(false);
+    setBulkSaving(false);
   }
 }
 // A4 — bulk set frequency (prompt-driven)
@@ -741,7 +741,7 @@ async function handleBulkSetFrequency() {
 
 
   try {
-    setBulkBusy(true);
+    setBulkSaving(true);
     const { error } = await supabase
       .from('tasks')
       .update(payload)
@@ -754,7 +754,7 @@ async function handleBulkSetFrequency() {
     console.error(err);
     alert(err.message || 'Bulk update failed');
   } finally {
-    setBulkBusy(false);
+    setBulkSaving(false);
   }
 }
 // A4 — bulk delete selected
@@ -767,7 +767,7 @@ async function handleBulkDelete() {
   if (!ok) return;
 
   try {
-    setBulkBusy(true);
+    setBulkSaving(true);
     const { data, error } = await supabase
       .from('tasks')
       .delete()
@@ -795,7 +795,7 @@ async function handleBulkDelete() {
     console.error(err);
     alert(err.message || 'Bulk delete failed');
   } finally {
-    setBulkBusy(false);
+    setBulkSaving(false);
   }
 }
 
@@ -969,7 +969,7 @@ async function handleBulkDelete() {
 
     <button
       type="button"
-      disabled={bulkBusy}
+      disabled={bulkSaving}
       onClick={() => handleBulkActivate(true)}
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
@@ -978,7 +978,7 @@ async function handleBulkDelete() {
 
     <button
       type="button"
-      disabled={bulkBusy}
+      disabled={bulkSaving}
       onClick={() => handleBulkActivate(false)}
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
@@ -987,7 +987,7 @@ async function handleBulkDelete() {
 
     <button
       type="button"
-      disabled={bulkBusy}
+      disabled={bulkSaving}
       onClick={handleBulkSetPoints}
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
@@ -996,7 +996,7 @@ async function handleBulkDelete() {
 
     <button
       type="button"
-      disabled={bulkBusy}
+      disabled={bulkSaving}
       onClick={handleBulkSetFrequency}
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
@@ -1005,7 +1005,7 @@ async function handleBulkDelete() {
 
     <button
       type="button"
-      disabled={bulkBusy}
+      disabled={bulkSaving}
       onClick={handleBulkDelete}
       className="rounded-lg border border-red-300 bg-white px-2.5 py-1 text-red-700 hover:bg-red-50 disabled:opacity-60"
     >
@@ -1014,7 +1014,7 @@ async function handleBulkDelete() {
 
     <button
       type="button"
-      disabled={bulkBusy}
+      disabled={bulkSaving}
       onClick={clearSelection}
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
