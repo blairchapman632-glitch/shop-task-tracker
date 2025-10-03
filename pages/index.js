@@ -271,26 +271,31 @@ setStaff(activeStaff);
                           </div>
                         </div>
 
-                        <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                         {task.due_time ? (
-  isOverdue(task, completedTaskIds) ? (
-    <span className="text-red-600 font-medium border border-red-300 rounded px-1">Overdue</span>
+                 <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+  {/* Left side: due or overdue */}
+  {task.due_time ? (
+    isOverdue(task, completedTaskIds) ? (
+      <span className="inline-flex px-1.5 py-0.5 rounded-md bg-red-100 text-red-600 border border-red-300">
+        Overdue
+      </span>
+    ) : (
+      <span>Due: {formatTime(task.due_time)}</span>
+    )
   ) : (
-    <span>Due: {formatTime(task.due_time)}</span>
-  )
-) : (
-  <span>&nbsp;</span>
-)}
+    <span>&nbsp;</span>
+  )}
 
-                          {isDone && (
-                            <span
-                              className="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]"
-                              title="Completed"
-                            >
-                              ✓
-                            </span>
-                          )}
-                        </div>
+  {/* Right side: completed checkmark */}
+  {isDone && (
+    <span
+      className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]"
+      title="Completed"
+    >
+      ✓
+    </span>
+  )}
+</div>
+
                       </div>
                     </button>
                   );
