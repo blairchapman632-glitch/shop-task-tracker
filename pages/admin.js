@@ -1031,23 +1031,26 @@ async function handleBulkDelete() {
                       <thead>
                         <tr className="text-left text-gray-600">
                   <th className="w-8 p-2">
-  <input
-    type="checkbox"
-    aria-label="Select all on page"
-    checked={filtered.length > 0 && filtered.every((t) => selectedIds.has(t.id))}
-    onChange={() => {
-      const allSelected = filtered.every((t) => selectedIds.has(t.id));
-      if (allSelected) {
-        // unselect all visible
-        setSelectedIds(new Set([...selectedIds].filter((id) => !filtered.some((t) => t.id === id))));
-      } else {
-        // add all visible
-        const next = new Set(selectedIds);
-        filtered.forEach((t) => next.add(t.id));
-        setSelectedIds(next);
-      }
-    }}
+<input
+  type="checkbox"
+  aria-label="Select all on page"
+  checked={Array.isArray(filtered) && filtered.length > 0 && filtered.every((t) => selectedIds && typeof selectedIds.has === "function" && selectedIds.has(t.id))}
+  onChange={() => {
+    const rows = Array.isArray(filtered) ? filtered : [];
+    const allSelected = rows.length > 0 && rows.every((t) => selectedIds && typeof selectedIds.has === "function" && selectedIds.has(t.id));
+    if (allSelected) {
+      // unselect all visible
+      const current = selectedIds instanceof Set ? selectedIds : new Set();
+      setSelectedIds(new Set([...current].filter((id) => !rows.some((t) => t.id === id))));
+    } else {
+      // add all visible
+      const next = selectedIds instanceof Set ? new Set(selectedIds) : new Set();
+      rows.forEach((t) => next.add(t.id));
+      setSelectedIds(next);
+    }
+  }}
 />
+
 
 </th>
 
@@ -1077,12 +1080,13 @@ async function handleBulkDelete() {
                             className="border-t border-gray-100 hover:bg-gray-50"
                           >
                             <td className="p-2 align-top">
-  <input
-    type="checkbox"
-    checked={selectedIds.has(t.id)}
-    onChange={() => toggleOne(t.id)}
-    aria-label={`Select ${t.title || "Untitled"}`}
-  />
+ <input
+  type="checkbox"
+  checked={Boolean(selectedIds && typeof selectedIds.has === "function" && selectedIds.has(t.id))}
+  onChange={() => toggleOne(t.id)}
+  aria-label={`Select ${t.title || "Untitled"}`}
+/>
+
 </td>
 
                               <td className="p-2 align-top text-gray-400">
@@ -1727,12 +1731,37 @@ async function handleBulkDelete() {
               if (error) throw error;
 
               // refetch tasks
-              const { data, error: e2 } = await supabase.from("tasks").select("*").order("title", { ascending: true });
-              if (e2) throw e2;
+             const { data, error: e2 } = await supabase
+  .from("tasks")
+  .select("*")
+  .order("title", { ascending: true });
+if (e2) throw e2;
 
-              setTasks(data || []);
-              setSelectedIds(new Set());
-              setShowBulkFreq(false);
+// Normalize so render helpers never explode
+const normalized = (data || []).map((t) => ({
+  id: t.id,
+  title: t.title ?? "",
+  active: typeof t.active === "boolean" ? t.active : true,
+  points: Number.isFinite(t.points) ? t.points : 1,
+  due_time: t.due_time ?? null,
+  frequency: t.frequency ?? null,
+  days_of_week: Array.isArray(t.days_of_week) ? t.days_of_week : [],
+  weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
+  day_of_month: Number.isFinite(t.day_of_month) ? t.day_of_month : null,
+  specific_date: t.specific_date ?? null,
+  sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+}));
+
+normalized.sort((a, b) => {
+  const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
+  if (si !== 0) return si;
+  return (a.title || "").localeCompare(b.title || "");
+});
+
+setTasks(normalized);
+setSelectedIds(new Set());
+setShowBulkFreq(false);
+
             } catch (e) {
               alert(e.message || String(e));
             } finally {
