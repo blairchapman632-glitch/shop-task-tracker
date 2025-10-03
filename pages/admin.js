@@ -194,6 +194,32 @@ const [taskForm, setTaskForm] = useState({
   points: 1,
   active: true,
 });
+// Bulk selection + modal state
+const [selectedIds, setSelectedIds] = useState(new Set());
+const [showBulkFreq, setShowBulkFreq] = useState(false);
+const [bulkDraft, setBulkDraft] = useState({
+  frequency: "daily",
+  days_of_week: [],
+  day_of_month: "",
+  specific_date: ""
+});
+const [bulkSaving, setBulkSaving] = useState(false);
+
+function toggleOne(id) {
+  setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+}
+function toggleAll(rows) {
+  setSelectedIds((prev) => {
+    if (!rows || rows.length === 0) return new Set();
+    if (prev.size === rows.length) return new Set(); // clear
+    return new Set(rows.map(r => r.id));
+  });
+}
 
 useEffect(() => {
   if (!showTaskModal) return;
@@ -876,6 +902,19 @@ async function handleBulkDelete() {
 >
   + New Task
 </button>
+{selectedIds.size > 0 && (
+  <button
+    type="button"
+    onClick={() => {
+      setBulkDraft({ frequency: "daily", days_of_week: [], day_of_month: "", specific_date: "" });
+      setShowBulkFreq(true);
+    }}
+    className="ml-2 inline-flex items-center rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+    title="Bulk set frequency"
+  >
+    Bulk: Set Frequency… ({selectedIds.size} selected)
+  </button>
+)}
 
                     <input
                       type="text"
@@ -996,10 +1035,22 @@ async function handleBulkDelete() {
                   <th className="w-8 p-2">
   <input
     type="checkbox"
-    onChange={() => toggleSelectAllCurrent()}
-    checked={filtered.length > 0 && filtered.every((t) => selectedIds.has(t.id))}
     aria-label="Select all on page"
-  />
+    checked={filtered.length > 0 && filtered.every((t) => selectedIds.has(t.id))}
+    onChange={() => {
+      const allSelected = filtered.every((t) => selectedIds.has(t.id));
+      if (allSelected) {
+        // unselect all visible
+        setSelectedIds(new Set([...selectedIds].filter((id) => !filtered.some((t) => t.id === id))));
+      } else {
+        // add all visible
+        const next = new Set(selectedIds);
+        filtered.forEach((t) => next.add(t.id));
+        setSelectedIds(next);
+      }
+    }}
+/>
+
 </th>
 
                           <th className="w-10 p-2">#</th>
@@ -1016,9 +1067,10 @@ async function handleBulkDelete() {
                       <tbody>
                         {filtered.length === 0 && (
                           <tr>
-                            <td colSpan={7} className="p-6 text-center text-gray-500">
-                              No tasks found.
-                            </td>
+                            <td colSpan={9} className="p-6 text-center text-gray-500">
+  No tasks found.
+</td>
+
                           </tr>
                         )}
                         {filtered.map((t, i) => (
@@ -1519,6 +1571,179 @@ async function handleBulkDelete() {
           className="rounded-lg bg-red-600 text-white px-3 py-2 text-sm disabled:opacity-60"
         >
           {deletingId === confirmDelete.id ? "Deleting…" : "Delete"}
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+{/* Bulk “Set Frequency…” Modal */}
+{showBulkFreq && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+    <div className="w-full max-w-xl rounded-2xl bg-white shadow-lg">
+      <div className="border-b p-4 flex items-center justify-between">
+        <h3 className="text-base font-semibold">Apply to {selectedIds.size} selected</h3>
+        <button
+          type="button"
+          onClick={() => setShowBulkFreq(false)}
+          className="rounded-md border px-2 py-1 text-sm"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="p-4 space-y-3 text-sm">
+        {/* Frequency */}
+        <label className="block">
+          <span className="text-gray-700">Frequency</span>
+          <select
+            value={bulkDraft.frequency}
+            onChange={(e) => {
+              const v = e.target.value;
+              setBulkDraft((d) => ({
+                ...d,
+                frequency: v,
+                days_of_week: v === "weekly" ? d.days_of_week : [],
+                day_of_month: v === "monthly" ? (d.day_of_month ?? "") : "",
+                specific_date: v === "specific_date" ? (d.specific_date || "") : "",
+              }));
+            }}
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+          >
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="specific_date">Specific date</option>
+          </select>
+        </label>
+
+        {/* Weekly chips + presets */}
+        {bulkDraft.frequency === "weekly" && (
+          <div>
+            <span className="text-gray-700">Days of week</span>
+            <div className="mt-2 grid grid-cols-7 gap-2">
+              {DOW.map((label, idx) => {
+                const selected = Array.isArray(bulkDraft.days_of_week) && bulkDraft.days_of_week.includes(idx);
+                return (
+                  <button
+                    type="button"
+                    key={idx}
+                    onClick={() => {
+                      const arr = Array.isArray(bulkDraft.days_of_week) ? [...bulkDraft.days_of_week] : [];
+                      const pos = arr.indexOf(idx);
+                      if (pos >= 0) arr.splice(pos, 1);
+                      else arr.push(idx);
+                      setBulkDraft((d) => ({ ...d, days_of_week: arr.sort((a,b)=>a-b) }));
+                    }}
+                    className={`rounded-lg border px-2 py-1 ${selected ? "bg-blue-600 text-white border-blue-600" : "bg-white"}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" className="rounded-md border px-2 py-1" onClick={() => setBulkDraft((d) => ({ ...d, days_of_week: [1,2,3,4,5] }))}>Mon–Fri</button>
+              <button type="button" className="rounded-md border px-2 py-1" onClick={() => setBulkDraft((d) => ({ ...d, days_of_week: [6,0] }))}>Sat–Sun</button>
+              <button type="button" className="rounded-md border px-2 py-1" onClick={() => setBulkDraft((d) => ({ ...d, days_of_week: [0,1,2,3,4,5,6] }))}>All</button>
+              <button type="button" className="rounded-md border px-2 py-1" onClick={() => setBulkDraft((d) => ({ ...d, days_of_week: [] }))}>Clear</button>
+            </div>
+            <p className="mt-2 text-xs text-gray-500">Preview: {typeof freqPreviewFromDraft === "function" ? freqPreviewFromDraft(bulkDraft) : ""}</p>
+          </div>
+        )}
+
+        {/* Monthly */}
+        {bulkDraft.frequency === "monthly" && (
+          <label className="block">
+            <span className="text-gray-700">Day of month (1–31)</span>
+            <input
+              type="number"
+              min="1" max="31"
+              value={bulkDraft.day_of_month}
+              onChange={(e) => setBulkDraft((d) => ({ ...d, day_of_month: e.target.value }))}
+              className="mt-1 w-40 rounded-lg border px-3 py-2"
+            />
+            <p className="mt-2 text-xs text-gray-500">Preview: {typeof freqPreviewFromDraft === "function" ? freqPreviewFromDraft(bulkDraft) : ""}</p>
+          </label>
+        )}
+
+        {/* Specific date */}
+        {bulkDraft.frequency === "specific_date" && (
+          <label className="block">
+            <span className="text-gray-700">Specific date</span>
+            <input
+              type="date"
+              value={bulkDraft.specific_date}
+              onChange={(e) => setBulkDraft((d) => ({ ...d, specific_date: e.target.value }))}
+              className="mt-1 w-56 rounded-lg border px-3 py-2"
+            />
+            <p className="mt-2 text-xs text-gray-500">Preview: {typeof freqPreviewFromDraft === "function" ? freqPreviewFromDraft(bulkDraft) : ""}</p>
+          </label>
+        )}
+      </div>
+
+      <div className="border-t p-4 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => setShowBulkFreq(false)}
+          className="rounded-lg border px-3 py-2 text-sm"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={bulkSaving}
+          onClick={async () => {
+            try {
+              setBulkSaving(true);
+              const f = bulkDraft.frequency;
+
+              // validate
+              if (f === "weekly" && (!bulkDraft.days_of_week || bulkDraft.days_of_week.length === 0)) {
+                throw new Error("Choose at least one weekday for Weekly.");
+              }
+              if (f === "monthly") {
+                const n = Number(bulkDraft.day_of_month);
+                if (!n || n < 1 || n > 31) throw new Error("Enter a valid day of month (1–31).");
+              }
+              if (f === "specific_date") {
+                const sd = bulkDraft.specific_date ? String(bulkDraft.specific_date).slice(0,10) : "";
+                if (!sd || !/^\d{4}-\d{2}-\d{2}$/.test(sd)) throw new Error("Enter a valid date (YYYY-MM-DD).");
+              }
+
+              // payload
+              const payload = {
+                frequency: f,
+                days_of_week: [],
+                weekly_day: null,
+                day_of_month: null,
+                specific_date: null,
+              };
+              if (f === "weekly") payload.days_of_week = bulkDraft.days_of_week;
+              else if (f === "monthly") payload.day_of_month = Number(bulkDraft.day_of_month) || null;
+              else if (f === "specific_date") payload.specific_date = String(bulkDraft.specific_date).slice(0,10);
+
+              const ids = Array.from(selectedIds);
+              if (ids.length === 0) throw new Error("No rows selected.");
+
+              const { error } = await supabase.from("tasks").update(payload).in("id", ids);
+              if (error) throw error;
+
+              // refetch tasks
+              const { data, error: e2 } = await supabase.from("tasks").select("*").order("title", { ascending: true });
+              if (e2) throw e2;
+
+              setTasks(data || []);
+              setSelectedIds(new Set());
+              setShowBulkFreq(false);
+            } catch (e) {
+              alert(e.message || String(e));
+            } finally {
+              setBulkSaving(false);
+            }
+          }}
+          className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm disabled:opacity-60"
+        >
+          {bulkSaving ? "Applying…" : "Apply"}
         </button>
       </div>
     </div>
