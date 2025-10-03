@@ -51,6 +51,13 @@ function timeToMinutes(t) {
   const mm = parseInt(parts[1] || "0", 10);
   return (hh * 60) + mm;
 }
+function isOverdue(task, completedTaskIds, now = new Date()) {
+  if (!task.due_time) return false;
+  if (completedTaskIds.has(task.id)) return false;
+
+  const minsNow = now.getHours() * 60 + now.getMinutes();
+  return timeToMinutes(task.due_time) < minsNow;
+}
 
   const getTodayBoundsISO = () => {
     const start = new Date(); start.setHours(0,0,0,0);
@@ -265,7 +272,16 @@ setStaff(activeStaff);
                         </div>
 
                         <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                          {task.due_time ? <span>Due: {formatTime(task.due_time)}</span> : <span>&nbsp;</span>}
+                         {task.due_time ? (
+  isOverdue(task, completedTaskIds) ? (
+    <span className="text-red-600 font-medium border border-red-300 rounded px-1">Overdue</span>
+  ) : (
+    <span>Due: {formatTime(task.due_time)}</span>
+  )
+) : (
+  <span>&nbsp;</span>
+)}
+
                           {isDone && (
                             <span
                               className="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]"
