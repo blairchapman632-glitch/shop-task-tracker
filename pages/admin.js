@@ -934,7 +934,7 @@ async function handleBulkDelete() {
       onClick={handleBulkSetPoints}
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
-      Set Points…
+      Set Points
     </button>
 
    <button
@@ -946,7 +946,7 @@ async function handleBulkDelete() {
   }}
   className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
 >
-  Set Frequency…
+  Set Frequency
 </button>
 
 
@@ -956,7 +956,7 @@ async function handleBulkDelete() {
       onClick={handleBulkDelete}
       className="rounded-lg border border-red-300 bg-white px-2.5 py-1 text-red-700 hover:bg-red-50 disabled:opacity-60"
     >
-      Delete…
+      Delete
     </button>
 
     <button
@@ -1525,7 +1525,7 @@ async function handleBulkDelete() {
     </div>
   </div>
 )}
-{/* Bulk “Set Frequency…” Modal */}
+{/* Bulk “Set Frequency” Modal */}
 {showBulkFreq && (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
     <div className="w-full max-w-xl rounded-2xl bg-white shadow-lg">
