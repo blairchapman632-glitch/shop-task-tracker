@@ -73,8 +73,9 @@ function isOverdue(task, completedTaskIds, now = new Date()) {
         supabase
   .from("tasks")
   .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,sort_index")
-  .order("sort_index", { ascending: true })
+   .order("due_time", { ascending: true, nullsFirst: false })
   .order("title", { ascending: true }),
+
 
         supabase.from("staff").select("id,name,photo_url,active").order("name", { ascending: true }),
       ]);
