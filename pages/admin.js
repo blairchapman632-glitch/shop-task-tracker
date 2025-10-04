@@ -688,21 +688,7 @@ async function handleSaveOrder() {
   }
 }
 
-  try {
-    setBulkSaving(true);
-    // Persist the current in-memory order as 1..N (leave gaps for future if you want, e.g., 10..10N)
-    const payload = tasks.map((t, idx) => ({ id: t.id, sort_index: idx + 1 }));
-    const { error } = await supabase.from("tasks").upsert(payload);
-    if (error) throw error;
-    await refreshTasks();
-    alert("Order saved.");
-  } catch (err) {
-    console.error(err);
-    alert(err.message || "Failed to save order");
-  } finally {
-    setBulkSaving(false);
-  }
-}
+
 // — A5: drag handlers —
 // Reorders within the currently filtered subset, while preserving the relative
 // order of tasks not shown by the current filter/search.
@@ -750,23 +736,6 @@ function handleRowDrop(i) {
   }
 }
 
-// — A5: persist order to tasks.sort_index across ALL rows currently in memory —
-async function handleSaveOrder() {
-  try {
-    setBulkSaving(true);
-    // Persist the current in-memory order as 1..N
-    const payload = tasks.map((t, idx) => ({ id: t.id, sort_index: idx + 1 }));
-    const { error } = await supabase.from("tasks").upsert(payload);
-    if (error) throw error;
-    await refreshTasks();
-    alert("Order saved.");
-  } catch (err) {
-    console.error(err);
-    alert(err.message || "Failed to save order");
-  } finally {
-    setBulkSaving(false);
-  }
-}
 
   function toggleSelectAllCurrent() {
   // Uses the current filtered rows (shown in the table)
@@ -1025,8 +994,7 @@ async function handleBulkDelete() {
   className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
 >
   + New Task
-</button>
-<button
+      <button
   type="button"
   disabled={bulkSaving || isReordering}
   onClick={handleSaveOrder}
@@ -1035,6 +1003,9 @@ async function handleBulkDelete() {
 >
   Save order
 </button>
+
+</button>
+
 
 
                     <input
