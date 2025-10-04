@@ -974,25 +974,7 @@ async function handleBulkDelete() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-             <button
-  type="button"
-  onClick={() => {
-    setTaskForm({
-      id: null,
-      title: "",
-      frequency: "daily",
-      days_of_week: [],
-      weekly_day: null,
-      day_of_month: "",
-      specific_date: "",
-      due_time: "",
-      points: 1,
-      active: true,
-    });
-    setShowTaskModal(true);
-  }}
-  className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
->
+            
  <button
   type="button"
   onClick={() => {
