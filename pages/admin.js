@@ -434,7 +434,12 @@ async function handleDelete(row) {
     }
 
     // Refresh rows (same normalise/sort as initial load)
-    const { data, error: e2 } = await supabase.from("tasks").select("*").order("title", { ascending: true });
+    const { data, error: e2 } = await supabase
+  .from("tasks")
+  .select("*")
+  .order("sort_index", { ascending: true })
+  .order("title", { ascending: true });
+
     if (e2) throw e2;
 
     const normalized = (data || []).map((t) => ({
@@ -470,7 +475,12 @@ async function handleDelete(row) {
     if (error) throw error;
 
     // Quick refresh: requery and normalise like initial load
-    const { data, error: e2 } = await supabase.from("tasks").select("*").order("title", { ascending: true });
+    const { data, error: e2 } = await supabase
+  .from("tasks")
+  .select("*")
+  .order("sort_index", { ascending: true })
+  .order("title", { ascending: true });
+
     if (e2) throw e2;
 
     const normalized = (data || []).map((t) => ({
@@ -988,6 +998,15 @@ async function handleBulkDelete() {
   className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
 >
   + New Task
+</button>
+<button
+  type="button"
+  disabled={bulkSaving || isReordering}
+  onClick={handleSaveOrder}
+  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+  title={isReordering ? "Finish dragging before saving" : "Save current row order"}
+>
+  Save order
 </button>
 
 
