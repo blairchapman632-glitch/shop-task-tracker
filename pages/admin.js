@@ -194,6 +194,10 @@ const [taskForm, setTaskForm] = useState({
 });
 // Bulk selection + modal state
 const [selectedIds, setSelectedIds] = useState(new Set());
+  // — A5: drag-reorder state —
+const [dragIndex, setDragIndex] = useState(null);
+const [isReordering, setIsReordering] = useState(false);
+
 const [showBulkFreq, setShowBulkFreq] = useState(false);
 const [bulkDraft, setBulkDraft] = useState({
   frequency: "daily",
@@ -597,7 +601,72 @@ function toggleOne(id) {
 function clearSelection() {
   setSelectedIds(new Set());
 }
-function toggleSelectAllCurrent() {
+// — A5: drag handlers —
+// Reorders within the currently filtered subset, while preserving the relative
+// order of tasks not shown by the current filter/search.
+function reorderWithinFiltered(draggedId, targetId) {
+  if (!draggedId || !targetId || draggedId === targetId) return;
+
+  const byId = Object.fromEntries(tasks.map((t) => [t.id, t]));
+  const filteredIds = filtered.map((t) => t.id);
+  const from = filteredIds.indexOf(draggedId);
+  const to = filteredIds.indexOf(targetId);
+  if (from < 0 || to < 0) return;
+
+  // Move draggedId within the filtered list
+  const moved = filteredIds.splice(from, 1)[0];
+  filteredIds.splice(to, 0, moved);
+
+  // Rebuild the full tasks array using the new filtered order
+  const filteredSet = new Set(filteredIds);
+  let fPos = 0;
+  const reordered = tasks.map((t) =>
+    filteredSet.has(t.id) ? byId[filteredIds[fPos++]] : t
+  );
+
+  setTasks(reordered);
+}
+
+function handleRowDragStart(i) {
+  setDragIndex(i);
+  setIsReordering(true);
+}
+function handleRowDragOver(i, e) {
+  e.preventDefault(); // allow drop
+}
+function handleRowDrop(i) {
+  try {
+    const from = dragIndex;
+    const to = i;
+    if (from == null || to == null || from === to) return;
+    const draggedId = filtered[from]?.id;
+    const targetId = filtered[to]?.id;
+    reorderWithinFiltered(draggedId, targetId);
+  } finally {
+    setDragIndex(null);
+    setIsReordering(false);
+  }
+}
+
+// — A5: persist order to tasks.sort_index across ALL rows currently in memory —
+async function handleSaveOrder() {
+  try {
+    setBulkSaving(true);
+    // Persist the current in-memory order as 1..N (leave gaps for future if you want, e.g., 10..10N)
+    const payload = tasks.map((t, idx) => ({ id: t.id, sort_index: idx + 1 }));
+    const { error } = await supabase.from("tasks").upsert(payload);
+    if (error) throw error;
+    await refreshTasks();
+    alert("Order saved.");
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Failed to save order");
+  } finally {
+    setBulkSaving(false);
+  }
+}
+
+  function toggleSelectAllCurrent() {
   // Uses the current filtered rows (shown in the table)
   setSelectedIds((prev) => {
     const allIds = filtered.map((t) => t.id);
@@ -962,7 +1031,17 @@ async function handleBulkDelete() {
     <button
       type="button"
       disabled={bulkSaving}
-      onClick={clearSelection}
+<button
+  type="button"
+  disabled={bulkSaving || isReordering}
+  onClick={handleSaveOrder}
+  className="rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+  title={isReordering ? "Finish dragging before saving" : "Save current row order"}
+>
+  Save order
+</button>
+      
+onClick={clearSelection}
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
       Clear
@@ -1000,6 +1079,7 @@ async function handleBulkDelete() {
 
 
 </th>
+<th className="w-8 p-2 text-gray-400" title="Drag to reorder">↕</th>
 
                           <th className="w-10 p-2">#</th>
                           <th className="p-2">Title</th>
@@ -1023,9 +1103,14 @@ async function handleBulkDelete() {
                         )}
                         {filtered.map((t, i) => (
                           <tr
-                            key={t.id || `row-${i}`}
-                            className="border-t border-gray-100 hover:bg-gray-50"
-                          >
+  key={t.id || `row-${i}`}
+  className="border-t border-gray-100 hover:bg-gray-50"
+  draggable
+  onDragStart={() => handleRowDragStart(i)}
+  onDragOver={(e) => handleRowDragOver(i, e)}
+  onDrop={() => handleRowDrop(i)}
+>
+
                             <td className="p-2 align-top">
  <input
   type="checkbox"
@@ -1035,6 +1120,7 @@ async function handleBulkDelete() {
 />
 
 </td>
+<td className="p-2 align-top text-gray-400 select-none cursor-grab" title="Drag row">⋮⋮</td>
 
                               <td className="p-2 align-top text-gray-400">
                               {(t.sort_index ?? 1000) === 1000 ? i + 1 : t.sort_index}
