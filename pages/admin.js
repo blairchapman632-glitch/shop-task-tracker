@@ -663,6 +663,33 @@ function handleRowDrop(i) {
 async function handleSaveOrder() {
   try {
     setBulkSaving(true);
+
+    // Only update existing rows (ignore anything without an id)
+    const withIds = tasks
+      .map((t, idx) => ({ id: t?.id, sort_index: idx + 1 }))
+      .filter((r) => !!r.id);
+
+    // Batch updates: one UPDATE per row, avoids upsert/insert semantics
+    const updates = withIds.map((row) =>
+      supabase.from("tasks").update({ sort_index: row.sort_index }).eq("id", row.id)
+    );
+
+    const results = await Promise.all(updates);
+    const firstError = results.find((r) => r.error)?.error;
+    if (firstError) throw firstError;
+
+    await refreshTasks();
+    alert("Order saved.");
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Failed to save order");
+  } finally {
+    setBulkSaving(false);
+  }
+}
+
+  try {
+    setBulkSaving(true);
     // Persist the current in-memory order as 1..N (leave gaps for future if you want, e.g., 10..10N)
     const payload = tasks.map((t, idx) => ({ id: t.id, sort_index: idx + 1 }));
     const { error } = await supabase.from("tasks").upsert(payload);
