@@ -993,8 +993,29 @@ async function handleBulkDelete() {
   }}
   className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
 >
+ <button
+  type="button"
+  onClick={() => {
+    setTaskForm({
+      id: null,
+      title: "",
+      frequency: "daily",
+      days_of_week: [],
+      weekly_day: null,
+      day_of_month: "",
+      specific_date: "",
+      due_time: "",
+      points: 1,
+      active: true,
+    });
+    setShowTaskModal(true);
+  }}
+  className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
+>
   + New Task
-      <button
+</button>
+
+<button
   type="button"
   disabled={bulkSaving || isReordering}
   onClick={handleSaveOrder}
@@ -1004,7 +1025,6 @@ async function handleBulkDelete() {
   Save order
 </button>
 
-</button>
 
 
 
@@ -1110,15 +1130,7 @@ async function handleBulkDelete() {
       Delete
     </button>
 
-       <button
-      type="button"
-      disabled={bulkSaving || isReordering}
-      onClick={handleSaveOrder}
-      className="rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
-      title={isReordering ? "Finish dragging before saving" : "Save current row order"}
-    >
-      Save order
-    </button>
+      
 
     <button
       type="button"
