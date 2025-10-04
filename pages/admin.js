@@ -207,6 +207,7 @@ const [bulkDraft, setBulkDraft] = useState({
 });
 const [bulkSaving, setBulkSaving] = useState(false);
 
+
 function toggleOne(id) {
   setSelectedIds((prev) => {
     const next = new Set(prev);
@@ -665,6 +666,70 @@ async function handleSaveOrder() {
     setBulkSaving(false);
   }
 }
+// — A5: drag handlers —
+// Reorders within the currently filtered subset, while preserving the relative
+// order of tasks not shown by the current filter/search.
+function reorderWithinFiltered(draggedId, targetId) {
+  if (!draggedId || !targetId || draggedId === targetId) return;
+
+  const byId = Object.fromEntries(tasks.map((t) => [t.id, t]));
+  const filteredIds = filtered.map((t) => t.id);
+  const from = filteredIds.indexOf(draggedId);
+  const to = filteredIds.indexOf(targetId);
+  if (from < 0 || to < 0) return;
+
+  // Move draggedId within the filtered list
+  const moved = filteredIds.splice(from, 1)[0];
+  filteredIds.splice(to, 0, moved);
+
+  // Rebuild the full tasks array using the new filtered order
+  const filteredSet = new Set(filteredIds);
+  let fPos = 0;
+  const reordered = tasks.map((t) =>
+    filteredSet.has(t.id) ? byId[filteredIds[fPos++]] : t
+  );
+
+  setTasks(reordered);
+}
+
+function handleRowDragStart(i) {
+  setDragIndex(i);
+  setIsReordering(true);
+}
+function handleRowDragOver(i, e) {
+  e.preventDefault(); // allow drop
+}
+function handleRowDrop(i) {
+  try {
+    const from = dragIndex;
+    const to = i;
+    if (from == null || to == null || from === to) return;
+    const draggedId = filtered[from]?.id;
+    const targetId = filtered[to]?.id;
+    reorderWithinFiltered(draggedId, targetId);
+  } finally {
+    setDragIndex(null);
+    setIsReordering(false);
+  }
+}
+
+// — A5: persist order to tasks.sort_index across ALL rows currently in memory —
+async function handleSaveOrder() {
+  try {
+    setBulkSaving(true);
+    // Persist the current in-memory order as 1..N
+    const payload = tasks.map((t, idx) => ({ id: t.id, sort_index: idx + 1 }));
+    const { error } = await supabase.from("tasks").upsert(payload);
+    if (error) throw error;
+    await refreshTasks();
+    alert("Order saved.");
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "Failed to save order");
+  } finally {
+    setBulkSaving(false);
+  }
+}
 
   function toggleSelectAllCurrent() {
   // Uses the current filtered rows (shown in the table)
@@ -1028,24 +1093,25 @@ async function handleBulkDelete() {
       Delete
     </button>
 
+       <button
+      type="button"
+      disabled={bulkSaving || isReordering}
+      onClick={handleSaveOrder}
+      className="rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+      title={isReordering ? "Finish dragging before saving" : "Save current row order"}
+    >
+      Save order
+    </button>
+
     <button
       type="button"
       disabled={bulkSaving}
-<button
-  type="button"
-  disabled={bulkSaving || isReordering}
-  onClick={handleSaveOrder}
-  className="rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
-  title={isReordering ? "Finish dragging before saving" : "Save current row order"}
->
-  Save order
-</button>
-      
-onClick={clearSelection}
+      onClick={clearSelection}
       className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 disabled:opacity-60"
     >
       Clear
     </button>
+
   </div>
 )}
 
