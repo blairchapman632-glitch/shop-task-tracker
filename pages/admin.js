@@ -59,6 +59,8 @@ function mapFormToRow(f) {
     title: f.title.trim(),
     frequency: f.frequency,          // "daily" | "weekly" | "monthly" | "specific_date"
     due_time: f.due_time || null,    // "HH:MM"
+        info: f.info && f.info.trim() ? f.info.trim() : null,
+
     points: Number.isFinite(f.points) ? f.points : 0,
     active: !!f.active,
   };
@@ -189,9 +191,11 @@ const [taskForm, setTaskForm] = useState({
   day_of_month: "",         // for monthly: 1..31
   specific_date: "",        // for specific_date: "YYYY-MM-DD"
   due_time: "",             // "HH:MM"
+  info: "",
   points: 1,
   active: true,
 });
+
 // Bulk selection + modal state
 const [selectedIds, setSelectedIds] = useState(new Set());
   // — A5: drag-reorder state —
@@ -329,7 +333,7 @@ if (!taskForm?.title || !taskForm.title.trim()) {
 // 3.3a — open editor for a row
 function openEdit(row) {
   setEditingTask(row);
-  setDraft({
+ setDraft({
     title: row.title || "",
     active: !!row.active,
     points: Number.isFinite(row.points) ? row.points : 1,
@@ -339,8 +343,10 @@ function openEdit(row) {
     weekly_day: typeof row.weekly_day === "number" ? row.weekly_day : null,
     day_of_month: row.day_of_month || null,
     specific_date: row.specific_date || "",
+    info: row.info || "",
     sort_index: Number.isFinite(row.sort_index) ? row.sort_index : 1000,
   });
+
 }
 
 function closeEdit() {
@@ -390,6 +396,8 @@ async function saveEdit() {
       active: !!draft.active,
       points: Number(draft.points) || 1,
       due_time: draft.due_time || null,
+            info: (draft.info && draft.info.trim()) ? draft.info.trim() : null,
+
       frequency: f,
       // clear all special fields by default
       days_of_week: [],
@@ -966,7 +974,7 @@ async function handleBulkDelete() {
             
  <button
   type="button"
-  onClick={() => {
+ onClick={() => {
     setTaskForm({
       id: null,
       title: "",
@@ -976,11 +984,13 @@ async function handleBulkDelete() {
       day_of_month: "",
       specific_date: "",
       due_time: "",
+      info: "",
       points: 1,
       active: true,
     });
     setShowTaskModal(true);
   }}
+
   className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
 >
   + New Task
@@ -1376,6 +1386,17 @@ async function handleBulkDelete() {
             className="mt-1 w-40 rounded-lg border border-gray-300 px-3 py-2"
           />
         </div>
+        {/* Info / Notes */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Info / Notes</label>
+          <textarea
+            value={taskForm.info || ""}
+            onChange={(e) => setTaskForm((f) => ({ ...f, info: e.target.value }))}
+            rows={3}
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+            placeholder="Optional notes for staff (shown on the kiosk i button)"
+          />
+        </div>
 
         {/* Points + Active */}
         <div className="flex items-center gap-4">
@@ -1477,6 +1498,17 @@ async function handleBulkDelete() {
             value={draft.due_time || ""}
             onChange={(e) => setDraft((d) => ({ ...d, due_time: e.target.value }))}
             className="mt-1 w-full rounded-lg border px-3 py-2"
+          />
+        </label>
+        {/* Info / Notes */}
+        <label className="block text-sm">
+          <span className="text-gray-700">Info / Notes</span>
+          <textarea
+            rows={3}
+            value={draft.info || ""}
+            onChange={(e) => setDraft((d) => ({ ...d, info: e.target.value }))}
+            className="mt-1 w-full rounded-lg border px-3 py-2"
+            placeholder="Optional notes for staff"
           />
         </label>
 
