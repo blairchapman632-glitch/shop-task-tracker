@@ -312,12 +312,9 @@ if (!taskForm?.title || !taskForm.title.trim()) {
           sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
         }));
 
-        // Sort primarily by sort_index, then title
-        normalized.sort((a, b) => {
-          const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
-          if (si !== 0) return si;
-          return (a.title || "").localeCompare(b.title || "");
-        });
+               // Admin ordering: title A→Z only
+        normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
 
         setTasks(normalized);
       }
@@ -435,10 +432,10 @@ async function handleDelete(row) {
 
     // Refresh rows (same normalise/sort as initial load)
     const { data, error: e2 } = await supabase
-  .from("tasks")
+    .from("tasks")
   .select("*")
-  .order("sort_index", { ascending: true })
   .order("title", { ascending: true });
+
 
     if (e2) throw e2;
 
@@ -455,11 +452,9 @@ async function handleDelete(row) {
       specific_date: t.specific_date ?? null,
       sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
     }));
-    normalized.sort((a, b) => {
-      const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
-      if (si !== 0) return si;
-      return (a.title || "").localeCompare(b.title || "");
-    });
+        // Admin ordering: title A→Z only
+    normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
     setTasks(normalized);
   } catch (err) {
     console.error(err);
@@ -496,11 +491,9 @@ async function handleDelete(row) {
       specific_date: t.specific_date ?? null,
       sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
     }));
-    normalized.sort((a, b) => {
-      const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
-      if (si !== 0) return si;
-      return (a.title || "").localeCompare(b.title || "");
-    });
+        // Admin ordering: title A→Z only
+    normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
     setTasks(normalized);
 
     closeEdit();
@@ -559,11 +552,9 @@ async function handleDeleteTask(taskId) {
       specific_date: t.specific_date ?? null,
       sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
     }));
-    normalized.sort((a, b) => {
-      const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
-      if (si !== 0) return si;
-      return (a.title || "").localeCompare(b.title || "");
-    });
+        // Admin ordering: title A→Z only
+    normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
     setTasks(normalized);
   } catch (err) {
     console.error(err);
@@ -775,11 +766,9 @@ async function refreshTasks() {
     specific_date: t.specific_date ?? null,
     sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
   }));
-  normalized.sort((a, b) => {
-    const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
-    if (si !== 0) return si;
-    return (a.title || "").localeCompare(b.title || "");
-  });
+      // Admin ordering: title A→Z only
+    normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
   setTasks(normalized);
 }
 
@@ -1862,11 +1851,9 @@ const normalized = (data || []).map((t) => ({
   sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
 }));
 
-normalized.sort((a, b) => {
-  const si = (a.sort_index ?? 1000) - (b.sort_index ?? 1000);
-  if (si !== 0) return si;
-  return (a.title || "").localeCompare(b.title || "");
-});
+    // Admin ordering: title A→Z only
+    normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
 
 setTasks(normalized);
 setSelectedIds(new Set());
