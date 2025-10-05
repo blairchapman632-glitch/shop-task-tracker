@@ -1188,9 +1188,20 @@ async function handleBulkDelete() {
 
 
                            
-                            <td className="p-2 align-top">
-                              <div className="font-medium text-gray-900">{t.title || "Untitled"}</div>
+                                                        <td className="p-2 align-top">
+                              <div className="font-medium text-gray-900">
+                                {t.title || "Untitled"}
+                                {t.info && String(t.info).trim().length > 0 && (
+                                  <span
+                                    className="ml-2 inline-flex items-center rounded-full border border-gray-300 px-1.5 py-0.5 text-[10px] text-gray-600"
+                                    title="Has notes"
+                                  >
+                                    i
+                                  </span>
+                                )}
+                              </div>
                             </td>
+
                             <td className="p-2 align-top">
                               <Chip tone="blue">{freqPretty(t)}</Chip>
                             </td>
