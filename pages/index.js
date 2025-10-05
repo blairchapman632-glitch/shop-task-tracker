@@ -72,7 +72,8 @@ function isOverdue(task, completedTaskIds, now = new Date()) {
       const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
         supabase
   .from("tasks")
-  .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,sort_index")
+  .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,sort_index,info")
+
    .order("due_time", { ascending: true, nullsFirst: false })
   .order("title", { ascending: true }),
 
@@ -267,7 +268,7 @@ setStaff(activeStaff);
 
                         </div>
 
-                 <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
   {/* Left side: due or overdue */}
   {task.due_time ? (
     isOverdue(task, completedTaskIds) ? (
@@ -281,16 +282,34 @@ setStaff(activeStaff);
     <span>&nbsp;</span>
   )}
 
-  {/* Right side: completed checkmark */}
-  {isDone && (
-    <span
-      className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]"
-      title="Completed"
+  {/* Right side: info button + completed checkmark */}
+  <span className="inline-flex items-center gap-2">
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        const msg = (task.info && String(task.info).trim().length)
+          ? String(task.info)
+          : "No notes for this task.";
+        alert(msg);
+      }}
+      className="h-5 w-5 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50"
+      title="Task info"
     >
-      ✓
-    </span>
-  )}
+      i
+    </button>
+
+    {isDone && (
+      <span
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]"
+        title="Completed"
+      >
+        ✓
+      </span>
+    )}
+  </span>
 </div>
+
 
                       </div>
                     </button>
