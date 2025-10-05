@@ -986,15 +986,7 @@ async function handleBulkDelete() {
   + New Task
 </button>
 
-<button
-  type="button"
-  disabled={bulkSaving || isReordering}
-  onClick={handleSaveOrder}
-  className="inline-flex items-center rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
-  title={isReordering ? "Finish dragging before saving" : "Save current row order"}
->
-  Save order
-</button>
+
 
 
 
@@ -1145,9 +1137,9 @@ async function handleBulkDelete() {
 
 
 </th>
-<th className="w-8 p-2 text-gray-400" title="Drag to reorder">↕</th>
 
-                          <th className="w-10 p-2">#</th>
+
+
                           <th className="p-2">Title</th>
                           <th className="p-2">Frequency</th>
                           <th className="p-2">Days / Date</th>
@@ -1168,14 +1160,11 @@ async function handleBulkDelete() {
                           </tr>
                         )}
                         {filtered.map((t, i) => (
-                          <tr
+                              <tr
   key={t.id || `row-${i}`}
   className="border-t border-gray-100 hover:bg-gray-50"
-  draggable
-  onDragStart={() => handleRowDragStart(i)}
-  onDragOver={(e) => handleRowDragOver(i, e)}
-  onDrop={() => handleRowDrop(i)}
 >
+
 
                             <td className="p-2 align-top">
  <input
@@ -1186,11 +1175,9 @@ async function handleBulkDelete() {
 />
 
 </td>
-<td className="p-2 align-top text-gray-400 select-none cursor-grab" title="Drag row">⋮⋮</td>
 
-                              <td className="p-2 align-top text-gray-400">
-                              {(t.sort_index ?? 1000) === 1000 ? i + 1 : t.sort_index}
-                            </td>
+
+                           
                             <td className="p-2 align-top">
                               <div className="font-medium text-gray-900">{t.title || "Untitled"}</div>
                             </td>
