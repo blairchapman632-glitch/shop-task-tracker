@@ -87,20 +87,14 @@ function isOverdue(task, completedTaskIds, now = new Date()) {
 // NEW: keep only tasks relevant for today (based on frequency rules)
 const todayTasks = activeTasks.filter((task) => isTaskForToday(task));
 
-// (Optional) stable sort: by sort_index → due_time (HH:MM) → title
+// K1 — Kiosk ordering: due_time ↑ (empty last), then title A→Z
 todayTasks.sort((a, b) => {
-  const siA = Number.isFinite(a.sort_index) ? a.sort_index : 1000;
-  const siB = Number.isFinite(b.sort_index) ? b.sort_index : 1000;
-  if (siA !== siB) return siA - siB;
-
-  // next: earlier due_time first; tasks with no due_time go last
-  const tA = timeToMinutes(a.due_time);
+  const tA = timeToMinutes(a.due_time); // Infinity if empty
   const tB = timeToMinutes(b.due_time);
   if (tA !== tB) return tA - tB;
-
-  // finally: title A→Z
   return (a.title || "").localeCompare(b.title || "");
 });
+
 
 
 setTasks(todayTasks);
