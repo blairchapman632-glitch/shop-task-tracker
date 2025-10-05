@@ -59,13 +59,13 @@ function mapFormToRow(f) {
     title: f.title.trim(),
     frequency: f.frequency,          // "daily" | "weekly" | "monthly" | "specific_date"
     due_time: f.due_time || null,    // "HH:MM"
-        info: f.info && f.info.trim() ? f.info.trim() : null,
-
+    info: f.info && f.info.trim() ? f.info.trim() : null,
     points: Number.isFinite(f.points) ? f.points : 0,
     active: !!f.active,
   };
 
   if (f.frequency === "weekly") {
+
     // ONE OR MANY days in a single field
     base.days_of_week = Array.isArray(f.days_of_week) ? f.days_of_week : [];
     base.weekly_day = null;      // no longer used
@@ -333,7 +333,7 @@ if (!taskForm?.title || !taskForm.title.trim()) {
 // 3.3a — open editor for a row
 function openEdit(row) {
   setEditingTask(row);
- setDraft({
+  setDraft({
     title: row.title || "",
     active: !!row.active,
     points: Number.isFinite(row.points) ? row.points : 1,
@@ -346,8 +346,8 @@ function openEdit(row) {
     info: row.info || "",
     sort_index: Number.isFinite(row.sort_index) ? row.sort_index : 1000,
   });
-
 }
+
 
 function closeEdit() {
   setEditingTask(null);
@@ -389,15 +389,14 @@ async function saveEdit() {
       }
     }
 
-    // Map to DB write rules
+        // Map to DB write rules
     const f = draft.frequency || "daily";
     const payload = {
       title: draft.title,
       active: !!draft.active,
       points: Number(draft.points) || 1,
       due_time: draft.due_time || null,
-            info: (draft.info && draft.info.trim()) ? draft.info.trim() : null,
-
+      info: (draft.info && draft.info.trim()) ? draft.info.trim() : null,
       frequency: f,
       // clear all special fields by default
       days_of_week: [],
@@ -406,6 +405,7 @@ async function saveEdit() {
       specific_date: null,
       sort_index: Number.isFinite(Number(draft.sort_index)) ? Number(draft.sort_index) : 1000,
     };
+
 
     if (f === "weekly") {
       payload.days_of_week = Array.isArray(draft.days_of_week) ? draft.days_of_week : [];
