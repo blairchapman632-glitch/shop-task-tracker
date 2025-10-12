@@ -1275,19 +1275,21 @@ async function handleBulkDelete() {
           </div>
         </div>
             {showTaskModal && (
-  <div
-    className="fixed inset-0 z-50 flex items-center justify-center"
+    <div
+    className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4"
     aria-modal="true"
     role="dialog"
   >
+
     {/* Backdrop */}
     <div
       className="absolute inset-0 bg-black/40"
       onClick={() => setShowTaskModal(false)}
     />
 
-    {/* Modal card */}
-    <div className="relative z-10 w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl">
+        {/* Modal card */}
+    <div className="relative z-10 w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl max-h-[85vh] overflow-y-auto">
+
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold">
           {taskForm.id ? "Edit Task" : "New Task"}
@@ -1439,8 +1441,9 @@ async function handleBulkDelete() {
         </div>
       </div>
 
-      {/* Footer */}
-      <div className="mt-6 flex justify-end gap-2">
+            {/* Footer */}
+      <div className="mt-6 sticky bottom-0 bg-white pt-4 flex justify-end gap-2 border-t">
+
         <button
           type="button"
           className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50"
