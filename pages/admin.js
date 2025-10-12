@@ -301,7 +301,7 @@ if (!taskForm?.title || !taskForm.title.trim()) {
         setErr(error.message || "Failed to load tasks");
         setTasks([]);
       } else {
-        // Normalise with safe defaults
+                // Normalise with safe defaults
         const normalized = (data || []).map((t) => ({
           id: t.id,
           title: t.title ?? "",
@@ -313,8 +313,10 @@ if (!taskForm?.title || !taskForm.title.trim()) {
           weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
           day_of_month: t.day_of_month ?? null,
           specific_date: t.specific_date ?? null,
+          info: t.info ?? "",
           sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
         }));
+
 
                // Admin ordering: title A→Z only
         normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
@@ -458,6 +460,7 @@ async function handleDelete(row) {
       weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
       day_of_month: t.day_of_month ?? null,
       specific_date: t.specific_date ?? null,
+      info: t.info ?? "",
       sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
     }));
         // Admin ordering: title A→Z only
@@ -497,6 +500,7 @@ async function handleDelete(row) {
       weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
       day_of_month: t.day_of_month ?? null,
       specific_date: t.specific_date ?? null,
+      info: t.info ?? "",
       sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
     }));
         // Admin ordering: title A→Z only
@@ -772,6 +776,7 @@ async function refreshTasks() {
     weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
     day_of_month: t.day_of_month ?? null,
     specific_date: t.specific_date ?? null,
+    info: t.info ?? "",
     sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
   }));
       // Admin ordering: title A→Z only
@@ -1878,6 +1883,7 @@ const normalized = (data || []).map((t) => ({
   weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
   day_of_month: Number.isFinite(t.day_of_month) ? t.day_of_month : null,
   specific_date: t.specific_date ?? null,
+  info: t.info ?? "",
   sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
 }));
 
