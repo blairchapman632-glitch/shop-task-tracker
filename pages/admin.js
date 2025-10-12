@@ -234,6 +234,20 @@ useEffect(() => {
   window.addEventListener("keydown", onKey);
   return () => window.removeEventListener("keydown", onKey);
 }, [showTaskModal]);
+  // Lock body scroll when any modal is open
+useEffect(() => {
+  const anyOpen = showTaskModal || !!editingTask || !!confirmDelete || !!showBulkFreq;
+  const prev = document.body.style.overflow;
+  if (anyOpen) {
+    document.body.style.overflow = "hidden";
+  } else {
+    document.body.style.overflow = prev || "";
+  }
+  return () => {
+    document.body.style.overflow = prev || "";
+  };
+}, [showTaskModal, editingTask, confirmDelete, showBulkFreq]);
+
 // --- SAVE HANDLER (insert below modal state/effects) ---
 const [saving, setSaving] = useState(false);
 
@@ -1466,10 +1480,11 @@ async function handleBulkDelete() {
 )}
 {/* 3.3a — Edit Modal */}
 {editingTask && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-    <div className="w-full max-w-xl rounded-2xl bg-white shadow-lg">
+  <div className="fixed inset-0 z-50 overflow-y-auto p-4 bg-black/40">
+    <div className="w-full max-w-xl mx-auto rounded-2xl bg-white shadow-lg max-h-[85vh] overflow-y-auto">
       <div className="border-b p-4 flex items-center justify-between">
         <h3 className="text-base font-semibold">Edit task</h3>
+
         <button type="button" onClick={closeEdit} className="rounded-md border px-2 py-1 text-sm">
           Close
         </button>
@@ -1665,8 +1680,9 @@ async function handleBulkDelete() {
         </label>
       </div>
 
-      <div className="border-t p-4 flex items-center justify-end gap-2">
-        <button type="button" onClick={closeEdit} className="rounded-lg border px-3 py-2 text-sm">
+          <div className="border-t p-4 sticky bottom-0 bg-white flex items-center justify-end gap-2">
+        <button type="button" onClick={closeEdit} className="rounded-lg border
+
           Cancel
         </button>
         <button
