@@ -1733,8 +1733,10 @@ async function handleBulkDelete() {
 )}
 {/* Bulk “Set Frequency” Modal */}
 {showBulkFreq && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
-    <div className="w-full max-w-xl rounded-2xl bg-white shadow-lg">
+  <div className="fixed inset-0 z-50 overflow-y-auto p-4 bg-black/40" role="dialog" aria-modal="true">
+
+    <div className="w-full max-w-xl mx-auto rounded-2xl bg-white shadow-lg max-h-[85vh] overflow-y-auto">
+
       <div className="border-b p-4 flex items-center justify-between">
         <h3 className="text-base font-semibold">Apply to {selectedIds.size} selected</h3>
         <button
@@ -1836,7 +1838,8 @@ async function handleBulkDelete() {
         )}
       </div>
 
-      <div className="border-t p-4 flex items-center justify-end gap-2">
+      <div className="border-t p-4 sticky bottom-0 bg-white flex items-center justify-end gap-2">
+
         <button
           type="button"
           onClick={() => setShowBulkFreq(false)}
