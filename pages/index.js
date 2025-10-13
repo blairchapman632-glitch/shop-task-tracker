@@ -314,11 +314,12 @@ setStaff(activeStaff);
     {/* Info popover (anchored) */}
     {infoOpenId === task.id && (
       <div
-        className="absolute z-20 right-0 top-7 w-[300px] max-w-[80vw] rounded-2xl border border-gray-200 bg-white shadow-lg"
-        role="dialog"
-        aria-label="Task notes"
-        onClick={(e) => e.stopPropagation()}
-      >
+  className="absolute z-20 left-1/2 -translate-x-1/2 top-7 w-[300px] max-w-[calc(100vw-2rem)] rounded-2xl border border-gray-200 bg-white shadow-lg"
+  role="dialog"
+  aria-label="Task notes"
+  onClick={(e) => e.stopPropagation()}
+>
+
         {/* Accent bar */}
         <div className="h-1 rounded-t-2xl bg-blue-500" />
 
