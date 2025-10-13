@@ -14,6 +14,8 @@ export default function HomePage() {
   const [completedTaskIds, setCompletedTaskIds] = useState(new Set());
   const [feed, setFeed] = useState([]);
   const [showConfetti, setShowConfetti] = useState(false);
+  // Small popover for task info
+  const [infoOpenId, setInfoOpenId] = useState(null);
 
   // Local “today” bounds (device time = Perth kiosk)
   // ——— 3.3b helper: decide if a task should show today ———
@@ -262,7 +264,8 @@ setStaff(activeStaff);
   className={`p-2 rounded-lg border text-left active:scale-[0.99] leading-snug h-16 flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
     isDone ? "bg-green-50 border-green-300" : "bg-white"
   } ${selectedStaffId ? "hover:ring-2 hover:ring-blue-300 hover:border-blue-300" : "opacity-100"}`}
-  onClick={() => handleTaskTap(task)}
+  onClick={() => { setInfoOpenId(null); handleTaskTap(task); }}
+
 >
 
                       <div className="flex flex-col flex-1">
@@ -290,22 +293,55 @@ setStaff(activeStaff);
     <span>&nbsp;</span>
   )}
 
-  {/* Right side: info button + completed checkmark */}
-  <span className="inline-flex items-center gap-2">
+    {/* Right side: info button + completed checkmark */}
+  <span className="relative inline-flex items-center gap-2">
     <button
       type="button"
       onClick={(e) => {
         e.stopPropagation();
-        const msg = (task.info && String(task.info).trim().length)
-          ? String(task.info)
-          : "No notes for this task.";
-        alert(msg);
+        // Toggle this task’s popover
+        setInfoOpenId((prev) => (prev === task.id ? null : task.id));
       }}
       className="h-5 w-5 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50"
       title="Task info"
+      aria-haspopup="dialog"
+      aria-expanded={infoOpenId === task.id}
+      aria-label="Task info"
     >
       i
     </button>
+
+    {/* Info popover (anchored) */}
+    {infoOpenId === task.id && (
+      <div
+        className="absolute z-20 right-0 top-7 w-[300px] max-w-[80vw] rounded-2xl border border-gray-200 bg-white shadow-lg"
+        role="dialog"
+        aria-label="Task notes"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Accent bar */}
+        <div className="h-1 rounded-t-2xl bg-blue-500" />
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-2">
+          <div className="min-w-0 pr-2">
+            <div className="truncate font-medium text-gray-900">{task.title}</div>
+          </div>
+          {task.due_time && (
+            <span className="shrink-0 text-xs bg-blue-50 text-blue-800 rounded-md px-2 py-0.5 border border-blue-200">
+              {formatTime(task.due_time)}
+            </span>
+          )}
+        </div>
+
+        {/* Body */}
+        <div className="px-3 pb-3 text-sm text-gray-700 whitespace-pre-line">
+          {task.info && String(task.info).trim().length
+            ? String(task.info)
+            : <span className="text-gray-400">No notes yet.</span>}
+        </div>
+      </div>
+    )}
 
     {isDone && (
       <span
@@ -316,6 +352,7 @@ setStaff(activeStaff);
       </span>
     )}
   </span>
+
 </div>
 
 
