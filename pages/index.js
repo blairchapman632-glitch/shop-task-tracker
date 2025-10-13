@@ -370,6 +370,16 @@ setStaff(activeStaff);
       </button>
     </div>
   </div>
+    )}
+    {isDone && (
+      <span
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]"
+        title="Completed"
+      >
+        ✓
+      </span>
+    )}
+  </span>
 
   {/* Body */}
   <div className="px-3 pb-3 text-sm text-gray-700 whitespace-pre-line">
