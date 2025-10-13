@@ -18,19 +18,26 @@ export default function HomePage() {
   // Local “today” bounds (device time = Perth kiosk)
   // ——— 3.3b helper: decide if a task should show today ———
 function isTaskForToday(task, now = new Date()) {
-  const dow = now.getDay();                 // 0=Sun … 6=Sat
+  const dow = now.getDay(); // 0=Sun … 6=Sat
   const todayISO = now.toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const freq = task.frequency || "daily";
 
-  const freq = task.frequency || "daily";   // default to daily if missing
   switch (freq) {
     case "daily":
       return true;
 
-    case "few_days_per_week":
-      return Array.isArray(task.days_of_week) && task.days_of_week.includes(dow);
+    case "weekly": {
+      // New schema first: array of days; fallback to legacy weekly_day
+      const arr = Array.isArray(task.days_of_week) ? task.days_of_week : null;
+      if (arr && arr.length) return arr.includes(dow);
+      return typeof task.weekly_day === "number" ? task.weekly_day === dow : false;
+    }
 
-    case "weekly":
-      return typeof task.weekly_day === "number" && task.weekly_day === dow;
+    case "few_days_per_week": {
+      // Back-compat alias of weekly using days_of_week
+      const arr = Array.isArray(task.days_of_week) ? task.days_of_week : [];
+      return arr.includes(dow);
+    }
 
     case "monthly":
       return Number(task.day_of_month) === now.getDate();
@@ -39,10 +46,10 @@ function isTaskForToday(task, now = new Date()) {
       return typeof task.specific_date === "string" && task.specific_date.slice(0, 10) === todayISO;
 
     default:
-      // If unknown / missing, show it (acts like daily) so nothing "disappears" unexpectedly.
       return true;
   }
 }
+
 // ——— 3.3c helper: convert "HH:MM" or "HH:MM:SS" → minutes since midnight ———
 function timeToMinutes(t) {
   if (!t) return Number.POSITIVE_INFINITY; // puts "no due time" last
