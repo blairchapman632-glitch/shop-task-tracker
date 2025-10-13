@@ -79,7 +79,8 @@ function isOverdue(task, completedTaskIds, now = new Date()) {
       const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
         supabase
   .from("tasks")
-  .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,sort_index,info")
+  .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,info")
+
 
    .order("due_time", { ascending: true, nullsFirst: false })
   .order("title", { ascending: true }),
