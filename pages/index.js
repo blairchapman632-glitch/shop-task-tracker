@@ -16,8 +16,15 @@ export default function HomePage() {
   const [showConfetti, setShowConfetti] = useState(false);
   // Small popover for task info
   const [infoOpenId, setInfoOpenId] = useState(null);
-  // Close info popover on outside click or Esc
-  useEffect(() => {
+  // Close on Esc
+useEffect(() => {
+  if (!infoOpenId) return;
+  const onKey = (e) => { if (e.key === "Escape") setInfoOpenId(null); };
+  window.addEventListener("keydown", onKey, { capture: true });
+  return () => window.removeEventListener("keydown", onKey, { capture: true });
+}, [infoOpenId]);
+
+  
     if (!infoOpenId) return;
 
     const handleOutsideClick = () => setInfoOpenId(null);
@@ -218,6 +225,16 @@ setStaff(activeStaff);
 
   return (
     <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-visible">
+  {/* Transparent backdrop to catch outside taps when info is open */}
+  {infoOpenId && (
+    <button
+      type="button"
+      aria-label="Close task info"
+      onClick={() => setInfoOpenId(null)}
+      className="fixed inset-0 z-10 cursor-default outline-none"
+      // no background so the kiosk still looks the same; this blocks clicks to tiles
+    />
+  )}
 
       {/* App card on grey backdrop */}
       <div className="card overflow-hidden">
@@ -282,7 +299,15 @@ setStaff(activeStaff);
   className={`p-2 rounded-lg border text-left active:scale-[0.99] leading-snug h-16 flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
     isDone ? "bg-green-50 border-green-300" : "bg-white"
   } ${selectedStaffId ? "hover:ring-2 hover:ring-blue-300 hover:border-blue-300" : "opacity-100"}`}
-  onClick={() => { setInfoOpenId(null); handleTaskTap(task); }}
+  onClick={() => {
+  // If an info popover is open, a tile tap only closes it — no completion.
+  if (infoOpenId) {
+    setInfoOpenId(null);
+    return;
+  }
+  handleTaskTap(task);
+}}
+
 
 >
 
@@ -331,12 +356,45 @@ setStaff(activeStaff);
 
     {/* Info popover (anchored) */}
     {infoOpenId === task.id && (
-      <div
+  <div
   className="absolute z-20 left-1/2 -translate-x-1/2 top-7 w-[300px] max-w-[calc(100vw-2rem)] rounded-2xl border border-gray-200 bg-white shadow-lg"
   role="dialog"
   aria-label="Task notes"
   onClick={(e) => e.stopPropagation()}
 >
+  {/* Accent bar */}
+  <div className="h-1 rounded-t-2xl bg-blue-500" />
+
+  {/* Header with close */}
+  <div className="flex items-center justify-between px-3 py-2">
+    <div className="min-w-0 pr-2">
+      <div className="truncate font-medium text-gray-900">{task.title}</div>
+    </div>
+    <div className="flex items-center gap-2">
+      {task.due_time && (
+        <span className="shrink-0 text-xs bg-blue-50 text-blue-800 rounded-md px-2 py-0.5 border border-blue-200">
+          {formatTime(task.due_time)}
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label="Close"
+        className="h-6 w-6 inline-flex items-center justify-center rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+        onClick={() => setInfoOpenId(null)}
+      >
+        ✕
+      </button>
+    </div>
+  </div>
+
+  {/* Body */}
+  <div className="px-3 pb-3 text-sm text-gray-700 whitespace-pre-line">
+    {task.info && String(task.info).trim().length
+      ? String(task.info)
+      : <span className="text-gray-400">No notes yet.</span>}
+  </div>
+</div>
+
 
         {/* Accent bar */}
         <div className="h-1 rounded-t-2xl bg-blue-500" />
