@@ -134,6 +134,13 @@ function freqPreviewFromDraft(d) {
   return "—";
 }
 
+function timeToMinutes(t) {
+  if (!t) return Number.POSITIVE_INFINITY; // no-time goes last
+  const parts = String(t).split(":");
+  const hh = parseInt(parts[0] || "0", 10);
+  const mm = parseInt(parts[1] || "0", 10);
+  return (hh * 60) + mm;
+}
 
 function timePretty(t) {
   if (!t) return "—";
@@ -330,7 +337,7 @@ if (!taskForm?.title || !taskForm.title.trim()) {
           day_of_month: t.day_of_month ?? null,
           specific_date: t.specific_date ?? null,
           info: t.info ?? "",
-          sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+          
         }));
 
 
@@ -507,10 +514,10 @@ async function handleDelete(row) {
     // Quick refresh: requery and normalise like initial load
     const { data, error: e2 } = await supabase
   .from("tasks")
-  .select("*")
-  .order("sort_index", { ascending: true })
+    .select("*")
   .order("due_time", { ascending: true })
-.order("title", { ascending: true });
+  .order("title", { ascending: true });
+
 
     if (e2) throw e2;
 
@@ -526,7 +533,7 @@ async function handleDelete(row) {
       day_of_month: t.day_of_month ?? null,
       specific_date: t.specific_date ?? null,
       info: t.info ?? "",
-      sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+      
     }));
         // Admin ordering: title A→Z only
     normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
@@ -589,7 +596,7 @@ async function handleDeleteTask(taskId) {
       weekly_day: typeof t.weekly_day === "number" ? t.weekly_day : null,
       day_of_month: t.day_of_month ?? null,
       specific_date: t.specific_date ?? null,
-      sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+      
     }));
         // Admin ordering: title A→Z only
     normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
@@ -779,7 +786,7 @@ async function refreshTasks() {
     day_of_month: t.day_of_month ?? null,
     specific_date: t.specific_date ?? null,
     info: t.info ?? "",
-    sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+    
   }));
       // Admin ordering: title A→Z only
     normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
@@ -1891,7 +1898,7 @@ const normalized = (data || []).map((t) => ({
   day_of_month: Number.isFinite(t.day_of_month) ? t.day_of_month : null,
   specific_date: t.specific_date ?? null,
   info: t.info ?? "",
-  sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+  
 }));
 
     // Admin ordering: title A→Z only
