@@ -307,7 +307,9 @@ if (!taskForm?.title || !taskForm.title.trim()) {
       const { data, error } = await supabase
         .from("tasks")
         .select("*")
-        .order("title", { ascending: true });
+        .order("due_time", { ascending: true })
+.order("title", { ascending: true });
+
 
       if (!isMounted) return;
 
@@ -332,8 +334,14 @@ if (!taskForm?.title || !taskForm.title.trim()) {
         }));
 
 
-               // Admin ordering: title A→Z only
-        normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+              // Admin ordering: due_time → title (no-time last)
+normalized.sort((a, b) => {
+  const tA = timeToMinutes(a.due_time);
+  const tB = timeToMinutes(b.due_time);
+  if (tA !== tB) return tA - tB;
+  return (a.title || "").localeCompare(b.title || "");
+});
+
 
 
         setTasks(normalized);
@@ -360,7 +368,7 @@ function openEdit(row) {
     day_of_month: row.day_of_month || null,
     specific_date: row.specific_date || "",
     info: row.info || "",
-    sort_index: Number.isFinite(row.sort_index) ? row.sort_index : 1000,
+    
   });
 }
 
@@ -419,7 +427,7 @@ async function saveEdit() {
       weekly_day: null,
       day_of_month: null,
       specific_date: null,
-      sort_index: Number.isFinite(Number(draft.sort_index)) ? Number(draft.sort_index) : 1000,
+      
     };
 
 
@@ -458,7 +466,9 @@ async function handleDelete(row) {
     const { data, error: e2 } = await supabase
     .from("tasks")
   .select("*")
-  .order("title", { ascending: true });
+  .order("due_time", { ascending: true })
+.order("title", { ascending: true });
+
 
 
     if (e2) throw e2;
@@ -475,7 +485,7 @@ async function handleDelete(row) {
       day_of_month: t.day_of_month ?? null,
       specific_date: t.specific_date ?? null,
       info: t.info ?? "",
-      sort_index: Number.isFinite(t.sort_index) ? t.sort_index : 1000,
+      
     }));
         // Admin ordering: title A→Z only
     normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
@@ -499,7 +509,8 @@ async function handleDelete(row) {
   .from("tasks")
   .select("*")
   .order("sort_index", { ascending: true })
-  .order("title", { ascending: true });
+  .order("due_time", { ascending: true })
+.order("title", { ascending: true });
 
     if (e2) throw e2;
 
@@ -562,7 +573,9 @@ async function handleDeleteTask(taskId) {
     const { data: refreshed, error: e2 } = await supabase
       .from("tasks")
       .select("*")
-      .order("title", { ascending: true });
+      .order("due_time", { ascending: true })
+.order("title", { ascending: true });
+
     if (e2) throw e2;
 
     const normalized = (refreshed || []).map((t) => ({
@@ -676,34 +689,7 @@ function handleRowDrop(i) {
   }
 }
 
-// — A5: persist order to tasks.sort_index across ALL rows currently in memory —
-async function handleSaveOrder() {
-  try {
-    setBulkSaving(true);
 
-    // Only update existing rows (ignore anything without an id)
-    const withIds = tasks
-      .map((t, idx) => ({ id: t?.id, sort_index: idx + 1 }))
-      .filter((r) => !!r.id);
-
-    // Batch updates: one UPDATE per row, avoids upsert/insert semantics
-    const updates = withIds.map((row) =>
-      supabase.from("tasks").update({ sort_index: row.sort_index }).eq("id", row.id)
-    );
-
-    const results = await Promise.all(updates);
-    const firstError = results.find((r) => r.error)?.error;
-    if (firstError) throw firstError;
-
-    await refreshTasks();
-    alert("Order saved.");
-  } catch (err) {
-    console.error(err);
-    alert(err.message || "Failed to save order");
-  } finally {
-    setBulkSaving(false);
-  }
-}
 
 
 // — A5: drag handlers —
@@ -776,7 +762,9 @@ async function refreshTasks() {
   const { data, error } = await supabase
     .from("tasks")
     .select("*")
-    .order("title", { ascending: true });
+    .order("due_time", { ascending: true })
+.order("title", { ascending: true });
+
   if (error) throw error;
 
   const normalized = (data || []).map((t) => ({
@@ -1668,16 +1656,7 @@ async function handleBulkDelete() {
           </label>
         )}
 
-        {/* sort_index */}
-        <label className="block text-sm">
-          <span className="text-gray-700">Sort index (smaller = higher)</span>
-          <input
-            type="number"
-            value={draft.sort_index ?? 1000}
-            onChange={(e) => setDraft((d) => ({ ...d, sort_index: Number(e.target.value) }))}
-            className="mt-1 w-full rounded-lg border px-3 py-2"
-          />
-        </label>
+        
       </div>
 
                   <div className="border-t p-4 sticky bottom-0 bg-white flex items-center justify-end gap-2">
@@ -1894,7 +1873,9 @@ async function handleBulkDelete() {
              const { data, error: e2 } = await supabase
   .from("tasks")
   .select("*")
-  .order("title", { ascending: true });
+  .order("due_time", { ascending: true })
+.order("title", { ascending: true });
+
 if (e2) throw e2;
 
 // Normalize so render helpers never explode
