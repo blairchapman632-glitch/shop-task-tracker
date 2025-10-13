@@ -1027,19 +1027,19 @@ async function handleBulkDelete() {
                       placeholder="Search tasks…"
                       className="w-[220px] rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    <select
+                                        <select
                       className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
                       value={freqFilter}
                       onChange={(e) => setFreqFilter(e.target.value)}
                       title="Filter by frequency"
                     >
-                     <option value="">All</option>
-<option value="daily">Daily</option>
-<option value="weekly">Weekly</option>
-<option value="monthly">Monthly</option>
-<option value="specific_date">Specific date</option>
-
+                      <option value="all">All</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="specific_date">Specific date</option>
                     </select>
+
                     <select
                       className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
                       value={activeFilter}
@@ -1680,20 +1680,24 @@ async function handleBulkDelete() {
         </label>
       </div>
 
-          <div className="border-t p-4 sticky bottom-0 bg-white flex items-center justify-end gap-2">
-        <button type="button" onClick={closeEdit} className="rounded-lg border
+                  <div className="border-t p-4 sticky bottom-0 bg-white flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeEdit}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={editSaving}
+              onClick={saveEdit}
+              className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm disabled:opacity-60"
+            >
+              {editSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
 
-          Cancel
-        </button>
-        <button
-          type="button"
-          disabled={editSaving}
-          onClick={saveEdit}
-          className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm disabled:opacity-60"
-        >
-          {editSaving ? "Saving…" : "Save"}
-        </button>
-      </div>
     </div>
   </div>
 )}
