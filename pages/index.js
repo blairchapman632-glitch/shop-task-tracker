@@ -24,23 +24,7 @@ useEffect(() => {
   return () => window.removeEventListener("keydown", onKey, { capture: true });
 }, [infoOpenId]);
 
-  
-    if (!infoOpenId) return;
 
-    const handleOutsideClick = () => setInfoOpenId(null);
-    const handleKeyDown = (e) => {
-      if (e.key === "Escape") setInfoOpenId(null);
-    };
-
-    // Use capture so we run even if other handlers stop propagation
-    document.addEventListener("click", handleOutsideClick, true);
-    document.addEventListener("keydown", handleKeyDown, true);
-
-    return () => {
-      document.removeEventListener("click", handleOutsideClick, true);
-      document.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [infoOpenId]);
 
   // Local “today” bounds (device time = Perth kiosk)
   // ——— 3.3b helper: decide if a task should show today ———
