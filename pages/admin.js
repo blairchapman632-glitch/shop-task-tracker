@@ -314,7 +314,7 @@ if (!taskForm?.title || !taskForm.title.trim()) {
       const { data, error } = await supabase
         .from("tasks")
         .select("*")
-        .order("due_time", { ascending: true })
+        
 .order("title", { ascending: true });
 
 
@@ -341,13 +341,9 @@ if (!taskForm?.title || !taskForm.title.trim()) {
         }));
 
 
-              // Admin ordering: due_time → title (no-time last)
-normalized.sort((a, b) => {
-  const tA = timeToMinutes(a.due_time);
-  const tB = timeToMinutes(b.due_time);
-  if (tA !== tB) return tA - tB;
-  return (a.title || "").localeCompare(b.title || "");
-});
+                    // Admin ordering: title A→Z only
+normalized.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
 
 
 
@@ -473,7 +469,7 @@ async function handleDelete(row) {
     const { data, error: e2 } = await supabase
     .from("tasks")
   .select("*")
-  .order("due_time", { ascending: true })
+  
 .order("title", { ascending: true });
 
 
@@ -515,7 +511,7 @@ async function handleDelete(row) {
     const { data, error: e2 } = await supabase
   .from("tasks")
     .select("*")
-  .order("due_time", { ascending: true })
+  
   .order("title", { ascending: true });
 
 
@@ -580,7 +576,7 @@ async function handleDeleteTask(taskId) {
     const { data: refreshed, error: e2 } = await supabase
       .from("tasks")
       .select("*")
-      .order("due_time", { ascending: true })
+      
 .order("title", { ascending: true });
 
     if (e2) throw e2;
@@ -769,7 +765,7 @@ async function refreshTasks() {
   const { data, error } = await supabase
     .from("tasks")
     .select("*")
-    .order("due_time", { ascending: true })
+    
 .order("title", { ascending: true });
 
   if (error) throw error;
@@ -1880,7 +1876,7 @@ async function handleBulkDelete() {
              const { data, error: e2 } = await supabase
   .from("tasks")
   .select("*")
-  .order("due_time", { ascending: true })
+  
 .order("title", { ascending: true });
 
 if (e2) throw e2;
