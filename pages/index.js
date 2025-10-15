@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 
 import { recordCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
@@ -338,8 +339,61 @@ setStaff(activeStaff);
         i
       </button>
 
-      {/* Info popover (anchored) */}
-      {infoOpenId === task.id && (
+      {/* Info popover (portal, modal-style to avoid clipping) */}
+{infoOpenId === task.id &&
+  createPortal(
+    <>
+      {/* Backdrop (click to close) */}
+      <div
+        className="fixed inset-0 z-40 bg-black/30"
+        onClick={() => setInfoOpenId(null)}
+        aria-hidden="true"
+      />
+
+      {/* Centered container */}
+      <div
+        className="fixed inset-0 z-50 flex items-start justify-center p-4 md:p-6"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Task notes"
+        onClick={(e) => e.stopPropagation()} // don’t bubble to tile
+      >
+        <div className="mt-16 w-full max-w-xl max-h-[85vh] overflow-auto rounded-2xl border border-gray-200 bg-white shadow-xl">
+          {/* Accent bar */}
+          <div className="h-1 rounded-t-2xl bg-blue-500" />
+
+          {/* Header with title + close */}
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="min-w-0 pr-3">
+              <div className="truncate font-medium text-gray-900">{task.title}</div>
+              {task.due_time && (
+                <div className="text-xs text-gray-500">
+                  Due {formatTime(task.due_time)}
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="h-10 w-10 inline-flex items-center justify-center rounded-full hover:bg-gray-100"
+              aria-label="Close"
+              onClick={() => setInfoOpenId(null)}
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="px-4 pb-4 text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">
+            {task.notes || "No notes yet."}
+          </div>
+        </div>
+      </div>
+    </>,
+    document.body
+  )
+}
+
         <div
           className="absolute z-20 left-1/2 -translate-x-1/2 top-7 w-[300px] max-w-[calc(100vw-2rem)] rounded-2xl border border-gray-200 bg-white shadow-lg"
           role="dialog"
