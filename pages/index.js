@@ -352,13 +352,17 @@ setStaff(activeStaff);
 
       {/* Centered container */}
       <div
-        className="fixed inset-0 z-50 flex items-start justify-center p-4 md:p-6"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Task notes"
-        onClick={(e) => e.stopPropagation()} // don’t bubble to tile
-      >
-        <div className="mt-16 w-full max-w-xl max-h-[85vh] overflow-auto rounded-2xl border border-gray-200 bg-white shadow-xl">
+  className="fixed inset-0 z-50 flex items-start justify-center p-4 md:p-6"
+  role="dialog"
+  aria-modal="true"
+  aria-label="Task notes"
+  onClick={() => setInfoOpenId(null)}
+>
+  <div
+    className="mt-16 w-full max-w-xl max-h-[85vh] overflow-auto rounded-2xl border border-gray-200 bg-white shadow-xl"
+    onClick={(e) => e.stopPropagation()}
+  >
+
           {/* Accent bar */}
           <div className="h-1 rounded-t-2xl bg-blue-500" />
 
@@ -385,8 +389,12 @@ setStaff(activeStaff);
 
           {/* Body */}
           <div className="px-4 pb-4 text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">
-            {task.notes || "No notes yet."}
-          </div>
+  {(() => {
+    const txt = String(task?.info ?? "").trim();
+    return txt ? txt : "No notes yet.";
+  })()}
+</div>
+
         </div>
       </div>
     </>,
