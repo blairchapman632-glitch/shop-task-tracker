@@ -425,12 +425,13 @@ setStaff(activeStaff);
             </div>
           </div>
 
-          {/* Body */}
+                    {/* Body */}
           <div className="px-3 pb-3 text-sm text-gray-700 whitespace-pre-line">
-            {task.info && String(task.info).trim().length
+            {(task.info && String(task.info).trim().length)
               ? String(task.info)
-              : <span className="text-gray-400">No notes yet.</span>}
+              : (<span className="text-gray-400">No notes yet.</span>)}
           </div>
+
         </div>
       )}
 
