@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
 
-import { recordCompletion } from "../lib/recordCompletion.js";
+import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
+
 import supabase from "../lib/supabaseClient";
 
 export default function HomePage() {
@@ -170,6 +171,44 @@ setStaff(activeStaff);
 
   const handleTaskTap = async (task) => {
     try {
+      // If an info popover is open, a tile tap only closes it — no completion.
+      if (infoOpenId) {
+        setInfoOpenId(null);
+        return;
+      }
+
+      // If already completed today: offer to undo
+      if (completedTaskIds.has(task.id)) {
+        const ok = typeof window !== "undefined" &&
+          window.confirm(`Undo completion for “${task.title}” today?`);
+        if (!ok) return;
+
+        // Delete today's completion row
+        await undoCompletion(supabase, Number(task.id));
+
+        // Update local state
+        setCompletedTaskIds((prev) => {
+          const next = new Set(prev);
+          next.delete(task.id);
+          return next;
+        });
+
+        // Feed entry for undo
+        const timeStr = new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" });
+        const entry = {
+          id: (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()),
+          taskTitle: task.title,
+          staffName: selectedStaffName ?? "Someone",
+          timeStr,
+        };
+        setFeed((f) => [
+          { ...entry, taskTitle: `Undid: ${task.title}` },
+          ...f,
+        ].slice(0, 25));
+        return;
+      }
+
+      // Otherwise: complete it
       if (!selectedStaffId) {
         alert("Tap your photo first (right side), then tap the task.");
         return;
@@ -193,14 +232,21 @@ setStaff(activeStaff);
 
       burstConfetti();
     } catch (err) {
+      // Race-safe fallbacks:
       if (err?.message?.includes("completions_one_per_day")) {
-        alert("Already recorded today.");
-      } else {
-        alert("Error: " + (err?.message ?? String(err)));
-        console.error(err);
+        // Another kiosk beat us to it; just mark as done locally
+        setCompletedTaskIds((prev) => {
+          const next = new Set(prev);
+          next.add(task.id);
+          return next;
+        });
+        return;
       }
+      alert("Error: " + (err?.message ?? String(err)));
+      console.error(err);
     }
   };
+
 
   const formatTime = (t) => {
     if (!t) return null;
