@@ -394,46 +394,8 @@ setStaff(activeStaff);
   )
 }
 
-        <div
-          className="absolute z-20 left-1/2 -translate-x-1/2 top-7 w-[300px] max-w-[calc(100vw-2rem)] rounded-2xl border border-gray-200 bg-white shadow-lg"
-          role="dialog"
-          aria-label="Task notes"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Accent bar */}
-          <div className="h-1 rounded-t-2xl bg-blue-500" />
+        {/* (old anchored popover removed — using portal modal above) */}
 
-          {/* Header with close */}
-          <div className="flex items-center justify-between px-3 py-2">
-            <div className="min-w-0 pr-2">
-              <div className="truncate font-medium text-gray-900">{task.title}</div>
-            </div>
-            <div className="flex items-center gap-2">
-              {task.due_time && (
-                <span className="shrink-0 text-xs bg-blue-50 text-blue-800 rounded-md px-2 py-0.5 border border-blue-200">
-                  {formatTime(task.due_time)}
-                </span>
-              )}
-              <button
-                type="button"
-                aria-label="Close"
-                className="h-6 w-6 inline-flex items-center justify-center rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                onClick={() => setInfoOpenId(null)}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-
-                    {/* Body */}
-          <div className="px-3 pb-3 text-sm text-gray-700 whitespace-pre-line">
-            {(task.info && String(task.info).trim().length)
-              ? String(task.info)
-              : (<span className="text-gray-400">No notes yet.</span>)}
-          </div>
-
-        </div>
-      )}
 
       {isDone && (
         <span
