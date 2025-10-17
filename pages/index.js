@@ -23,6 +23,7 @@ export default function HomePage() {
   const [leadersMonth, setLeadersMonth] = useState([]);
   const [leadersPeriod, setLeadersPeriod] = useState("week"); // "week" | "month"
   const [showLeadersModal, setShowLeadersModal] = useState(false);
+  const [leadersRefreshKey, setLeadersRefreshKey] = useState(0);
 
   // Date helpers: start of week (Mon) and start of month, in local time
   const getWeekStart = (d = new Date()) => {
@@ -232,7 +233,8 @@ setStaff(activeStaff);
     };
 
     loadLeaders();
-  }, [tasks, staff]);
+  }, [tasks, staff, leadersRefreshKey]);
+
 
   const selectedStaff = staff.find((s) => s.id === selectedStaffId) || null;
   const selectedStaffName = selectedStaff ? selectedStaff.name : null;
@@ -285,6 +287,8 @@ setStaff(activeStaff);
           { ...entry, taskTitle: `Undid: ${task.title}` },
           ...f,
         ].slice(0, 25));
+                setLeadersRefreshKey((k) => k + 1);
+
         return;
       }
 
@@ -309,6 +313,7 @@ setStaff(activeStaff);
         timeStr,
       };
       setFeed((f) => [entry, ...f].slice(0, 25));
+      setLeadersRefreshKey((k) => k + 1);
 
       burstConfetti();
     } catch (err) {
