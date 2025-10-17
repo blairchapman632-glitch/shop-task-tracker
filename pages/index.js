@@ -603,18 +603,7 @@ setStaff(activeStaff);
 
 
 
-  {/* Leaderboard (no scroll needed) */}
-  <div className="border rounded-xl p-3 bg-white">
-    <div className="flex items-center justify-between mb-2">
-      <h3 className="font-medium">Leaderboard (This Month)</h3>
-      <span className="text-xs text-gray-500">Top 3</span>
-    </div>
-    <ol className="text-sm space-y-1">
-      <li>1. —</li>
-      <li>2. —</li>
-      <li>3. —</li>
-    </ol>
-  </div>
+
     {/* Leaderboard */}
     <div className="border rounded-xl p-3 bg-white">
       <div className="flex items-center justify-between mb-2">
