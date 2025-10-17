@@ -24,6 +24,10 @@ export default function HomePage() {
   const [leadersPeriod, setLeadersPeriod] = useState("week"); // "week" | "month"
   const [showLeadersModal, setShowLeadersModal] = useState(false);
   const [leadersRefreshKey, setLeadersRefreshKey] = useState(0);
+// Notes state
+const [notes, setNotes] = useState([]);
+const [noteText, setNoteText] = useState("");
+const [notesSaving, setNotesSaving] = useState(false);
 
   // Date helpers: start of week (Mon) and start of month, in local time
   const getWeekStart = (d = new Date()) => {
@@ -234,6 +238,29 @@ setStaff(activeStaff);
 
     loadLeaders();
   }, [tasks, staff, leadersRefreshKey]);
+// Load kiosk notes: last 7 days or pinned
+useEffect(() => {
+  const loadNotes = async () => {
+    try {
+      const since = new Date();
+      since.setDate(since.getDate() - 7);
+      const { data, error } = await supabase
+        .from("kiosk_notes")
+        .select("id, body, staff_id, created_at, pinned")
+        .gte("created_at", since.toISOString())
+        .order("pinned", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+      setNotes(data || []);
+    } catch (err) {
+      console.error("Notes load failed:", err);
+    }
+  };
+
+  loadNotes();
+}, [staff.length, leadersRefreshKey]);
 
 
   const selectedStaff = staff.find((s) => s.id === selectedStaffId) || null;
@@ -245,6 +272,11 @@ setStaff(activeStaff);
     const pct = total ? Math.round((done / total) * 100) : 0;
     return { done, total, pct };
   }, [tasks, completedTaskIds]);
+// Lookup: staffId -> staff object (for note author info)
+const staffById = useMemo(
+  () => Object.fromEntries(staff.map(s => [s.id, s])),
+  [staff]
+);
 
   const burstConfetti = () => {
     setShowConfetti(true);
@@ -332,6 +364,59 @@ setStaff(activeStaff);
     }
   };
 
+// Post a new note
+const postNote = async () => {
+  const body = noteText.trim();
+  if (!body) return;
+  if (!selectedStaffId) {
+    alert("Tap your photo first to sign your note.");
+    return;
+  }
+  setNotesSaving(true);
+  try {
+    const { data, error } = await supabase
+      .from("kiosk_notes")
+      .insert({
+        body,
+        staff_id: Number(selectedStaffId),
+      })
+      .select("id, body, staff_id, created_at, pinned")
+      .single();
+    if (error) throw error;
+
+    setNotes((prev) => [data, ...prev].slice(0, 100));
+    setNoteText("");
+  } catch (err) {
+    alert("Couldn't post note: " + (err?.message || String(err)));
+    console.error(err);
+  } finally {
+    setNotesSaving(false);
+  }
+};
+
+// Pin / unpin a note
+const togglePin = async (note) => {
+  const nextPinned = !note.pinned;
+  try {
+    const { error } = await supabase
+      .from("kiosk_notes")
+      .update({ pinned: nextPinned })
+      .eq("id", note.id);
+    if (error) throw error;
+
+    setNotes((prev) =>
+      [...prev.map((n) => (n.id === note.id ? { ...n, pinned: nextPinned } : n))]
+        .sort(
+          (a, b) =>
+            (b.pinned === true) - (a.pinned === true) ||
+            new Date(b.created_at) - new Date(a.created_at)
+        )
+    );
+  } catch (err) {
+    alert("Couldn't update pin: " + (err?.message || String(err)));
+    console.error(err);
+  }
+};
 
   const formatTime = (t) => {
     if (!t) return null;
@@ -669,21 +754,93 @@ setStaff(activeStaff);
 
     </div>
 
-    {/* Notes (capped height, scroll if long) */}
-  <div className="border rounded-xl p-3 bg-white min-h-[144px] max-h-[240px] overflow-y-auto nice-scroll">
-
-
-
-
-    <div className="flex items-center justify-between mb-2">
-      <h3 className="font-medium">Notes</h3>
-      <span className="text-xs text-gray-500">Today</span>
-    </div>
-    <div className="text-sm text-gray-600">
-      <div>- </div>
-      <div>- </div>
-    </div>
+ {/* Notes (capped height, scroll if long) */}
+<div className="border rounded-xl p-3 bg-white min-h-[144px] max-h-[240px] overflow-y-auto nice-scroll">
+  <div className="flex items-center justify-between mb-2">
+    <h3 className="font-medium">Notes</h3>
+    <span className="text-xs text-gray-500">Past week</span>
   </div>
+
+  {/* Composer */}
+  <div className="flex gap-2 mb-2">
+    <input
+      value={noteText}
+      onChange={(e) => setNoteText(e.target.value)}
+      maxLength={500}
+      placeholder={
+        selectedStaffName
+          ? `Note from ${selectedStaffName}…`
+          : "Tap your photo, then write a note…"
+      }
+      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+    />
+    <button
+      type="button"
+      onClick={postNote}
+      disabled={!noteText.trim() || notesSaving || !selectedStaffId}
+      className="rounded-lg px-3 py-2 text-sm border border-blue-600 bg-blue-600 text-white disabled:opacity-50"
+    >
+      Post
+    </button>
+  </div>
+
+  {/* List */}
+  {notes.length === 0 ? (
+    <div className="text-xs text-gray-500">No notes yet this week.</div>
+  ) : (
+    <ul className="space-y-2">
+      {notes.map((n) => {
+        const author = staffById[n.staff_id];
+        const when = new Date(n.created_at).toLocaleString("en-AU", {
+          month: "short",
+          day: "numeric",
+          weekday: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        return (
+          <li key={n.id} className="flex items-start gap-2">
+            <img
+              src={author?.photo_url || "/placeholder.png"}
+              alt={author?.name || "Staff"}
+              className="w-8 h-8 rounded-full object-cover mt-0.5"
+              loading="lazy"
+              decoding="async"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">
+                  {author?.name ?? "Someone"}
+                </span>
+                <span className="text-[11px] text-gray-500">{when}</span>
+                {n.pinned && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
+                    Pinned
+                  </span>
+                )}
+              </div>
+              <div className="text-sm whitespace-pre-wrap break-words">
+                {n.body}
+              </div>
+            </div>
+
+            {/* Pin / Unpin */}
+            <button
+              type="button"
+              className="text-xs rounded-md border border-gray-200 px-2 py-0.5 self-start hover:bg-gray-50"
+              title={n.pinned ? "Unpin" : "Pin to top"}
+              onClick={() => togglePin(n)}
+              disabled={!selectedStaffId}
+            >
+              {n.pinned ? "Unpin" : "Pin"}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  )}
+</div>
+
 
   {/* Activity (fills rest of column, scrolls) */}
   <div className="border rounded-xl p-3 bg-white h-[120px] overflow-y-auto nice-scroll">
