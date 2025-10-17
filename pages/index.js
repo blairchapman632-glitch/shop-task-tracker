@@ -26,6 +26,19 @@ export default function HomePage() {
   const [leadersRefreshKey, setLeadersRefreshKey] = useState(0);
 // Notes state
 const [notes, setNotes] = useState([]);
+  // Keep pinned notes at top automatically whenever notes change
+useEffect(() => {
+  if (!notes.length) return;
+  setNotes((prev) =>
+    [...prev].sort(
+      (a, b) =>
+        (b.pinned === true) - (a.pinned === true) ||
+        new Date(b.created_at) - new Date(a.created_at)
+    )
+  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [notes.length]);
+
 const [noteText, setNoteText] = useState("");
 const [notesSaving, setNotesSaving] = useState(false);
 
