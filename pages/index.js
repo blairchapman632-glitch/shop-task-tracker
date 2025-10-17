@@ -626,37 +626,47 @@ setStaff(activeStaff);
         </div>
       </div>
 
-      {(() => {
-        const rows = leadersPeriod === "week" ? leadersWeek : leadersMonth;
-        const top = rows.slice(0, 3);
-        if (!rows.length) return <div className="text-xs text-gray-500">No points yet.</div>;
-        return (
-          <>
-            <ol className="text-sm space-y-1">
-              {top.map((r, i) => (
-                <li key={r.staff_id} className="flex items-center justify-between">
-                  <span className="truncate">
-                    <span className="mr-2 text-gray-500">#{i + 1}</span>
-                    <span className="font-medium">{r.name}</span>
-                  </span>
-                  <span className="tabular-nums">{r.points} pts</span>
-                </li>
-              ))}
-            </ol>
-            {rows.length > 3 && (
-              <div className="mt-2">
-                <button
-                  type="button"
-                  className="text-xs rounded-md border border-gray-200 px-2 py-1 hover:bg-gray-50"
-                  onClick={() => setShowLeadersModal(true)}
-                >
-                  View all
-                </button>
-              </div>
+     {(() => {
+  const rows = leadersPeriod === "week" ? leadersWeek : leadersMonth;
+  // Take top 3, then pad with placeholders to always show 3 rows
+  const top = rows.slice(0, 3);
+  const padded = [...top];
+  for (let i = padded.length; i < 3; i++) {
+    padded.push({ staff_id: `pad-${i}`, name: "—", points: null });
+  }
+
+  return (
+    <>
+      <ol className="text-sm space-y-1">
+        {padded.map((r, i) => (
+          <li key={r.staff_id} className="flex items-center justify-between">
+            <span className="truncate">
+              <span className="mr-2 text-gray-500">#{i + 1}</span>
+              <span className="font-medium">{r.name}</span>
+            </span>
+            {r.points == null ? (
+              <span className="text-gray-300">—</span>
+            ) : (
+              <span className="tabular-nums">{r.points} pts</span>
             )}
-          </>
-        );
-      })()}
+          </li>
+        ))}
+      </ol>
+      {rows.length > 3 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            className="text-xs rounded-md border border-gray-200 px-2 py-1 hover:bg-gray-50"
+            onClick={() => setShowLeadersModal(true)}
+          >
+            View all
+          </button>
+        </div>
+      )}
+    </>
+  );
+})()}
+
     </div>
 
     {/* Notes (capped height, scroll if long) */}
