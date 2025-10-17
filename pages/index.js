@@ -409,6 +409,27 @@ const postNote = async () => {
 
 // Pin / unpin a note
 const togglePin = async (note) => {
+  // Soft-delete a note (author-only from kiosk)
+const deleteNote = async (note) => {
+  const ok = typeof window !== "undefined" &&
+    window.confirm("Delete this note? This can’t be undone.");
+  if (!ok) return;
+
+  try {
+    const { error } = await supabase
+      .from("kiosk_notes")
+      .update({ deleted: true })
+      .eq("id", note.id);
+    if (error) throw error;
+
+    // Remove from local list immediately
+    setNotes((prev) => prev.filter((n) => n.id !== note.id));
+  } catch (err) {
+    alert("Couldn't delete note: " + (err?.message || String(err)));
+    console.error(err);
+  }
+};
+
   const nextPinned = !note.pinned;
   try {
     const { error } = await supabase
@@ -847,6 +868,17 @@ const togglePin = async (note) => {
             >
               {n.pinned ? "Unpin" : "Pin"}
             </button>
+                <button
+  type="button"
+  className="text-xs rounded-md border border-red-200 text-red-700 px-2 py-0.5 self-start hover:bg-red-50 ml-1"
+  title="Delete note"
+  onClick={() => deleteNote(n)}
+  // Only allow the author (current selected staff) to delete from the kiosk
+  disabled={!selectedStaffId || selectedStaffId !== n.staff_id}
+>
+  Delete
+</button>
+
           </li>
         );
       })}
