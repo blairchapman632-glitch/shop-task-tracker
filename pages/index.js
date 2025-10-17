@@ -18,6 +18,28 @@ export default function HomePage() {
   const [showConfetti, setShowConfetti] = useState(false);
   // Small popover for task info
   const [infoOpenId, setInfoOpenId] = useState(null);
+    // Leaderboard state
+  const [leadersWeek, setLeadersWeek] = useState([]);
+  const [leadersMonth, setLeadersMonth] = useState([]);
+  const [leadersPeriod, setLeadersPeriod] = useState("week"); // "week" | "month"
+  const [showLeadersModal, setShowLeadersModal] = useState(false);
+
+  // Date helpers: start of week (Mon) and start of month, in local time
+  const getWeekStart = (d = new Date()) => {
+    const x = new Date(d);
+    const day = x.getDay(); // 0=Sun..6=Sat
+    const diff = (day === 0 ? -6 : 1 - day); // shift so Monday is first day
+    x.setDate(x.getDate() + diff);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+  const getMonthStart = (d = new Date()) => {
+    const x = new Date(d);
+    x.setDate(1);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+
   // Close on Esc
 useEffect(() => {
   if (!infoOpenId) return;
@@ -153,6 +175,64 @@ setStaff(activeStaff);
     };
     load();
   }, []);
+  // Load leaderboard data (current week + current month)
+  useEffect(() => {
+    // Only run once tasks & staff are available
+    if (!tasks.length || !staff.length) return;
+
+    const loadLeaders = async () => {
+      try {
+        const monthStart = getMonthStart();
+        const { data: comps, error } = await supabase
+          .from("completions")
+          .select("task_id,staff_id,completed_at")
+          .gte("completed_at", monthStart.toISOString())
+          .lte("completed_at", new Date().toISOString());
+        if (error) throw error;
+
+        // Build lookups
+        const tasksById = Object.fromEntries(tasks.map(t => [t.id, t]));
+        const staffById = Object.fromEntries(staff.map(s => [s.id, s]));
+
+        // Aggregate points per staff for month
+        const monthTotals = new Map(); // staffId -> points
+        for (const c of comps || []) {
+          const t = tasksById[c.task_id];
+          if (!t) continue;
+          const pts = Number.isFinite(t.points) ? t.points : 1;
+          monthTotals.set(c.staff_id, (monthTotals.get(c.staff_id) || 0) + pts);
+        }
+
+        // Compute week subset (from local Monday 00:00)
+        const weekStart = getWeekStart();
+        const weekTotals = new Map();
+        for (const c of comps || []) {
+          if (new Date(c.completed_at) < weekStart) continue;
+          const t = tasksById[c.task_id];
+          if (!t) continue;
+          const pts = Number.isFinite(t.points) ? t.points : 1;
+          weekTotals.set(c.staff_id, (weekTotals.get(c.staff_id) || 0) + pts);
+        }
+
+        // Convert to arrays with names, sort desc
+        const toRows = (totals) =>
+          Array.from(totals.entries())
+            .map(([staff_id, points]) => ({
+              staff_id,
+              name: staffById[staff_id]?.name || `#${staff_id}`,
+              points,
+            }))
+            .sort((a, b) => b.points - a.points);
+
+        setLeadersMonth(toRows(monthTotals));
+        setLeadersWeek(toRows(weekTotals));
+      } catch (err) {
+        console.error("Leaderboard load failed:", err);
+      }
+    };
+
+    loadLeaders();
+  }, [tasks, staff]);
 
   const selectedStaff = staff.find((s) => s.id === selectedStaffId) || null;
   const selectedStaffName = selectedStaff ? selectedStaff.name : null;
@@ -530,6 +610,60 @@ setStaff(activeStaff);
       <li>3. —</li>
     </ol>
   </div>
+    {/* Leaderboard */}
+    <div className="border rounded-xl p-3 bg-white">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-medium">Leaderboard</h3>
+        <div className="inline-flex items-center gap-2">
+          <button
+            type="button"
+            className={`text-xs rounded-md border px-2 py-0.5 ${leadersPeriod === "week" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-gray-200"}`}
+            onClick={() => setLeadersPeriod("week")}
+          >
+            This week
+          </button>
+          <button
+            type="button"
+            className={`text-xs rounded-md border px-2 py-0.5 ${leadersPeriod === "month" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-gray-200"}`}
+            onClick={() => setLeadersPeriod("month")}
+          >
+            This month
+          </button>
+        </div>
+      </div>
+
+      {(() => {
+        const rows = leadersPeriod === "week" ? leadersWeek : leadersMonth;
+        const top = rows.slice(0, 3);
+        if (!rows.length) return <div className="text-xs text-gray-500">No points yet.</div>;
+        return (
+          <>
+            <ol className="text-sm space-y-1">
+              {top.map((r, i) => (
+                <li key={r.staff_id} className="flex items-center justify-between">
+                  <span className="truncate">
+                    <span className="mr-2 text-gray-500">#{i + 1}</span>
+                    <span className="font-medium">{r.name}</span>
+                  </span>
+                  <span className="tabular-nums">{r.points} pts</span>
+                </li>
+              ))}
+            </ol>
+            {rows.length > 3 && (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  className="text-xs rounded-md border border-gray-200 px-2 py-1 hover:bg-gray-50"
+                  onClick={() => setShowLeadersModal(true)}
+                >
+                  View all
+                </button>
+              </div>
+            )}
+          </>
+        );
+      })()}
+    </div>
 
     {/* Notes (capped height, scroll if long) */}
   <div className="border rounded-xl p-3 bg-white min-h-[144px] max-h-[240px] overflow-y-auto nice-scroll">
@@ -578,6 +712,54 @@ setStaff(activeStaff);
             </section>
           </div>
         )}
+              {showLeadersModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+        {/* Backdrop */}
+        <div className="absolute inset-0 bg-black/40" onClick={() => setShowLeadersModal(false)} />
+        {/* Card */}
+        <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-4 shadow-xl max-h-[85vh] overflow-y-auto">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-base font-semibold">
+              Leaderboard — {leadersPeriod === "week" ? "This week" : "This month"}
+            </h3>
+            <button
+              type="button"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-full hover:bg-gray-100"
+              aria-label="Close"
+              onClick={() => setShowLeadersModal(false)}
+            >
+              ×
+            </button>
+          </div>
+
+          {(() => {
+            const rows = leadersPeriod === "week" ? leadersWeek : leadersMonth;
+            if (!rows.length) return <div className="text-sm text-gray-500">No points yet.</div>;
+            return (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-gray-600">
+                    <th className="py-1 pr-2">#</th>
+                    <th className="py-1 pr-2">Name</th>
+                    <th className="py-1 text-right">Points</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={r.staff_id} className="border-t border-gray-100">
+                      <td className="py-1 pr-2 text-gray-500">{i + 1}</td>
+                      <td className="py-1 pr-2">{r.name}</td>
+                      <td className="py-1 text-right tabular-nums">{r.points}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
+        </div>
+      </div>
+    )}
+
       </div>
     </main>
   );
