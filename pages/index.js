@@ -409,27 +409,9 @@ const postNote = async () => {
 
 // Pin / unpin a note
 const togglePin = async (note) => {
-  const nextPinned = !note.pinned;
-  try {
-    const { error } = await supabase
-      .from("kiosk_notes")
-      .update({ pinned: nextPinned })
-      .eq("id", note.id);
-    if (error) throw error;
 
-    setNotes((prev) =>
-      [...prev.map((n) => (n.id === note.id ? { ...n, pinned: nextPinned } : n))]
-        .sort(
-          (a, b) =>
-            (b.pinned === true) - (a.pinned === true) ||
-            new Date(b.created_at) - new Date(a.created_at)
-        )
-    );
-  } catch (err) {
-    alert("Couldn't update pin: " + (err?.message || String(err)));
-    console.error(err);
-  }
-};
+ 
+
 
 
   const nextPinned = !note.pinned;
@@ -453,6 +435,7 @@ const togglePin = async (note) => {
     console.error(err);
   }
 };
+
 // Soft-delete a note (author-only from kiosk)
 const deleteNote = async (note) => {
   const ok = typeof window !== "undefined" &&
@@ -471,6 +454,28 @@ const deleteNote = async (note) => {
   } catch (err) {
     alert("Couldn't delete note: " + (err?.message || String(err)));
     console.error(err);
+  }
+};
+// Permanently delete a note (author-only from kiosk)
+const deleteNote = async (note) => {
+  const ok =
+    typeof window !== "undefined" &&
+    window.confirm("Delete this note? This can’t be undone.");
+  if (!ok) return;
+
+  try {
+    const { error } = await supabase
+      .from("kiosk_notes")
+      .delete()
+      .eq("id", note.id);
+
+    if (error) throw error;
+
+    // Remove from local list immediately
+    setNotes((prev) => prev.filter((n) => n.id !== note.id));
+  } catch (err) {
+    console.error(err);
+    alert("Couldn't delete note: " + (err?.message || String(err)));
   }
 };
 
