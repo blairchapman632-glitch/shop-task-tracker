@@ -461,15 +461,7 @@ async function deleteNote(note) {
 
 
 
-    if (error) throw error;
-
-    // Remove from local list immediately
-    setNotes((prev) => prev.filter((n) => n.id !== note.id));
-  } catch (err) {
-    alert("Couldn't delete note: " + (err?.message || String(err)));
-    console.error(err);
-  }
-};
+   
 
 
   const formatTime = (t) => {
