@@ -454,10 +454,10 @@ const deleteNote = async (note) => {
     // Remove from local list immediately
     setNotes((prev) => prev.filter((n) => n.id !== note.id));
   } catch (err) {
-    alert("Couldn't delete note: " + (err?.message || String(err)));
     console.error(err);
+    alert("Couldn't delete note: " + (err?.message || String(err)));
   }
-};
+}; // ← this closing semicolon is critical
 
 
     if (error) throw error;
