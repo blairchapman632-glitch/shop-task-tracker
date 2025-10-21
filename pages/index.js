@@ -437,10 +437,10 @@ const togglePin = async (note) => {
 };
 
 // Permanently delete a note (author-only from kiosk)
-const deleteNote = async (note) => {
+async function deleteNote(note) {
   const ok =
     typeof window !== "undefined" &&
-    window.confirm("Delete this note? This can’t be undone.");
+    window.confirm("Delete this note? This can't be undone.");
   if (!ok) return;
 
   try {
@@ -457,7 +457,8 @@ const deleteNote = async (note) => {
     console.error(err);
     alert("Couldn't delete note: " + (err?.message || String(err)));
   }
-}; // ← this closing semicolon is critical
+}
+
 
 
     if (error) throw error;
