@@ -436,17 +436,29 @@ const togglePin = async (note) => {
   }
 };
 
-// Soft-delete a note (author-only from kiosk)
+// Permanently delete a note (author-only from kiosk)
 const deleteNote = async (note) => {
-  const ok = typeof window !== "undefined" &&
-    window.confirm("Delete this note? This can’t be undone.");
+  const ok =
+    typeof window !== "undefined" &&
+    window.confirm("Delete this note? This can’t be undone?");
   if (!ok) return;
 
   try {
     const { error } = await supabase
       .from("kiosk_notes")
-      .update({ deleted: true })
+      .delete()
       .eq("id", note.id);
+
+    if (error) throw error;
+
+    // Remove from the local list immediately
+    setNotes((prev) => prev.filter((n) => n.id !== note.id));
+  } catch (err) {
+    console.error(err);
+    alert("Couldn't delete note: " + (err?.message || String(err)));
+  }
+};
+
     if (error) throw error;
 
     // Remove from local list immediately
