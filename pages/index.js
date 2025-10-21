@@ -440,7 +440,7 @@ const togglePin = async (note) => {
 const deleteNote = async (note) => {
   const ok =
     typeof window !== "undefined" &&
-    window.confirm("Delete this note? This can’t be undone?");
+    window.confirm("Delete this note? This can’t be undone.");
   if (!ok) return;
 
   try {
@@ -451,13 +451,14 @@ const deleteNote = async (note) => {
 
     if (error) throw error;
 
-    // Remove from the local list immediately
+    // Remove from local list immediately
     setNotes((prev) => prev.filter((n) => n.id !== note.id));
   } catch (err) {
-    console.error(err);
     alert("Couldn't delete note: " + (err?.message || String(err)));
+    console.error(err);
   }
 };
+
 
     if (error) throw error;
 
