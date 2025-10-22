@@ -877,10 +877,14 @@ async function deleteNote(note) {
               </div>
             </div>
 
-            {/* Pin / Unpin (icon, tinted when pinned) */}
+          {/* Pin / Unpin (icon, bold red border when pinned) */}
 <button
   type="button"
-  className={`h-6 w-6 inline-flex items-center justify-center rounded-none self-start hover:bg-gray-50 disabled:opacity-40 ${n.pinned ? "bg-yellow-100 text-yellow-800" : "text-gray-600"}`}
+  className={`h-6 w-6 inline-flex items-center justify-center rounded-none self-start disabled:opacity-40 ${
+    n.pinned
+      ? "border-2 border-red-600 bg-red-50 text-red-700"
+      : "text-gray-600 hover:bg-gray-50"
+  }`}
   title={n.pinned ? "Unpin" : "Pin to top"}
   aria-label={n.pinned ? "Unpin note" : "Pin note"}
   onClick={() => togglePin(n)}
@@ -888,6 +892,7 @@ async function deleteNote(note) {
 >
   <span className="text-[13px] leading-none">📌</span>
 </button>
+
 
 
                 <button
