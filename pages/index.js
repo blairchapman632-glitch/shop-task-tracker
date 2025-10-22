@@ -869,21 +869,18 @@ async function deleteNote(note) {
                   {author?.name ?? "Someone"}
                 </span>
                 <span className="text-[11px] text-gray-500">{when}</span>
-                {n.pinned && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
-                    Pinned
-                  </span>
-                )}
+                {/* pinned badge removed — icon now indicates state */}
+
               </div>
               <div className="text-sm whitespace-pre-wrap break-words">
                 {n.body}
               </div>
             </div>
 
-                {/* Pin / Unpin (icon) */}
+            {/* Pin / Unpin (icon, tinted when pinned) */}
 <button
   type="button"
-  className="h-6 w-6 inline-flex items-center justify-center rounded-none text-gray-600 self-start hover:bg-gray-50 disabled:opacity-40"
+  className={`h-6 w-6 inline-flex items-center justify-center rounded-none self-start hover:bg-gray-50 disabled:opacity-40 ${n.pinned ? "bg-yellow-100 text-yellow-800" : "text-gray-600"}`}
   title={n.pinned ? "Unpin" : "Pin to top"}
   aria-label={n.pinned ? "Unpin note" : "Pin note"}
   onClick={() => togglePin(n)}
@@ -891,6 +888,7 @@ async function deleteNote(note) {
 >
   <span className="text-[13px] leading-none">📌</span>
 </button>
+
 
                 <button
   type="button"
