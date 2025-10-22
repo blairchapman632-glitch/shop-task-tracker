@@ -889,14 +889,16 @@ async function deleteNote(note) {
   disabled={!selectedStaffId}
 >
   {/* Simple pushpin SVG using currentColor */}
-  <svg
-    viewBox="0 0 24 24"
-    aria-hidden="true"
-    className="h-3.5 w-3.5"
-    fill="currentColor"
-  >
-    <path d="M14.5 3c.4 0 .8.2 1 .5l1 1c.3.3.7.5 1.1.5H19a1 1 0 0 1 1 1v.4c0 .4.2.8.5 1.1l.5.5a1.5 1.5 0 0 1 0 2.1l-4 4V17a1 1 0 0 1-1 1h-3v4l-1.5-1.5-1.5-1.5 1-1v-2H8a1 1 0 0 1-1-1v-3l-4-4a1.5 1.5 0 0 1 0-2.1l.5-.5c.3-.3.5-.7.5-1.1V6a1 1 0 0 1 1-1h1.4c.4 0 .8-.2 1.1-.5l1-1c.3-.3.6-.5 1-.5h4z"/>
-  </svg>
+ <svg
+  viewBox="0 0 24 24"
+  aria-hidden="true"
+  className="h-3.5 w-3.5"
+  fill="currentColor"
+>
+  {/* Teardrop pin (clearly reads as a pin) */}
+  <path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/>
+</svg>
+
 </button>
 
 
