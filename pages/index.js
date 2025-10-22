@@ -880,7 +880,7 @@ async function deleteNote(note) {
               </div>
             </div>
 
-            {/* Pin / Unpin */}
+                     {/* Pin / Unpin */}
             <button
               type="button"
               className="text-xs rounded-md border border-gray-200 px-2 py-0.5 self-start hover:bg-gray-50"
@@ -892,14 +892,16 @@ async function deleteNote(note) {
             </button>
                 <button
   type="button"
-  className="text-xs rounded-md border border-red-200 text-red-700 px-2 py-0.5 self-start hover:bg-red-50 ml-1"
+  className="h-7 w-7 inline-flex items-center justify-center rounded-full border border-red-200 text-red-700 self-start hover:bg-red-50 ml-1"
   title="Delete note"
+  aria-label="Delete note"
   onClick={() => deleteNote(n)}
   // Only allow the author (current selected staff) to delete from the kiosk
   disabled={!selectedStaffId || selectedStaffId !== n.staff_id}
 >
-  Delete
+  <span className="text-base leading-none">🗑️</span>
 </button>
+
 
           </li>
         );
