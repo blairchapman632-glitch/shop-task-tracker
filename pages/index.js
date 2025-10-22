@@ -891,8 +891,9 @@ async function deleteNote(note) {
               {n.pinned ? "Unpin" : "Pin"}
             </button>
                 <button
+ <button
   type="button"
-  className="h-6 w-6 inline-flex items-center justify-center rounded-none border border-red-200 text-red-700 self-start hover:bg-red-50 ml-1"
+  className="h-6 w-6 inline-flex items-center justify-center rounded-none text-red-600 self-start hover:bg-red-50 ml-1 disabled:opacity-40"
   title="Delete note"
   aria-label="Delete note"
   onClick={() => deleteNote(n)}
@@ -901,6 +902,7 @@ async function deleteNote(note) {
 >
   <span className="text-[13px] leading-none">🗑️</span>
 </button>
+
 
 
 
