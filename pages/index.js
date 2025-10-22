@@ -891,7 +891,6 @@ async function deleteNote(note) {
               {n.pinned ? "Unpin" : "Pin"}
             </button>
                 <button
- <button
   type="button"
   className="h-6 w-6 inline-flex items-center justify-center rounded-none text-red-600 self-start hover:bg-red-50 ml-1 disabled:opacity-40"
   title="Delete note"
