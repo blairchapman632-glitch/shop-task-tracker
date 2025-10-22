@@ -877,7 +877,7 @@ async function deleteNote(note) {
               </div>
             </div>
 
-      {/* Pin / Unpin (icon: green = not pinned, red = pinned) */}
+      {/* Pin / Unpin (SVG icon: green = not pinned, red = pinned) */}
 <button
   type="button"
   className={`h-6 w-6 inline-flex items-center justify-center rounded-none self-start disabled:opacity-40 ${
@@ -888,8 +888,17 @@ async function deleteNote(note) {
   onClick={() => togglePin(n)}
   disabled={!selectedStaffId}
 >
-  <span className="text-[13px] leading-none">📌</span>
+  {/* Simple pushpin SVG using currentColor */}
+  <svg
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+    className="h-3.5 w-3.5"
+    fill="currentColor"
+  >
+    <path d="M14.5 3c.4 0 .8.2 1 .5l1 1c.3.3.7.5 1.1.5H19a1 1 0 0 1 1 1v.4c0 .4.2.8.5 1.1l.5.5a1.5 1.5 0 0 1 0 2.1l-4 4V17a1 1 0 0 1-1 1h-3v4l-1.5-1.5-1.5-1.5 1-1v-2H8a1 1 0 0 1-1-1v-3l-4-4a1.5 1.5 0 0 1 0-2.1l.5-.5c.3-.3.5-.7.5-1.1V6a1 1 0 0 1 1-1h1.4c.4 0 .8-.2 1.1-.5l1-1c.3-.3.6-.5 1-.5h4z"/>
+  </svg>
 </button>
+
 
 
 
