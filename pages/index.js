@@ -892,15 +892,16 @@ async function deleteNote(note) {
             </button>
                 <button
   type="button"
-  className="h-7 w-7 inline-flex items-center justify-center rounded-full border border-red-200 text-red-700 self-start hover:bg-red-50 ml-1"
+  className="h-6 w-6 inline-flex items-center justify-center rounded-none border border-red-200 text-red-700 self-start hover:bg-red-50 ml-1"
   title="Delete note"
   aria-label="Delete note"
   onClick={() => deleteNote(n)}
   // Only allow the author (current selected staff) to delete from the kiosk
   disabled={!selectedStaffId || selectedStaffId !== n.staff_id}
 >
-  <span className="text-base leading-none">🗑️</span>
+  <span className="text-[13px] leading-none">🗑️</span>
 </button>
+
 
 
           </li>
