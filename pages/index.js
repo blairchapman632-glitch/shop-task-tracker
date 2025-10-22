@@ -447,26 +447,27 @@ async function deleteNote(note) {
   if (!ok) return;
 
   try {
-  const { data, error } = await supabase
-    .from("kiosk_notes")
-    .update({ deleted: true })
-    .eq("id", Number(note.id))
-    .select("id"); // verify update applied
+    // Hard delete (now allowed by RLS policy)
+    const { data, error } = await supabase
+      .from("kiosk_notes")
+      .delete()
+      .eq("id", Number(note.id))
+      .select("id"); // ask PostgREST to return the deleted row(s)
 
-  if (error) throw error;
-  if (!data || data.length === 0) {
-    alert("Delete didn't apply — check permissions.");
-    return;
-  }
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      alert("Delete didn't remove any rows — check the id/permissions.");
+      return;
+    }
 
-  // Remove from local list immediately
-  setNotes((prev) => prev.filter((n) => n.id !== note.id));
-} catch (err) {
-
+    // Remove from local list immediately
+    setNotes((prev) => prev.filter((n) => n.id !== note.id));
+  } catch (err) {
     console.error(err);
     alert("Couldn't delete note: " + (err?.message || String(err)));
   }
 }
+
 
 
 
