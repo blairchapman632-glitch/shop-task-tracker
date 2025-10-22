@@ -258,12 +258,13 @@ useEffect(() => {
       const since = new Date();
       since.setDate(since.getDate() - 7);
       const { data, error } = await supabase
-        .from("kiosk_notes")
-        .select("id, body, staff_id, created_at, pinned")
-        .gte("created_at", since.toISOString())
-        .order("pinned", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(100);
+  .from("kiosk_notes")
+  .select("id, body, staff_id, created_at, pinned, deleted")
+  .or("deleted.is.null,deleted.eq.false") // show only non-deleted (treat null as false)
+  .gte("created_at", since.toISOString())
+  .order("pinned", { ascending: false })
+  .order("created_at", { ascending: false })
+  .limit(100);
 
       if (error) throw error;
       setNotes(data || []);
@@ -387,14 +388,16 @@ const postNote = async () => {
   }
   setNotesSaving(true);
   try {
-    const { data, error } = await supabase
-      .from("kiosk_notes")
-      .insert({
-        body,
-        staff_id: Number(selectedStaffId),
-      })
-      .select("id, body, staff_id, created_at, pinned")
-      .single();
+   const { data, error } = await supabase
+  .from("kiosk_notes")
+  .insert({
+    body,
+    staff_id: Number(selectedStaffId),
+    deleted: false, // explicit for safety if no DB default
+  })
+  .select("id, body, staff_id, created_at, pinned, deleted")
+  .single();
+
     if (error) throw error;
 
     setNotes((prev) => [data, ...prev].slice(0, 100));
@@ -444,16 +447,22 @@ async function deleteNote(note) {
   if (!ok) return;
 
   try {
-    const { error } = await supabase
-      .from("kiosk_notes")
-      .delete()
-      .eq("id", note.id);
+  const { data, error } = await supabase
+    .from("kiosk_notes")
+    .update({ deleted: true })
+    .eq("id", Number(note.id))
+    .select("id"); // verify update applied
 
-    if (error) throw error;
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    alert("Delete didn't apply — check permissions.");
+    return;
+  }
 
-    // Remove from local list immediately
-    setNotes((prev) => prev.filter((n) => n.id !== note.id));
-  } catch (err) {
+  // Remove from local list immediately
+  setNotes((prev) => prev.filter((n) => n.id !== note.id));
+} catch (err) {
+
     console.error(err);
     alert("Couldn't delete note: " + (err?.message || String(err)));
   }
