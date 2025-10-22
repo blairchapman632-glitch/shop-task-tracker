@@ -880,16 +880,18 @@ async function deleteNote(note) {
               </div>
             </div>
 
-                     {/* Pin / Unpin */}
-            <button
-              type="button"
-              className="text-xs rounded-md border border-gray-200 px-2 py-0.5 self-start hover:bg-gray-50"
-              title={n.pinned ? "Unpin" : "Pin to top"}
-              onClick={() => togglePin(n)}
-              disabled={!selectedStaffId}
-            >
-              {n.pinned ? "Unpin" : "Pin"}
-            </button>
+                {/* Pin / Unpin (icon) */}
+<button
+  type="button"
+  className="h-6 w-6 inline-flex items-center justify-center rounded-none text-gray-600 self-start hover:bg-gray-50 disabled:opacity-40"
+  title={n.pinned ? "Unpin" : "Pin to top"}
+  aria-label={n.pinned ? "Unpin note" : "Pin note"}
+  onClick={() => togglePin(n)}
+  disabled={!selectedStaffId}
+>
+  <span className="text-[13px] leading-none">📌</span>
+</button>
+
                 <button
   type="button"
   className="h-6 w-6 inline-flex items-center justify-center rounded-none text-red-600 self-start hover:bg-red-50 ml-1 disabled:opacity-40"
