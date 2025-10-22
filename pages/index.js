@@ -877,13 +877,11 @@ async function deleteNote(note) {
               </div>
             </div>
 
-          {/* Pin / Unpin (icon, bold red border when pinned) */}
+      {/* Pin / Unpin (icon: green = not pinned, red = pinned) */}
 <button
   type="button"
   className={`h-6 w-6 inline-flex items-center justify-center rounded-none self-start disabled:opacity-40 ${
-    n.pinned
-      ? "border-2 border-red-600 bg-red-50 text-red-700"
-      : "text-gray-600 hover:bg-gray-50"
+    n.pinned ? "text-red-600 hover:bg-red-50" : "text-green-600 hover:bg-green-50"
   }`}
   title={n.pinned ? "Unpin" : "Pin to top"}
   aria-label={n.pinned ? "Unpin note" : "Pin note"}
