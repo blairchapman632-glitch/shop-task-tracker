@@ -26,14 +26,11 @@ export default function HomePage() {
   const [leadersRefreshKey, setLeadersRefreshKey] = useState(0);
 // Notes state
 const [notes, setNotes] = useState([]);
-  const REACTIONS = ["👍", "❤️", "🙂"];
-const [reactionsByNote, setReactionsByNote] = useState({});
 
-  // Reactions
+// Reactions
 const REACTIONS = ["👍", "❤️", "🙂"];
-
-// noteId -> { counts: { '👍': number }, mine: Set }
 const [reactionsByNote, setReactionsByNote] = useState({});
+
 
   // Keep pinned notes at top automatically whenever notes change
 useEffect(() => {
