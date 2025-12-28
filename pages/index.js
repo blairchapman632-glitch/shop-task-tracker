@@ -582,16 +582,7 @@ const toggleReaction = async (noteId, reaction) => {
 
   return (
     <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-visible">
-  {/* Transparent backdrop to catch outside taps when info is open */}
-  {infoOpenId && (
-    <button
-      type="button"
-      aria-label="Close task info"
-      onClick={() => setInfoOpenId(null)}
-      className="fixed inset-0 z-10 cursor-default outline-none"
-      // no background so the kiosk still looks the same; this blocks clicks to tiles
-    />
-  )}
+  
 
       {/* App card on grey backdrop */}
       <div className="card overflow-hidden">
