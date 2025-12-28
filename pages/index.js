@@ -47,6 +47,48 @@ useEffect(() => {
 
 const [noteText, setNoteText] = useState("");
 const [notesSaving, setNotesSaving] = useState(false);
+// Toggle a reaction on a note (ONE reaction per staff per note)
+const toggleReaction = async (noteId, reaction) => {
+  if (!selectedStaffId) {
+    alert("Tap your photo first to react.");
+    return;
+  }
+
+  const mine = reactionsByNote[noteId]?.mine || null;
+
+  try {
+    if (mine === reaction) {
+      // Tap the same reaction again = remove it
+      const { error } = await supabase
+        .from("kiosk_note_reactions")
+        .delete()
+        .eq("note_id", Number(noteId))
+        .eq("staff_id", Number(selectedStaffId));
+
+      if (error) throw error;
+    } else {
+      // Set/replace reaction (one per staff per note)
+      const { error } = await supabase
+        .from("kiosk_note_reactions")
+        .upsert(
+          {
+            note_id: Number(noteId),
+            staff_id: Number(selectedStaffId),
+            reaction,
+          },
+          { onConflict: "note_id,staff_id" }
+        );
+
+      if (error) throw error;
+    }
+
+    // Simple + reliable: reload notes + reactions
+    setLeadersRefreshKey((k) => k + 1);
+  } catch (err) {
+    console.error(err);
+    alert("Couldn't update reaction: " + (err?.message || String(err)));
+  }
+};
 
   // Date helpers: start of week (Mon) and start of month, in local time
   const getWeekStart = (d = new Date()) => {
