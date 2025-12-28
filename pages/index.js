@@ -26,6 +26,9 @@ export default function HomePage() {
   const [leadersRefreshKey, setLeadersRefreshKey] = useState(0);
 // Notes state
 const [notes, setNotes] = useState([]);
+  const REACTIONS = ["👍", "❤️", "🙂"];
+const [reactionsByNote, setReactionsByNote] = useState({});
+
   // Reactions
 const REACTIONS = ["👍", "❤️", "🙂"];
 
