@@ -977,7 +977,12 @@ const toggleReaction = async (noteId, reaction) => {
       <button
         key={rx}
         type="button"
-        onClick={() => toggleReaction(n.id, rx)}
+          onPointerDown={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleReaction(n.id, rx);
+  }}
+
         className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
           active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
         }`}
