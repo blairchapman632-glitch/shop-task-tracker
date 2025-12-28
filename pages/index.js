@@ -26,6 +26,12 @@ export default function HomePage() {
   const [leadersRefreshKey, setLeadersRefreshKey] = useState(0);
 // Notes state
 const [notes, setNotes] = useState([]);
+  // Reactions
+const REACTIONS = ["👍", "❤️", "🙂"];
+
+// noteId -> { counts: { '👍': number }, mine: Set }
+const [reactionsByNote, setReactionsByNote] = useState({});
+
   // Keep pinned notes at top automatically whenever notes change
 useEffect(() => {
   if (!notes.length) return;
@@ -268,13 +274,44 @@ useEffect(() => {
 
       if (error) throw error;
       setNotes(data || []);
+      // Load reactions for these notes
+const noteIds = (data || []).map(n => n.id);
+
+if (noteIds.length) {
+  const { data: rdata, error: rerr } = await supabase
+    .from("kiosk_note_reactions")
+    .select("note_id, staff_id, reaction")
+    .in("note_id", noteIds);
+
+  if (rerr) throw rerr;
+
+  const by = {};
+  for (const row of rdata || []) {
+    if (!by[row.note_id]) {
+      by[row.note_id] = { counts: {}, mine: new Set() };
+    }
+
+    by[row.note_id].counts[row.reaction] =
+      (by[row.note_id].counts[row.reaction] || 0) + 1;
+
+    if (selectedStaffId && Number(row.staff_id) === Number(selectedStaffId)) {
+      by[row.note_id].mine.add(row.reaction);
+    }
+  }
+
+  setReactionsByNote(by);
+} else {
+  setReactionsByNote({});
+}
+
     } catch (err) {
       console.error("Notes load failed:", err);
     }
   };
 
   loadNotes();
-}, [staff.length, leadersRefreshKey]);
+}, [staff.length, leadersRefreshKey, selectedStaffId]);
+
 
 
   const selectedStaff = staff.find((s) => s.id === selectedStaffId) || null;
@@ -459,6 +496,69 @@ async function deleteNote(note) {
       alert("Delete didn't remove any rows — check the id/permissions.");
       return;
     }
+const toggleReaction = async (noteId, reaction) => {
+  if (!selectedStaffId) {
+    alert("Tap your photo first to react.");
+    return;
+  }
+
+  const mine = reactionsByNote[noteId]?.mine || new Set();
+  const already = mine.has(reaction);
+
+  try {
+    if (already) {
+      const { error } = await supabase
+        .from("kiosk_note_reactions")
+        .delete()
+        .eq("note_id", Number(noteId))
+        .eq("staff_id", Number(selectedStaffId))
+        .eq("reaction", reaction);
+
+      if (error) throw error;
+
+      setReactionsByNote(prev => {
+        const next = { ...prev };
+        const entry = next[noteId] || { counts: {}, mine: new Set() };
+
+        const counts = { ...entry.counts };
+        counts[reaction] = Math.max(0, (counts[reaction] || 0) - 1);
+
+        const newMine = new Set(entry.mine);
+        newMine.delete(reaction);
+
+        next[noteId] = { counts, mine: newMine };
+        return next;
+      });
+    } else {
+      const { error } = await supabase
+        .from("kiosk_note_reactions")
+        .insert({
+          note_id: Number(noteId),
+          staff_id: Number(selectedStaffId),
+          reaction,
+        });
+
+      if (error) throw error;
+
+      setReactionsByNote(prev => {
+        const next = { ...prev };
+        const entry = next[noteId] || { counts: {}, mine: new Set() };
+
+        const counts = { ...entry.counts };
+        counts[reaction] = (counts[reaction] || 0) + 1;
+
+        const newMine = new Set(entry.mine);
+        newMine.add(reaction);
+
+        next[noteId] = { counts, mine: newMine };
+        return next;
+      });
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Couldn't update reaction.");
+  }
+};
 
     // Remove from local list immediately
     setNotes((prev) => prev.filter((n) => n.id !== note.id));
@@ -875,6 +975,29 @@ async function deleteNote(note) {
               <div className="text-sm whitespace-pre-wrap break-words">
                 {n.body}
               </div>
+                <div className="mt-1 flex items-center gap-2">
+  {REACTIONS.map((rx) => {
+    const counts = reactionsByNote[n.id]?.counts || {};
+    const mine = reactionsByNote[n.id]?.mine || new Set();
+    const active = mine.has(rx);
+    const count = counts[rx] || 0;
+
+    return (
+      <button
+        key={rx}
+        type="button"
+        onClick={() => toggleReaction(n.id, rx)}
+        className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
+          active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
+        }`}
+      >
+        <span>{rx}</span>
+        <span className="tabular-nums text-gray-600">{count}</span>
+      </button>
+    );
+  })}
+</div>
+
             </div>
 
       {/* Pin / Unpin (SVG icon: green = not pinned, red = pinned) */}
