@@ -1156,11 +1156,16 @@ const toggleReaction = async (noteId, reaction) => {
 }}
 
   onKeyDown={(e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
-    }
-  }}
+  // If the keypress originated inside a control (eg typing in the reply box),
+  // do not toggle expand/collapse.
+  if (e?.target?.closest?.("textarea, input, select, button, a, label")) return;
+
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
+  }
+}}
+
   className={`cursor-pointer ${
     expandedNoteId === n.id
       ? "mt-1 rounded-lg border border-gray-100 bg-gray-50 p-2"
