@@ -1172,7 +1172,7 @@ const toggleReaction = async (noteId, reaction) => {
   </div>
 
   {/* Expanded area (Replies will render here next) */}
-  {expandedNoteId === n.id && (
+ {expandedNoteId === n.id && (
   <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
     <div className="text-[11px] font-medium text-gray-600 mb-1">
       Replies
@@ -1180,93 +1180,98 @@ const toggleReaction = async (noteId, reaction) => {
 
     {(() => {
       const reps = repliesByNote[n.id] || [];
-            const draft = replyTextByNote[n.id] || "";
+      const draft = replyTextByNote[n.id] || "";
       const saving = replySavingNoteId === n.id;
 
-      if (!reps.length) {
-        return <div className="text-xs text-gray-500">No replies yet.</div>;
-      }
       return (
-        <div className="space-y-2">
-          {reps.map((r) => {
-            const who = staffById[r.staff_id];
-            const whenR = new Date(r.created_at).toLocaleString("en-AU", {
-              month: "short",
-              day: "numeric",
-              weekday: "short",
-              hour: "2-digit",
-              minute: "2-digit",
-            });
-            return (
-              <div key={r.id} className="flex items-start gap-2">
-                <img
-                  src={who?.photo_url || "/placeholder.png"}
-                  alt={who?.name || "Staff"}
-                  className="w-6 h-6 rounded-full object-cover mt-0.5"
-                  loading="lazy"
-                  decoding="async"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-medium text-gray-900">
-                      {who?.name ?? "Someone"}
-                    </span>
-                    <span className="text-[11px] text-gray-500">{whenR}</span>
+        <>
+          {/* Reply list */}
+          {!reps.length ? (
+            <div className="text-xs text-gray-500">No replies yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {reps.map((r) => {
+                const who = staffById[r.staff_id];
+                const whenR = new Date(r.created_at).toLocaleString("en-AU", {
+                  month: "short",
+                  day: "numeric",
+                  weekday: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                return (
+                  <div key={r.id} className="flex items-start gap-2">
+                    <img
+                      src={who?.photo_url || "/placeholder.png"}
+                      alt={who?.name || "Staff"}
+                      className="w-6 h-6 rounded-full object-cover mt-0.5"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[12px] font-medium text-gray-900">
+                          {who?.name ?? "Someone"}
+                        </span>
+                        <span className="text-[11px] text-gray-500">{whenR}</span>
+                      </div>
+                      <div className="text-sm whitespace-pre-wrap break-words">
+                        {r.body}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-sm whitespace-pre-wrap break-words">
-                    {r.body}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Reply composer */}
+          <div className="mt-3 border-t border-gray-100 pt-2">
+            <textarea
+              value={draft}
+              onChange={(e) =>
+                setReplyTextByNote((prev) => ({ ...prev, [n.id]: e.target.value }))
+              }
+              rows={2}
+              maxLength={500}
+              placeholder={
+                selectedStaffName
+                  ? `Reply as ${selectedStaffName}…`
+                  : "Tap your photo, then reply…"
+              }
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none leading-snug"
+              onKeyDown={(e) => {
+                // Enter = post, Shift+Enter = new line
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  postReply(n.id);
+                }
+              }}
+            />
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-[11px] text-gray-500">
+                Shift+Enter for a new line
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  postReply(n.id);
+                }}
+                disabled={!draft.trim() || saving || !selectedStaffId}
+                className="rounded-lg px-3 py-2 text-sm border border-blue-600 bg-blue-600 text-white disabled:opacity-50"
+              >
+                {saving ? "Posting…" : "Reply"}
+              </button>
+            </div>
+          </div>
+        </>
       );
     })()}
-
-    {/* Reply composer */}
-    <div className="mt-3 border-t border-gray-100 pt-2">
-      <textarea
-        value={draft}
-        onChange={(e) =>
-          setReplyTextByNote((prev) => ({ ...prev, [n.id]: e.target.value }))
-        }
-        rows={2}
-        maxLength={500}
-        placeholder={
-          selectedStaffName
-            ? `Reply as ${selectedStaffName}…`
-            : "Tap your photo, then reply…"
-        }
-        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none leading-snug"
-        onKeyDown={(e) => {
-          // Enter = post, Shift+Enter = new line
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            postReply(n.id);
-          }
-        }}
-      />
-      <div className="mt-2 flex items-center justify-between">
-        <span className="text-[11px] text-gray-500">
-          Shift+Enter for a new line
-        </span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            postReply(n.id);
-          }}
-          disabled={!draft.trim() || saving || !selectedStaffId}
-          className="rounded-lg px-3 py-2 text-sm border border-blue-600 bg-blue-600 text-white disabled:opacity-50"
-        >
-          {saving ? "Posting…" : "Reply"}
-        </button>
-      </div>
-    </div>
   </div>
 )}
+
 
 
 </div>
