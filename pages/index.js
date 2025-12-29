@@ -1120,22 +1120,28 @@ const toggleReaction = async (noteId, reaction) => {
               decoding="async"
             />
             <div className="min-w-0 flex-1">
-                {/* Expand/collapse affordance */}
+                {/* Replies / expand toggle */}
 <button
   type="button"
-  className="h-6 w-6 inline-flex items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-  title={expandedNoteId === n.id ? "Collapse" : "Expand"}
-  aria-label={expandedNoteId === n.id ? "Collapse note" : "Expand note"}
+  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] ${
+    expandedNoteId === n.id
+      ? "border-blue-600 bg-blue-50 text-blue-700"
+      : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+  }`}
+  title={expandedNoteId === n.id ? "Hide replies" : "Show replies"}
+  aria-label={expandedNoteId === n.id ? "Hide replies" : "Show replies"}
   onClick={(e) => {
     e.preventDefault();
     e.stopPropagation();
     setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
   }}
 >
-  <span className="text-[12px] leading-none">
-    {expandedNoteId === n.id ? "▴" : "▾"}
+  <span aria-hidden="true">💬</span>
+  <span className="tabular-nums">
+    {(repliesByNote[n.id]?.length || 0)}
   </span>
 </button>
+
 
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">
