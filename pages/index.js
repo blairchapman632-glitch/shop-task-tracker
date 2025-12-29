@@ -28,7 +28,16 @@ export default function HomePage() {
 // Notes state
 const [notes, setNotes] = useState([]);
 
+// Replies state (noteId -> array of replies)
+const [repliesByNote, setRepliesByNote] = useState({});
+
+// Reply composer state (per-note)
+const [replyTextByNote, setReplyTextByNote] = useState({});
+const [replySavingNoteId, setReplySavingNoteId] = useState(null);
+
+
 // Notes UI: expand/collapse (one open at a time)
+
 const [expandedNoteId, setExpandedNoteId] = useState(null);
 // Refs so we can scroll an expanded note into view inside the Notes panel
 const noteItemRefs = useRef({});
@@ -60,6 +69,49 @@ useEffect(() => {
 
 const [noteText, setNoteText] = useState("");
 const [notesSaving, setNotesSaving] = useState(false);
+  // Post a reply to a note
+const postReply = async (noteId) => {
+  const body = String(replyTextByNote[noteId] || "").trim();
+  if (!body) return;
+
+  if (!selectedStaffId) {
+    alert("Tap your photo first to sign your reply.");
+    return;
+  }
+
+  setReplySavingNoteId(noteId);
+  try {
+    const { data, error } = await supabase
+      .from("kiosk_note_replies")
+      .insert({
+        note_id: Number(noteId),
+        staff_id: Number(selectedStaffId),
+        body,
+      })
+      .select("id, note_id, staff_id, body, created_at")
+      .single();
+
+    if (error) throw error;
+
+    // Add to local state immediately (newest at bottom to match ascending order)
+    setRepliesByNote((prev) => {
+      const next = { ...prev };
+      const arr = next[noteId] ? [...next[noteId]] : [];
+      arr.push(data);
+      next[noteId] = arr;
+      return next;
+    });
+
+    // Clear input
+    setReplyTextByNote((prev) => ({ ...prev, [noteId]: "" }));
+  } catch (err) {
+    console.error(err);
+    alert("Couldn't post reply: " + (err?.message || String(err)));
+  } finally {
+    setReplySavingNoteId(null);
+  }
+};
+
   // When a note expands, scroll it into view (helps a lot once replies exist)
 useEffect(() => {
   if (!expandedNoteId) return;
@@ -348,6 +400,28 @@ useEffect(() => {
 
       if (error) throw error;
       setNotes(data || []);
+            // Load replies for these notes (visible to everyone)
+      const noteIdsForReplies = (data || []).map((n) => n.id);
+
+      if (noteIdsForReplies.length) {
+        const { data: repData, error: repErr } = await supabase
+          .from("kiosk_note_replies")
+          .select("id, note_id, staff_id, body, created_at")
+          .in("note_id", noteIdsForReplies)
+          .order("created_at", { ascending: true });
+
+        if (repErr) throw repErr;
+
+        const grouped = {};
+        for (const r of repData || []) {
+          if (!grouped[r.note_id]) grouped[r.note_id] = [];
+          grouped[r.note_id].push(r);
+        }
+        setRepliesByNote(grouped);
+      } else {
+        setRepliesByNote({});
+      }
+
       // Load reactions for these notes
 const noteIds = (data || []).map(n => n.id);
 
@@ -1099,15 +1173,102 @@ const toggleReaction = async (noteId, reaction) => {
 
   {/* Expanded area (Replies will render here next) */}
   {expandedNoteId === n.id && (
-    <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
-      <div className="text-[11px] font-medium text-gray-600 mb-1">
-        Replies
-      </div>
-      <div className="text-xs text-gray-500">
-        No replies yet.
+  <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
+    <div className="text-[11px] font-medium text-gray-600 mb-1">
+      Replies
+    </div>
+
+    {(() => {
+      const reps = repliesByNote[n.id] || [];
+            const draft = replyTextByNote[n.id] || "";
+      const saving = replySavingNoteId === n.id;
+
+      if (!reps.length) {
+        return <div className="text-xs text-gray-500">No replies yet.</div>;
+      }
+      return (
+        <div className="space-y-2">
+          {reps.map((r) => {
+            const who = staffById[r.staff_id];
+            const whenR = new Date(r.created_at).toLocaleString("en-AU", {
+              month: "short",
+              day: "numeric",
+              weekday: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            return (
+              <div key={r.id} className="flex items-start gap-2">
+                <img
+                  src={who?.photo_url || "/placeholder.png"}
+                  alt={who?.name || "Staff"}
+                  className="w-6 h-6 rounded-full object-cover mt-0.5"
+                  loading="lazy"
+                  decoding="async"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-medium text-gray-900">
+                      {who?.name ?? "Someone"}
+                    </span>
+                    <span className="text-[11px] text-gray-500">{whenR}</span>
+                  </div>
+                  <div className="text-sm whitespace-pre-wrap break-words">
+                    {r.body}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    })()}
+
+    {/* Reply composer */}
+    <div className="mt-3 border-t border-gray-100 pt-2">
+      <textarea
+        value={draft}
+        onChange={(e) =>
+          setReplyTextByNote((prev) => ({ ...prev, [n.id]: e.target.value }))
+        }
+        rows={2}
+        maxLength={500}
+        placeholder={
+          selectedStaffName
+            ? `Reply as ${selectedStaffName}…`
+            : "Tap your photo, then reply…"
+        }
+        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none leading-snug"
+        onKeyDown={(e) => {
+          // Enter = post, Shift+Enter = new line
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            postReply(n.id);
+          }
+        }}
+      />
+      <div className="mt-2 flex items-center justify-between">
+        <span className="text-[11px] text-gray-500">
+          Shift+Enter for a new line
+        </span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            postReply(n.id);
+          }}
+          disabled={!draft.trim() || saving || !selectedStaffId}
+          className="rounded-lg px-3 py-2 text-sm border border-blue-600 bg-blue-600 text-white disabled:opacity-50"
+        >
+          {saving ? "Posting…" : "Reply"}
+        </button>
       </div>
     </div>
-  )}
+  </div>
+)}
+
+
 </div>
 
 
