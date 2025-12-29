@@ -57,13 +57,22 @@ const [reactionsByNote, setReactionsByNote] = useState({});
   // Keep pinned notes at top automatically whenever notes change
 useEffect(() => {
   if (!notes.length) return;
-  setNotes((prev) =>
-    [...prev].sort(
-      (a, b) =>
-        (b.pinned === true) - (a.pinned === true) ||
-        new Date(b.created_at) - new Date(a.created_at)
-    )
-  );
+setNotes((prev) =>
+  [...prev].sort((a, b) => {
+    // 1) pinned first
+    const pinDiff = (b.pinned === true) - (a.pinned === true);
+    if (pinDiff) return pinDiff;
+
+    // 2) most recent activity first (fallback to created_at)
+    const aAct = new Date(a.last_activity_at || a.created_at).getTime();
+    const bAct = new Date(b.last_activity_at || b.created_at).getTime();
+    if (aAct !== bAct) return bAct - aAct;
+
+    // 3) newest note first
+    return new Date(b.created_at) - new Date(a.created_at);
+  })
+);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [notes.length]);
 
@@ -101,6 +110,21 @@ const postReply = async (noteId) => {
       next[noteId] = arr;
       return next;
     });
+// Bump note activity locally so it jumps up immediately (DB trigger also does this)
+setNotes((prev) => {
+  const next = prev.map((n) =>
+    n.id === noteId ? { ...n, last_activity_at: new Date().toISOString() } : n
+  );
+  // Re-sort to reflect the bump right away
+  return [...next].sort((a, b) => {
+    const pinDiff = (b.pinned === true) - (a.pinned === true);
+    if (pinDiff) return pinDiff;
+    const aAct = new Date(a.last_activity_at || a.created_at).getTime();
+    const bAct = new Date(b.last_activity_at || b.created_at).getTime();
+    if (aAct !== bAct) return bAct - aAct;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+});
 
     // Clear input
     setReplyTextByNote((prev) => ({ ...prev, [noteId]: "" }));
@@ -391,11 +415,14 @@ useEffect(() => {
       since.setDate(since.getDate() - 7);
       const { data, error } = await supabase
   .from("kiosk_notes")
-  .select("id, body, staff_id, created_at, pinned, deleted")
+  .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at")
+
   .or("deleted.is.null,deleted.eq.false") // show only non-deleted (treat null as false)
   .gte("created_at", since.toISOString())
-  .order("pinned", { ascending: false })
+   .order("pinned", { ascending: false })
+  .order("last_activity_at", { ascending: false, nullsFirst: false })
   .order("created_at", { ascending: false })
+
   .limit(100);
 
       if (error) throw error;
@@ -580,7 +607,8 @@ const postNote = async () => {
     staff_id: Number(selectedStaffId),
     deleted: false, // explicit for safety if no DB default
   })
-  .select("id, body, staff_id, created_at, pinned, deleted")
+ .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at")
+
   .single();
 
     if (error) throw error;
