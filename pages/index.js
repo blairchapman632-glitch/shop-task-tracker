@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+
 import { createPortal } from "react-dom";
 
 import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
@@ -27,9 +28,15 @@ export default function HomePage() {
 // Notes state
 const [notes, setNotes] = useState([]);
 
+// Notes UI: expand/collapse (one open at a time)
+const [expandedNoteId, setExpandedNoteId] = useState(null);
+// Refs so we can scroll an expanded note into view inside the Notes panel
+const noteItemRefs = useRef({});
+
 // Reactions
 const REACTIONS = ["👍", "❤️", "🙂"];
 const [reactionsByNote, setReactionsByNote] = useState({});
+
 
 
   // Keep pinned notes at top automatically whenever notes change
@@ -47,6 +54,25 @@ useEffect(() => {
 
 const [noteText, setNoteText] = useState("");
 const [notesSaving, setNotesSaving] = useState(false);
+  // When a note expands, scroll it into view (helps a lot once replies exist)
+useEffect(() => {
+  if (!expandedNoteId) return;
+  const el = noteItemRefs.current?.[expandedNoteId];
+  if (!el) return;
+
+  // Let the DOM update first (so expanded content exists)
+  const t = setTimeout(() => {
+    try {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch {
+      // Fallback for older browsers
+      el.scrollIntoView();
+    }
+  }, 50);
+
+  return () => clearTimeout(t);
+}, [expandedNoteId]);
+
 // Toggle a reaction on a note (ONE reaction per staff per note)
 const toggleReaction = async (noteId, reaction) => {
   if (!selectedStaffId) {
@@ -943,8 +969,9 @@ const toggleReaction = async (noteId, reaction) => {
 
     </div>
 
- {/* Notes (capped height, scroll if long) */}
-<div className="border rounded-xl p-3 bg-white min-h-[144px] max-h-[240px] overflow-y-auto nice-scroll">
+{/* Notes (taller so expanded notes + replies have room) */}
+<div className="border rounded-xl p-3 bg-white min-h-[200px] max-h-[420px] overflow-y-auto nice-scroll">
+
   <div className="flex items-center justify-between mb-2">
     <h3 className="font-medium">Notes</h3>
     <span className="text-xs text-gray-500">Past week</span>
@@ -988,7 +1015,14 @@ const toggleReaction = async (noteId, reaction) => {
           minute: "2-digit",
         });
         return (
-          <li key={n.id} className="flex items-start gap-2">
+          <li
+  key={n.id}
+  ref={(el) => {
+    if (el) noteItemRefs.current[n.id] = el;
+  }}
+  className="flex items-start gap-2"
+>
+
             <img
               src={author?.photo_url || "/placeholder.png"}
               alt={author?.name || "Staff"}
@@ -1005,30 +1039,71 @@ const toggleReaction = async (noteId, reaction) => {
                 {/* pinned badge removed — icon now indicates state */}
 
               </div>
-              <div className="text-sm whitespace-pre-wrap break-words">
-                {n.body}
-              </div>
+              <div
+  role="button"
+  tabIndex={0}
+  onClick={(e) => {
+    // If the user taps a control inside the note row, don't toggle expand.
+    // (Buttons also stopPropagation, but this makes it extra safe.)
+    if (e?.target?.closest?.("button")) return;
+    setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
+  }}
+  onKeyDown={(e) => {
+    if (e.key === "Enter" || e.key === " ") {
+
+      e.preventDefault();
+      setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
+    }
+  }}
+  className={`text-sm whitespace-pre-wrap break-words cursor-pointer ${
+    expandedNoteId === n.id
+      ? ""
+      : "overflow-hidden"
+  }`}
+  style={
+    expandedNoteId === n.id
+      ? undefined
+      : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }
+  }
+  title={expandedNoteId === n.id ? "Click to collapse" : "Click to expand"}
+>
+    {n.body}
+
+  {/* Expanded area (Replies will live here next) */}
+  {expandedNoteId === n.id && (
+    <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50 p-2">
+      <div className="text-[11px] font-medium text-gray-600 mb-1">
+        Replies
+      </div>
+      <div className="text-xs text-gray-500">
+        (Coming next) Staff will be able to reply here.
+      </div>
+    </div>
+  )}
+</div>
+
+
                 <div className="mt-1 flex items-center gap-2">
   {REACTIONS.map((rx) => {
-    const counts = reactionsByNote[n.id]?.counts || {};
-    const mine = reactionsByNote[n.id]?.mine || new Set();
-    const active = mine.has(rx);
-    const count = counts[rx] || 0;
+  const counts = reactionsByNote[n.id]?.counts || {};
+  const mine = reactionsByNote[n.id]?.mine || new Set();
+  const active = mine.has(rx);
+  const count = counts[rx] || 0;
 
-    return (
-      <button
-        key={rx}
-        type="button"
-          onPointerDown={(e) => {
+  return (
+    <button
+  key={rx}
+  type="button"
+  onPointerDown={(e) => {
     e.preventDefault();
     e.stopPropagation();
     toggleReaction(n.id, rx);
   }}
+  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
+    active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
+  }`}
+>
 
-        className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
-          active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
-        }`}
-      >
         <span>{rx}</span>
         <span className="tabular-nums text-gray-600">{count}</span>
       </button>
@@ -1046,9 +1121,14 @@ const toggleReaction = async (noteId, reaction) => {
   }`}
   title={n.pinned ? "Unpin" : "Pin to top"}
   aria-label={n.pinned ? "Unpin note" : "Pin note"}
-  onClick={() => togglePin(n)}
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    togglePin(n);
+  }}
   disabled={!selectedStaffId}
 >
+
   {/* Simple pushpin SVG using currentColor */}
  <svg
   viewBox="0 0 24 24"
@@ -1065,15 +1145,20 @@ const toggleReaction = async (noteId, reaction) => {
 
 
 
-                <button
+      <button
   type="button"
   className="h-6 w-6 inline-flex items-center justify-center rounded-none text-red-600 self-start hover:bg-red-50 ml-1 disabled:opacity-40"
   title="Delete note"
   aria-label="Delete note"
-  onClick={() => deleteNote(n)}
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    deleteNote(n);
+  }}
   // Only allow the author (current selected staff) to delete from the kiosk
   disabled={!selectedStaffId || selectedStaffId !== n.staff_id}
 >
+
   <span className="text-[13px] leading-none">🗑️</span>
 </button>
 
@@ -1089,7 +1174,8 @@ const toggleReaction = async (noteId, reaction) => {
 
 
   {/* Activity (fills rest of column, scrolls) */}
-  <div className="border rounded-xl p-3 bg-white h-[120px] overflow-y-auto nice-scroll">
+ <div className="border rounded-xl p-3 bg-white h-[96px] overflow-y-auto nice-scroll">
+
 
 
 
