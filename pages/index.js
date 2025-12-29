@@ -411,14 +411,13 @@ setStaff(activeStaff);
 useEffect(() => {
   const loadNotes = async () => {
     try {
-      const since = new Date();
-      since.setDate(since.getDate() - 7);
       const { data, error } = await supabase
   .from("kiosk_notes")
+
   .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at")
 
   .or("deleted.is.null,deleted.eq.false") // show only non-deleted (treat null as false)
-  .gte("created_at", since.toISOString())
+  
    .order("pinned", { ascending: false })
   .order("last_activity_at", { ascending: false, nullsFirst: false })
   .order("created_at", { ascending: false })
@@ -1082,7 +1081,8 @@ const toggleReaction = async (noteId, reaction) => {
 
   <div className="flex items-center justify-between mb-2">
     <h3 className="font-medium">Notes</h3>
-    <span className="text-xs text-gray-500">Past week</span>
+    <span className="text-xs text-gray-500">All notes</span>
+
   </div>
 
     {/* Composer (textarea so handover notes + replies feel natural) */}
