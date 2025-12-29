@@ -1149,10 +1149,12 @@ const toggleReaction = async (noteId, reaction) => {
   role="button"
   tabIndex={0}
   onClick={(e) => {
-    // If the user taps a control inside the note row, don't toggle expand.
-    if (e?.target?.closest?.("button")) return;
-    setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
-  }}
+  // If the user taps a control inside the note row (buttons, inputs, textarea),
+  // don't toggle expand/collapse.
+  if (e?.target?.closest?.("button, textarea, input, select, a, label")) return;
+  setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
+}}
+
   onKeyDown={(e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -1228,7 +1230,15 @@ const toggleReaction = async (noteId, reaction) => {
           {/* Reply composer */}
           <div className="mt-3 border-t border-gray-100 pt-2">
             <textarea
-              value={draft}
+  value={draft}
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }}
+  onPointerDown={(e) => {
+    e.stopPropagation();
+  }}
+
               onChange={(e) =>
                 setReplyTextByNote((prev) => ({ ...prev, [n.id]: e.target.value }))
               }
