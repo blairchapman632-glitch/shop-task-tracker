@@ -32,6 +32,12 @@ const [notes, setNotes] = useState([]);
 const [expandedNoteId, setExpandedNoteId] = useState(null);
 // Refs so we can scroll an expanded note into view inside the Notes panel
 const noteItemRefs = useRef({});
+// Small helper for note previews
+const truncate = (text, max = 180) => {
+  const s = String(text || "").trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
+};
 
 // Reactions
 const REACTIONS = ["👍", "❤️", "🙂"];
@@ -977,19 +983,28 @@ const toggleReaction = async (noteId, reaction) => {
     <span className="text-xs text-gray-500">Past week</span>
   </div>
 
-  {/* Composer */}
-  <div className="flex gap-2 mb-2">
-    <input
+    {/* Composer (textarea so handover notes + replies feel natural) */}
+  <div className="flex gap-2 mb-2 items-start">
+    <textarea
       value={noteText}
       onChange={(e) => setNoteText(e.target.value)}
       maxLength={500}
+      rows={2}
       placeholder={
         selectedStaffName
           ? `Note from ${selectedStaffName}…`
           : "Tap your photo, then write a note…"
       }
-      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm"
+      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none leading-snug"
+      onKeyDown={(e) => {
+        // Enter = post, Shift+Enter = new line (kiosk-friendly)
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          postNote();
+        }
+      }}
     />
+
     <button
       type="button"
       onClick={postNote}
@@ -1031,6 +1046,23 @@ const toggleReaction = async (noteId, reaction) => {
               decoding="async"
             />
             <div className="min-w-0 flex-1">
+                {/* Expand/collapse affordance */}
+<button
+  type="button"
+  className="h-6 w-6 inline-flex items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+  title={expandedNoteId === n.id ? "Collapse" : "Expand"}
+  aria-label={expandedNoteId === n.id ? "Collapse note" : "Expand note"}
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
+  }}
+>
+  <span className="text-[12px] leading-none">
+    {expandedNoteId === n.id ? "▴" : "▾"}
+  </span>
+</button>
+
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">
                   {author?.name ?? "Someone"}
@@ -1039,48 +1071,45 @@ const toggleReaction = async (noteId, reaction) => {
                 {/* pinned badge removed — icon now indicates state */}
 
               </div>
-              <div
+  <div
   role="button"
   tabIndex={0}
   onClick={(e) => {
     // If the user taps a control inside the note row, don't toggle expand.
-    // (Buttons also stopPropagation, but this makes it extra safe.)
     if (e?.target?.closest?.("button")) return;
     setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
   }}
   onKeyDown={(e) => {
     if (e.key === "Enter" || e.key === " ") {
-
       e.preventDefault();
       setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
     }
   }}
-  className={`text-sm whitespace-pre-wrap break-words cursor-pointer ${
+  className={`cursor-pointer ${
     expandedNoteId === n.id
-      ? ""
-      : "overflow-hidden"
+      ? "mt-1 rounded-lg border border-gray-100 bg-gray-50 p-2"
+      : ""
   }`}
-  style={
-    expandedNoteId === n.id
-      ? undefined
-      : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }
-  }
   title={expandedNoteId === n.id ? "Click to collapse" : "Click to expand"}
 >
-    {n.body}
+  {/* Body: preview when collapsed, full when expanded */}
+  <div className="text-sm whitespace-pre-wrap break-words">
+    {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
+  </div>
 
-  {/* Expanded area (Replies will live here next) */}
+  {/* Expanded area (Replies will render here next) */}
   {expandedNoteId === n.id && (
-    <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50 p-2">
+    <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
       <div className="text-[11px] font-medium text-gray-600 mb-1">
         Replies
       </div>
       <div className="text-xs text-gray-500">
-        (Coming next) Staff will be able to reply here.
+        No replies yet.
       </div>
     </div>
   )}
 </div>
+
 
 
                 <div className="mt-1 flex items-center gap-2">
