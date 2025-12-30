@@ -1206,12 +1206,27 @@ const toggleReaction = async (noteId, reaction) => {
     </button>
   </div>
 
-  {/* List */}
+    {/* List */}
   {notes.length === 0 ? (
-    <div className="text-xs text-gray-500">No notes yet this week.</div>
+    <div className="text-xs text-gray-500">No notes yet.</div>
   ) : (
-    <ul className="space-y-2">
-      {notes.map((n) => {
+    (() => {
+      const openNotes = (notes || []).filter((n) => n.resolved !== true);
+
+      // When showResolved is ON, show resolved in a separate section.
+      // Resolved ordering ignores pin and is sorted by resolved_at (newest first).
+      const resolvedNotes = showResolved
+        ? (notes || [])
+            .filter((n) => n.resolved === true)
+            .slice()
+            .sort((a, b) => {
+              const aT = new Date(a.resolved_at || a.created_at).getTime();
+              const bT = new Date(b.resolved_at || b.created_at).getTime();
+              return bT - aT;
+            })
+        : [];
+
+      const renderNote = (n) => {
         const author = staffById[n.staff_id];
         const when = new Date(n.created_at).toLocaleString("en-AU", {
           month: "short",
@@ -1220,19 +1235,40 @@ const toggleReaction = async (noteId, reaction) => {
           hour: "2-digit",
           minute: "2-digit",
         });
+
+        const resolvedWho = n.resolved_by_staff_id != null
+          ? staffById[Number(n.resolved_by_staff_id)]
+          : null;
+
+        const resolvedWhen = n.resolved_at
+          ? new Date(n.resolved_at).toLocaleString("en-AU", {
+              month: "short",
+              day: "numeric",
+              weekday: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : null;
+
         return (
           <li
-  key={n.id}
-  ref={(el) => {
-    if (el) noteItemRefs.current[n.id] = el;
-  }}
-  className="flex items-start gap-2"
->
+            key={n.id}
+            ref={(el) => {
+              if (el) noteItemRefs.current[n.id] = el;
+            }}
+            className={`flex items-start gap-2 rounded-lg ${
+              n.resolved
+                ? "bg-gray-50 border border-gray-100 p-2"
+                : ""
+            }`}
+          >
+
 
             <img
               src={author?.photo_url || "/placeholder.png"}
               alt={author?.name || "Staff"}
-              className="w-8 h-8 rounded-full object-cover mt-0.5"
+              className={`rounded-full object-cover mt-0.5 ${n.resolved ? "w-7 h-7" : "w-8 h-8"}`}
+
               loading="lazy"
               decoding="async"
             />
@@ -1262,9 +1298,16 @@ const toggleReaction = async (noteId, reaction) => {
 
               <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">
-                  {author?.name ?? "Someone"}
-                </span>
-                <span className="text-[11px] text-gray-500">{when}</span>
+  {author?.name ?? "Someone"}
+</span>
+<span className="text-[11px] text-gray-500">{when}</span>
+
+{n.resolved ? (
+  <span className="text-[11px] rounded-full border border-gray-200 bg-white px-2 py-0.5 text-gray-600">
+    Resolved
+  </span>
+) : null}
+
   {n.resolved ? (
     <span className="text-[11px] rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-gray-600">
       Resolved
@@ -1303,31 +1346,18 @@ const toggleReaction = async (noteId, reaction) => {
   title={expandedNoteId === n.id ? "Click to collapse" : "Click to expand"}
 >
   {/* Body: preview when collapsed, full when expanded */}
-  <div className="text-sm whitespace-pre-wrap break-words">
+ <div className={`${n.resolved && expandedNoteId !== n.id ? "text-xs text-gray-700" : "text-sm"} whitespace-pre-wrap break-words`}>
+
     {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
   </div>
 {expandedNoteId === n.id && n.resolved ? (
   <div className="mt-2 text-xs text-gray-600">
-    {(() => {
-      const who = staffById[n.resolved_by_staff_id];
-      const whenRes = n.resolved_at
-        ? new Date(n.resolved_at).toLocaleString("en-AU", {
-            month: "short",
-            day: "numeric",
-            weekday: "short",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : null;
-
-      return (
-        <>
-          Resolved{who?.name ? ` by ${who.name}` : ""}{whenRes ? ` at ${whenRes}` : ""}.
-        </>
-      );
-    })()}
+    Resolved
+    {resolvedWho?.name ? ` by ${resolvedWho.name}` : (n.resolved_by_staff_id != null ? ` by #${n.resolved_by_staff_id}` : "")}
+    {resolvedWhen ? ` • ${resolvedWhen}` : ""}.
   </div>
 ) : null}
+
 
   {/* Expanded area (Replies will render here next) */}
  {expandedNoteId === n.id && (
@@ -1383,8 +1413,14 @@ const toggleReaction = async (noteId, reaction) => {
             </div>
           )}
 
-          {/* Reply composer */}
-          <div className="mt-3 border-t border-gray-100 pt-2">
+         {/* Reply composer (blocked while resolved) */}
+{n.resolved ? (
+  <div className="mt-3 border-t border-gray-100 pt-2 text-xs text-gray-600">
+    This note is resolved. Reopen it to reply.
+  </div>
+) : (
+  <div className="mt-3 border-t border-gray-100 pt-2">
+
             <textarea
   value={draft}
   onClick={(e) => {
@@ -1430,10 +1466,12 @@ const toggleReaction = async (noteId, reaction) => {
               >
                 {saving ? "Posting…" : "Reply"}
               </button>
-            </div>
+                   </div>
           </div>
+)}
         </>
       );
+
     })()}
   </div>
 )}
@@ -1545,11 +1583,40 @@ const toggleReaction = async (noteId, reaction) => {
 
 
 
-          </li>
+              </li>
         );
-      })}
-    </ul>
+      };
+
+      return (
+        <div className="space-y-3">
+          {/* Open */}
+          <div>
+            {showResolved && (
+              <div className="mb-2 text-[11px] font-medium text-gray-600">
+                Open
+              </div>
+            )}
+            <ul className="space-y-2">
+              {openNotes.map(renderNote)}
+            </ul>
+          </div>
+
+          {/* Resolved */}
+          {showResolved && (
+            <div>
+              <div className="mb-2 text-[11px] font-medium text-gray-600">
+                Resolved
+              </div>
+              <ul className="space-y-2">
+                {resolvedNotes.map(renderNote)}
+              </ul>
+            </div>
+          )}
+        </div>
+      );
+    })()
   )}
+
 </div>
 
 
