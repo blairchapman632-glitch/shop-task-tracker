@@ -39,6 +39,9 @@ const [replySavingNoteId, setReplySavingNoteId] = useState(null);
 // Notes UI: expand/collapse (one open at a time)
 
 const [expandedNoteId, setExpandedNoteId] = useState(null);
+  // Notes filter: show/hide resolved notes
+const [showResolved, setShowResolved] = useState(false);
+
 // Refs so we can scroll an expanded note into view inside the Notes panel
 const noteItemRefs = useRef({});
 // Small helper for note previews
@@ -79,6 +82,65 @@ setNotes((prev) =>
 const [noteText, setNoteText] = useState("");
 const [notesSaving, setNotesSaving] = useState(false);
   // Post a reply to a note
+  // Resolve / reopen a note (records who did it)
+const toggleResolved = async (note) => {
+  if (!selectedStaffId) {
+    alert("Tap your photo first to sign this action.");
+    return;
+  }
+
+  const nextResolved = !note.resolved;
+
+  try {
+    const patch = nextResolved
+      ? {
+          resolved: true,
+          resolved_at: new Date().toISOString(),
+          resolved_by_staff_id: Number(selectedStaffId),
+          last_activity_at: new Date().toISOString(),
+        }
+      : {
+          resolved: false,
+          resolved_at: null,
+          resolved_by_staff_id: null,
+          last_activity_at: new Date().toISOString(),
+        };
+
+    const { data, error } = await supabase
+      .from("kiosk_notes")
+      .update(patch)
+      .eq("id", Number(note.id))
+      .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id")
+      .single();
+
+    if (error) throw error;
+
+    // Update local list and re-sort
+    setNotes((prev) => {
+      const next = prev
+        .map((n) => (n.id === note.id ? { ...n, ...data } : n))
+        .filter((n) => (showResolved ? true : n.resolved !== true));
+
+      return [...next].sort((a, b) => {
+        const pinDiff = (b.pinned === true) - (a.pinned === true);
+        if (pinDiff) return pinDiff;
+
+        const resDiff = (a.resolved === true) - (b.resolved === true);
+        if (resDiff) return resDiff;
+
+        const aAct = new Date(a.last_activity_at || a.created_at).getTime();
+        const bAct = new Date(b.last_activity_at || b.created_at).getTime();
+        if (aAct !== bAct) return bAct - aAct;
+
+        return new Date(b.created_at) - new Date(a.created_at);
+      });
+    });
+  } catch (err) {
+    console.error(err);
+    alert("Couldn't update resolved status: " + (err?.message || String(err)));
+  }
+};
+
 const postReply = async (noteId) => {
   const body = String(replyTextByNote[noteId] || "").trim();
   if (!body) return;
@@ -119,6 +181,10 @@ setNotes((prev) => {
   return [...next].sort((a, b) => {
     const pinDiff = (b.pinned === true) - (a.pinned === true);
     if (pinDiff) return pinDiff;
+        // Unresolved first (only matters when showResolved=true)
+    const resDiff = (a.resolved === true) - (b.resolved === true);
+    if (resDiff) return resDiff;
+
     const aAct = new Date(a.last_activity_at || a.created_at).getTime();
     const bAct = new Date(b.last_activity_at || b.created_at).getTime();
     if (aAct !== bAct) return bAct - aAct;
@@ -414,15 +480,17 @@ useEffect(() => {
       const { data, error } = await supabase
   .from("kiosk_notes")
 
-  .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at")
+  .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id")
 
   .or("deleted.is.null,deleted.eq.false") // show only non-deleted (treat null as false)
-  
+  // Default: hide resolved notes (you can toggle this in the UI)
+.eq("resolved", false)
+
    .order("pinned", { ascending: false })
   .order("last_activity_at", { ascending: false, nullsFirst: false })
   .order("created_at", { ascending: false })
 
-  .limit(100);
+  .limit(200);
 
       if (error) throw error;
       setNotes(data || []);
@@ -484,7 +552,8 @@ if (noteIds.length) {
   };
 
   loadNotes();
-}, [staff.length, leadersRefreshKey, selectedStaffId]);
+}, [staff.length, leadersRefreshKey, selectedStaffId, showResolved]);
+
 
 
 
@@ -1082,10 +1151,26 @@ const toggleReaction = async (noteId, reaction) => {
 <div className="border rounded-xl p-3 bg-white min-h-[200px] max-h-[420px] overflow-y-auto nice-scroll">
 
   <div className="flex items-center justify-between mb-2">
-    <h3 className="font-medium">Notes</h3>
-    <span className="text-xs text-gray-500">All notes</span>
+  <h3 className="font-medium">Notes</h3>
 
+  <div className="flex items-center gap-2">
+    <button
+      type="button"
+      className="text-xs rounded-md border border-gray-200 px-2 py-1 hover:bg-gray-50"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Toggle showing resolved notes by reloading notes
+        setShowResolved((v) => !v);
+      }}
+      title={showResolved ? "Hide resolved notes" : "Show resolved notes"}
+    >
+      {showResolved ? "Hide resolved" : "Show resolved"}
+    </button>
+    <span className="text-xs text-gray-500">{showResolved ? "All" : "Open"}</span>
   </div>
+</div>
+
 
     {/* Composer (textarea so handover notes + replies feel natural) */}
   <div className="flex gap-2 mb-2 items-start">
@@ -1178,6 +1263,12 @@ const toggleReaction = async (noteId, reaction) => {
                   {author?.name ?? "Someone"}
                 </span>
                 <span className="text-[11px] text-gray-500">{when}</span>
+  {n.resolved ? (
+    <span className="text-[11px] rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-gray-600">
+      Resolved
+    </span>
+  ) : null}
+
                 {/* pinned badge removed — icon now indicates state */}
 
               </div>
@@ -1213,6 +1304,28 @@ const toggleReaction = async (noteId, reaction) => {
   <div className="text-sm whitespace-pre-wrap break-words">
     {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
   </div>
+{expandedNoteId === n.id && n.resolved ? (
+  <div className="mt-2 text-xs text-gray-600">
+    {(() => {
+      const who = staffById[n.resolved_by_staff_id];
+      const whenRes = n.resolved_at
+        ? new Date(n.resolved_at).toLocaleString("en-AU", {
+            month: "short",
+            day: "numeric",
+            weekday: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
+
+      return (
+        <>
+          Resolved{who?.name ? ` by ${who.name}` : ""}{whenRes ? ` at ${whenRes}` : ""}.
+        </>
+      );
+    })()}
+  </div>
+) : null}
 
   {/* Expanded area (Replies will render here next) */}
  {expandedNoteId === n.id && (
@@ -1358,6 +1471,25 @@ const toggleReaction = async (noteId, reaction) => {
 </div>
 
             </div>
+{/* Resolve / Reopen */}
+<button
+  type="button"
+  className={`h-6 inline-flex items-center justify-center rounded-full border px-2 text-[11px] self-start disabled:opacity-40 ${
+    n.resolved
+      ? "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
+      : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+  }`}
+  title={n.resolved ? "Reopen note" : "Mark resolved"}
+  aria-label={n.resolved ? "Reopen note" : "Mark note resolved"}
+  onClick={(e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleResolved(n);
+  }}
+  disabled={!selectedStaffId}
+>
+  {n.resolved ? "Reopen" : "Resolve"}
+</button>
 
       {/* Pin / Unpin (SVG icon: green = not pinned, red = pinned) */}
 <button
