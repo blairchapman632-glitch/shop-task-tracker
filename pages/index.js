@@ -477,20 +477,22 @@ setStaff(activeStaff);
 useEffect(() => {
   const loadNotes = async () => {
     try {
-      const { data, error } = await supabase
+    let q = supabase
   .from("kiosk_notes")
-
   .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id")
-
   .or("deleted.is.null,deleted.eq.false") // show only non-deleted (treat null as false)
-  // Default: hide resolved notes (you can toggle this in the UI)
-.eq("resolved", false)
-
-   .order("pinned", { ascending: false })
+  .order("pinned", { ascending: false })
   .order("last_activity_at", { ascending: false, nullsFirst: false })
   .order("created_at", { ascending: false })
-
   .limit(200);
+
+// Only hide resolved when the toggle is OFF
+if (!showResolved) {
+  q = q.eq("resolved", false);
+}
+
+const { data, error } = await q;
+
 
       if (error) throw error;
       setNotes(data || []);
