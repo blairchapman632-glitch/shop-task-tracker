@@ -655,22 +655,24 @@ const togglePin = async (note) => {
 async function deleteNote(note) {
   const ok =
     typeof window !== "undefined" &&
-    window.confirm("Delete this note? This can't be undone.");
+    window.confirm("Delete this note? (It will be hidden, not permanently removed.)");
   if (!ok) return;
 
   try {
-    // Hard delete (now allowed by RLS policy)
+    // Soft delete: mark deleted=true (keeps history and avoids accidental permanent loss)
     const { data, error } = await supabase
       .from("kiosk_notes")
-      .delete()
+      .update({ deleted: true })
       .eq("id", Number(note.id))
-      .select("id"); // ask PostgREST to return the deleted row(s)
+      .select("id");
+
 
     if (error) throw error;
     if (!data || data.length === 0) {
-      alert("Delete didn't remove any rows — check the id/permissions.");
+      alert("Delete didn't update any rows — check the id/permissions.");
       return;
     }
+
 const toggleReaction = async (noteId, reaction) => {
   if (!selectedStaffId) {
     alert("Tap your photo first to react.");
