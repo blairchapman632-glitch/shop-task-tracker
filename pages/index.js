@@ -41,6 +41,7 @@ const [replySavingNoteId, setReplySavingNoteId] = useState(null);
 const [expandedNoteId, setExpandedNoteId] = useState(null);
   // Notes filter: show/hide resolved notes
 const [showResolved, setShowResolved] = useState(false);
+const [showResolvedSection, setShowResolvedSection] = useState(false);
 
 // Refs so we can scroll an expanded note into view inside the Notes panel
 const noteItemRefs = useRef({});
@@ -114,6 +115,8 @@ const toggleResolved = async (note) => {
       .single();
 
     if (error) throw error;
+    // Keep this note expanded so the user sees the result immediately
+    setExpandedNoteId(Number(note.id));
 
     // Update local list and re-sort
     setNotes((prev) => {
@@ -1125,7 +1128,12 @@ async function deleteNote(note) {
         e.preventDefault();
         e.stopPropagation();
         // Toggle showing resolved notes by reloading notes
-        setShowResolved((v) => !v);
+        setShowResolved((v) => {
+          const next = !v;
+          if (next) setShowResolvedSection(false); // collapse resolved list when turning it on
+          return next;
+        });
+
       }}
       title={showResolved ? "Hide resolved notes" : "Show resolved notes"}
     >
@@ -1218,11 +1226,12 @@ async function deleteNote(note) {
             ref={(el) => {
               if (el) noteItemRefs.current[n.id] = el;
             }}
-            className={`flex items-start gap-2 rounded-lg ${
+                    className={`flex items-start gap-2 rounded-lg ${
   n.resolved
-    ? "bg-gray-50 border border-gray-200 px-2 py-2"
+    ? "bg-gray-50 border border-gray-200 px-2 py-1.5 border-l-4 border-l-gray-300"
     : ""
 }`}
+
 
           >
 
@@ -1267,12 +1276,14 @@ async function deleteNote(note) {
 <span className="text-[11px] text-gray-500">{when}</span>
 
 {n.resolved ? (
-  <span className="text-[11px] rounded-full border border-gray-200 bg-white px-2 py-0.5 text-gray-600">
+  <span className="inline-flex items-center gap-1 text-[11px] rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
+    <span aria-hidden="true">✅</span>
     Resolved
   </span>
 ) : null}
 
-{n.resolved ? (
+
+{n.resolved && expandedNoteId === n.id ? (
   <div className="mt-0.5 text-[11px] text-gray-600">
     {(() => {
       const who = n.resolved_by_staff_id != null ? staffById[Number(n.resolved_by_staff_id)] : null;
@@ -1296,6 +1307,7 @@ async function deleteNote(note) {
     })()}
   </div>
 ) : null}
+
 
 
   
@@ -1331,7 +1343,8 @@ async function deleteNote(note) {
   title={expandedNoteId === n.id ? "Click to collapse" : "Click to expand"}
 >
   {/* Body: preview when collapsed, full when expanded */}
- <div className={`${n.resolved && expandedNoteId !== n.id ? "text-xs text-gray-700" : "text-sm"} whitespace-pre-wrap break-words`}>
+ <di <div className={`${n.resolved && expandedNoteId !== n.id ? "text-xs text-gray-500" : "text-sm text-gray-800"} whitespace-pre-wrap break-words`}>
+
 
    {expandedNoteId === n.id
   ? n.body
@@ -1590,16 +1603,30 @@ async function deleteNote(note) {
           </div>
 
           {/* Resolved */}
-          {showResolved && (
+                   {showResolved && (
             <div>
-              <div className="mb-2 text-[11px] font-medium text-gray-600">
-                Resolved
-              </div>
-              <ul className="space-y-2">
-                {resolvedNotes.map(renderNote)}
-              </ul>
+              <button
+                type="button"
+                className="mb-2 w-full flex items-center justify-between text-[11px] font-medium text-gray-600 hover:text-gray-800"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowResolvedSection((v) => !v);
+                }}
+                aria-expanded={showResolvedSection}
+              >
+                <span>Resolved ({resolvedNotes.length})</span>
+                <span aria-hidden="true">{showResolvedSection ? "▾" : "▸"}</span>
+              </button>
+
+              {showResolvedSection && (
+                <ul className="space-y-2">
+                  {resolvedNotes.map(renderNote)}
+                </ul>
+              )}
             </div>
           )}
+
         </div>
       );
     })()
