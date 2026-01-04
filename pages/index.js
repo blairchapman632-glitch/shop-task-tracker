@@ -1257,10 +1257,11 @@ const toggleReaction = async (noteId, reaction) => {
               if (el) noteItemRefs.current[n.id] = el;
             }}
             className={`flex items-start gap-2 rounded-lg ${
-              n.resolved
-                ? "bg-gray-50 border border-gray-100 p-2"
-                : ""
-            }`}
+  n.resolved
+    ? "bg-gray-50 border border-gray-200 px-2 py-2"
+    : ""
+}`}
+
           >
 
 
@@ -1296,7 +1297,8 @@ const toggleReaction = async (noteId, reaction) => {
 </button>
 
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+
                 <span className="text-sm font-medium">
   {author?.name ?? "Someone"}
 </span>
@@ -1307,6 +1309,32 @@ const toggleReaction = async (noteId, reaction) => {
     Resolved
   </span>
 ) : null}
+
+{n.resolved ? (
+  <div className="mt-0.5 text-[11px] text-gray-600">
+    {(() => {
+      const who = n.resolved_by_staff_id != null ? staffById[Number(n.resolved_by_staff_id)] : null;
+      const whenRes = n.resolved_at
+        ? new Date(n.resolved_at).toLocaleString("en-AU", {
+            month: "short",
+            day: "numeric",
+            weekday: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
+
+      if (!who?.name && !whenRes) return null;
+
+      return (
+        <>
+          Resolved{who?.name ? ` by ${who.name}` : ""}{whenRes ? ` • ${whenRes}` : ""}
+        </>
+      );
+    })()}
+  </div>
+) : null}
+
 
   {n.resolved ? (
     <span className="text-[11px] rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-gray-600">
@@ -1348,7 +1376,10 @@ const toggleReaction = async (noteId, reaction) => {
   {/* Body: preview when collapsed, full when expanded */}
  <div className={`${n.resolved && expandedNoteId !== n.id ? "text-xs text-gray-700" : "text-sm"} whitespace-pre-wrap break-words`}>
 
-    {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
+   {expandedNoteId === n.id
+  ? n.body
+  : truncate(n.body, n.resolved ? 110 : 160)}
+
   </div>
 {expandedNoteId === n.id && n.resolved ? (
   <div className="mt-2 text-xs text-gray-600">
@@ -1480,8 +1511,7 @@ const toggleReaction = async (noteId, reaction) => {
 
 </div>
 
-
-
+{!n.resolved && (
                 <div className="mt-1 flex items-center gap-2">
   {REACTIONS.map((rx) => {
   const counts = reactionsByNote[n.id]?.counts || {};
@@ -1509,6 +1539,7 @@ const toggleReaction = async (noteId, reaction) => {
     );
   })}
 </div>
+)}
 
             </div>
 {/* Resolve / Reopen */}
