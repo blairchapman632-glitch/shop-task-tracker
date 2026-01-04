@@ -256,8 +256,33 @@ const toggleReaction = async (noteId, reaction) => {
       if (error) throw error;
     }
 
-    // Simple + reliable: reload notes + reactions
-    setLeadersRefreshKey((k) => k + 1);
+       // Instant UI update (no full refresh)
+    setReactionsByNote((prev) => {
+      const next = { ...prev };
+      const entry = next[noteId] || { counts: {}, mine: null };
+      const counts = { ...entry.counts };
+      const mineNow = entry.mine; // current mine (single emoji or null)
+
+      // If we removed our reaction
+      if (mine === reaction) {
+        counts[reaction] = Math.max(0, (counts[reaction] || 0) - 1);
+        next[noteId] = { counts, mine: null };
+        return next;
+      }
+
+      // Otherwise we set/replaced our reaction
+      if (mineNow && mineNow !== reaction) {
+        counts[mineNow] = Math.max(0, (counts[mineNow] || 0) - 1);
+      }
+      counts[reaction] = (counts[reaction] || 0) + 1;
+
+      next[noteId] = { counts, mine: reaction };
+      return next;
+    });
+
+    // Optional: keep this if you want other kiosk screens to sync via reloads
+    // setLeadersRefreshKey((k) => k + 1);
+
   } catch (err) {
     console.error(err);
     alert("Couldn't update reaction: " + (err?.message || String(err)));
