@@ -1245,27 +1245,7 @@ async function deleteNote(note) {
               decoding="async"
             />
             <div className="min-w-0 flex-1">
-                {/* Replies / expand toggle */}
-<button
-  type="button"
-  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] ${
-    expandedNoteId === n.id
-      ? "border-blue-600 bg-blue-50 text-blue-700"
-      : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-  }`}
-  title={expandedNoteId === n.id ? "Hide replies" : "Show replies"}
-  aria-label={expandedNoteId === n.id ? "Hide replies" : "Show replies"}
-  onClick={(e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
-  }}
->
-  <span aria-hidden="true">💬</span>
-  <span className="tabular-nums">
-    {(repliesByNote[n.id]?.length || 0)}
-  </span>
-</button>
+
 
 
               <div className="flex items-center gap-2 flex-wrap">
@@ -1481,35 +1461,56 @@ async function deleteNote(note) {
 
 </div>
 
-{!n.resolved && (
-                <div className="mt-1 flex items-center gap-2">
-  {REACTIONS.map((rx) => {
-  const counts = reactionsByNote[n.id]?.counts || {};
-  const mine = reactionsByNote[n.id]?.mine || null; // single reaction string
-  const active = mine === rx;
-  const count = counts[rx] || 0;
+{/* Footer row: comments + reactions */}
+<div className="mt-1 flex items-center gap-2 flex-wrap">
+  {/* Comments / expand toggle */}
+  <button
+    type="button"
+    className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
+      expandedNoteId === n.id
+        ? "border-blue-600 bg-blue-50 text-blue-700"
+        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+    }`}
+    title={expandedNoteId === n.id ? "Hide replies" : "Show replies"}
+    aria-label={expandedNoteId === n.id ? "Hide replies" : "Show replies"}
+    onClick={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
+    }}
+  >
+    <span aria-hidden="true">💬</span>
+    <span className="tabular-nums">{(repliesByNote[n.id]?.length || 0)}</span>
+  </button>
 
-  return (
-    <button
-  key={rx}
-  type="button"
-  onPointerDown={(e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleReaction(n.id, rx);
-  }}
-  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
-    active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
-  }`}
->
+  {/* Reactions (only when open/unresolved) */}
+  {!n.resolved &&
+    REACTIONS.map((rx) => {
+      const counts = reactionsByNote[n.id]?.counts || {};
+      const mine = reactionsByNote[n.id]?.mine || null;
+      const active = mine === rx;
+      const count = counts[rx] || 0;
 
-        <span>{rx}</span>
-        <span className="tabular-nums text-gray-600">{count}</span>
-      </button>
-    );
-  })}
+      return (
+        <button
+          key={rx}
+          type="button"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleReaction(n.id, rx);
+          }}
+          className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
+            active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
+          }`}
+        >
+          <span>{rx}</span>
+          <span className="tabular-nums text-gray-600">{count}</span>
+        </button>
+      );
+    })}
 </div>
-)}
+
 
             </div>
 {/* Resolve / Reopen */}
