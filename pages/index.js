@@ -744,70 +744,6 @@ async function deleteNote(note) {
       return;
     }
 
-const toggleReaction = async (noteId, reaction) => {
-  if (!selectedStaffId) {
-    alert("Tap your photo first to react.");
-    return;
-  }
-
-  const mine = reactionsByNote[noteId]?.mine || new Set();
-  const already = mine.has(reaction);
-
-  try {
-    if (already) {
-      const { error } = await supabase
-        .from("kiosk_note_reactions")
-        .delete()
-        .eq("note_id", Number(noteId))
-        .eq("staff_id", Number(selectedStaffId))
-        .eq("reaction", reaction);
-
-      if (error) throw error;
-
-      setReactionsByNote(prev => {
-        const next = { ...prev };
-        const entry = next[noteId] || { counts: {}, mine: new Set() };
-
-        const counts = { ...entry.counts };
-        counts[reaction] = Math.max(0, (counts[reaction] || 0) - 1);
-
-        const newMine = new Set(entry.mine);
-        newMine.delete(reaction);
-
-        next[noteId] = { counts, mine: newMine };
-        return next;
-      });
-    } else {
-      const { error } = await supabase
-        .from("kiosk_note_reactions")
-        .insert({
-          note_id: Number(noteId),
-          staff_id: Number(selectedStaffId),
-          reaction,
-        });
-
-      if (error) throw error;
-
-      setReactionsByNote(prev => {
-        const next = { ...prev };
-        const entry = next[noteId] || { counts: {}, mine: new Set() };
-
-        const counts = { ...entry.counts };
-        counts[reaction] = (counts[reaction] || 0) + 1;
-
-        const newMine = new Set(entry.mine);
-        newMine.add(reaction);
-
-        next[noteId] = { counts, mine: newMine };
-        return next;
-      });
-    }
-  } catch (err) {
-    console.error(err);
-    alert("Couldn't update reaction.");
-  }
-};
-
     // Remove from local list immediately
     setNotes((prev) => prev.filter((n) => n.id !== note.id));
   } catch (err) {
@@ -1336,12 +1272,7 @@ const toggleReaction = async (noteId, reaction) => {
 ) : null}
 
 
-  {n.resolved ? (
-    <span className="text-[11px] rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-gray-600">
-      Resolved
-    </span>
-  ) : null}
-
+  
                 {/* pinned badge removed — icon now indicates state */}
 
               </div>
