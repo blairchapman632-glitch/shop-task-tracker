@@ -1581,17 +1581,30 @@ async function deleteNote(note) {
             </ul>
           </div>
 
-                  {/* Resolved */}
+                        {/* Resolved */}
           {showResolved && (
             <div>
+              {/* Hide button sits directly above resolved notes */}
+              <button
+                type="button"
+                className="mb-2 w-full text-xs rounded-md border border-gray-200 px-3 py-2 text-gray-600 hover:bg-gray-50"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowResolved(false);
+                }}
+              >
+                Hide resolved
+              </button>
+
               <ul className="space-y-2">
                 {resolvedNotes.map(renderNote)}
               </ul>
             </div>
           )}
 
-          {/* Bottom toggle for resolved notes */}
-          {resolvedNotes.length > 0 && (
+          {/* Bottom button only when resolved are hidden */}
+          {!showResolved && resolvedNotes.length > 0 && (
             <div className="pt-2 border-t border-gray-100">
               <button
                 type="button"
@@ -1599,15 +1612,14 @@ async function deleteNote(note) {
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setShowResolved((v) => !v);
+                  setShowResolved(true);
                 }}
               >
-                {showResolved
-                  ? "Hide resolved"
-                  : `Resolved (${resolvedNotes.length})`}
+                {`Resolved (${resolvedNotes.length})`}
               </button>
             </div>
           )}
+
 
 
         </div>
