@@ -41,7 +41,7 @@ const [replySavingNoteId, setReplySavingNoteId] = useState(null);
 const [expandedNoteId, setExpandedNoteId] = useState(null);
   // Notes filter: show/hide resolved notes
 const [showResolved, setShowResolved] = useState(false);
-const [showResolvedSection, setShowResolvedSection] = useState(false);
+
 
 // Refs so we can scroll an expanded note into view inside the Notes panel
 const noteItemRefs = useRef({});
@@ -1120,27 +1120,7 @@ async function deleteNote(note) {
   <div className="flex items-center justify-between mb-2">
   <h3 className="font-medium">Notes</h3>
 
-  <div className="flex items-center gap-2">
-    <button
-      type="button"
-      className="text-xs rounded-md border border-gray-200 px-2 py-1 hover:bg-gray-50"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        // Toggle showing resolved notes by reloading notes
-        setShowResolved((v) => {
-          const next = !v;
-          if (next) setShowResolvedSection(false); // collapse resolved list when turning it on
-          return next;
-        });
 
-      }}
-      title={showResolved ? "Hide resolved notes" : "Show resolved notes"}
-    >
-      {showResolved ? "Hide resolved" : "Show resolved"}
-    </button>
-    <span className="text-xs text-gray-500">{showResolved ? "All" : "Open"}</span>
-  </div>
 </div>
 
 
@@ -1605,30 +1585,34 @@ async function deleteNote(note) {
             </ul>
           </div>
 
-          {/* Resolved */}
-                   {showResolved && (
+                  {/* Resolved */}
+          {showResolved && (
             <div>
+              <ul className="space-y-2">
+                {resolvedNotes.map(renderNote)}
+              </ul>
+            </div>
+          )}
+
+          {/* Bottom toggle for resolved notes */}
+          {resolvedNotes.length > 0 && (
+            <div className="pt-2 border-t border-gray-100">
               <button
                 type="button"
-                className="mb-2 w-full flex items-center justify-between text-[11px] font-medium text-gray-600 hover:text-gray-800"
+                className="w-full text-xs rounded-md border border-gray-200 px-3 py-2 text-gray-600 hover:bg-gray-50"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setShowResolvedSection((v) => !v);
+                  setShowResolved((v) => !v);
                 }}
-                aria-expanded={showResolvedSection}
               >
-                <span>Resolved ({resolvedNotes.length})</span>
-                <span aria-hidden="true">{showResolvedSection ? "▾" : "▸"}</span>
+                {showResolved
+                  ? "Hide resolved"
+                  : `Resolved (${resolvedNotes.length})`}
               </button>
-
-              {showResolvedSection && (
-                <ul className="space-y-2">
-                  {resolvedNotes.map(renderNote)}
-                </ul>
-              )}
             </div>
           )}
+
 
         </div>
       );
