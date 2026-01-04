@@ -518,7 +518,7 @@ const { data, error } = await q;
         setRepliesByNote({});
       }
 
-      // Load reactions for these notes
+   // Load reactions for these notes
 const noteIds = (data || []).map(n => n.id);
 
 if (noteIds.length) {
@@ -532,14 +532,15 @@ if (noteIds.length) {
   const by = {};
   for (const row of rdata || []) {
     if (!by[row.note_id]) {
-      by[row.note_id] = { counts: {}, mine: new Set() };
+      by[row.note_id] = { counts: {}, mine: null };
     }
 
     by[row.note_id].counts[row.reaction] =
       (by[row.note_id].counts[row.reaction] || 0) + 1;
 
+    // ONE reaction per staff per note → store as a single string
     if (selectedStaffId && Number(row.staff_id) === Number(selectedStaffId)) {
-      by[row.note_id].mine.add(row.reaction);
+      by[row.note_id].mine = row.reaction;
     }
   }
 
@@ -1446,8 +1447,8 @@ async function deleteNote(note) {
                 <div className="mt-1 flex items-center gap-2">
   {REACTIONS.map((rx) => {
   const counts = reactionsByNote[n.id]?.counts || {};
-  const mine = reactionsByNote[n.id]?.mine || new Set();
-  const active = mine.has(rx);
+  const mine = reactionsByNote[n.id]?.mine || null; // single reaction string
+  const active = mine === rx;
   const count = counts[rx] || 0;
 
   return (
