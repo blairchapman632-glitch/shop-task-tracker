@@ -1163,18 +1163,17 @@ async function deleteNote(note) {
     (() => {
       const openNotes = (notes || []).filter((n) => n.resolved !== true);
 
-      // When showResolved is ON, show resolved in a separate section.
-      // Resolved ordering ignores pin and is sorted by resolved_at (newest first).
-      const resolvedNotes = showResolved
-        ? (notes || [])
-            .filter((n) => n.resolved === true)
-            .slice()
-            .sort((a, b) => {
-              const aT = new Date(a.resolved_at || a.created_at).getTime();
-              const bT = new Date(b.resolved_at || b.created_at).getTime();
-              return bT - aT;
-            })
-        : [];
+      // Resolved notes (always compute so we can show the bottom button + count)
+      // Sorted by resolved_at (newest first).
+      const resolvedNotes = (notes || [])
+        .filter((n) => n.resolved === true)
+        .slice()
+        .sort((a, b) => {
+          const aT = new Date(a.resolved_at || a.created_at).getTime();
+          const bT = new Date(b.resolved_at || b.created_at).getTime();
+          return bT - aT;
+        });
+
 
       const renderNote = (n) => {
         const author = staffById[n.staff_id];
