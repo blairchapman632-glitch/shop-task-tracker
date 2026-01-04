@@ -514,10 +514,7 @@ useEffect(() => {
   .order("created_at", { ascending: false })
   .limit(200);
 
-// Only hide resolved when the toggle is OFF
-if (!showResolved) {
-  q = q.eq("resolved", false);
-}
+
 
 const { data, error } = await q;
 
