@@ -1343,7 +1343,7 @@ async function deleteNote(note) {
   title={expandedNoteId === n.id ? "Click to collapse" : "Click to expand"}
 >
   {/* Body: preview when collapsed, full when expanded */}
- <di <div className={`${n.resolved && expandedNoteId !== n.id ? "text-xs text-gray-500" : "text-sm text-gray-800"} whitespace-pre-wrap break-words`}>
+ <div className={`${n.resolved && expandedNoteId !== n.id ? "text-xs text-gray-500" : "text-sm text-gray-800"} whitespace-pre-wrap break-words`}>
 
 
    {expandedNoteId === n.id
