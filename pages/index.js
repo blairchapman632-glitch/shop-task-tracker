@@ -1462,7 +1462,8 @@ async function deleteNote(note) {
 </div>
 
 {/* Footer row: comments + reactions */}
-<div className="mt-1 flex items-center gap-2 flex-wrap">
+<div className="mt-1 flex items-center gap-2 overflow-x-auto whitespace-nowrap">
+
   {/* Comments / expand toggle */}
   <button
     type="button"
