@@ -20,10 +20,78 @@ const formatRosterTime = (time) => {
 
 const [monthOffset, setMonthOffset] = React.useState(0);
 const [selectedDate, setSelectedDate] = useState(null);
+const [staffOptions, setStaffOptions] = useState([]);
+const [newShiftStaffId, setNewShiftStaffId] = useState("");
+const [newShiftRole, setNewShiftRole] = useState("pharmacist");
+const [newShiftStart, setNewShiftStart] = useState("09:00");
+const [newShiftEnd, setNewShiftEnd] = useState("17:00");
+const [savingShift, setSavingShift] = useState(false);
 
 const selectedDayShifts = selectedDate
   ? shifts.filter((s) => s.shift_date === selectedDate)
   : [];
+
+const handleAddShift = async () => {
+  if (!selectedDate) {
+    alert("No date selected.");
+    return;
+  }
+
+  if (!newShiftStaffId) {
+    alert("Please choose a staff member.");
+    return;
+  }
+
+  if (!newShiftStart || !newShiftEnd) {
+    alert("Please enter a start and end time.");
+    return;
+  }
+
+  try {
+    setSavingShift(true);
+
+    const { error: insertError } = await supabase
+      .from("roster_shifts")
+      .insert([
+        {
+          staff_id: Number(newShiftStaffId),
+          shift_date: selectedDate,
+          start_time: newShiftStart,
+          end_time: newShiftEnd,
+          role: newShiftRole,
+        },
+      ]);
+
+    if (insertError) throw insertError;
+
+    const { data: refreshedShifts, error: refreshError } = await supabase
+      .from("roster_shifts")
+      .select(`
+        id,
+        shift_date,
+        start_time,
+        end_time,
+        role,
+        staff:staff_id (
+          id,
+          name
+        )
+      `);
+
+    if (refreshError) throw refreshError;
+
+    setShifts(refreshedShifts || []);
+    setNewShiftStaffId("");
+    setNewShiftRole("pharmacist");
+    setNewShiftStart("09:00");
+    setNewShiftEnd("17:00");
+  } catch (err) {
+    console.error("Add shift error:", err);
+    alert("Couldn't save shift: " + (err?.message || String(err)));
+  } finally {
+    setSavingShift(false);
+  }
+};
 
 const displayMonth = new Date(
   today.getFullYear(),
@@ -52,29 +120,44 @@ const currentMonth = displayMonth.getMonth();
     cells.push(null);
   }
 useEffect(() => {
-  const loadShifts = async () => {
-   const { data, error } = await supabase
-  .from("roster_shifts")
-  .select(`
-    id,
-    shift_date,
-    start_time,
-    end_time,
-    role,
-    staff:staff_id (
-      id,
-      name
-    )
-  `);
+  const loadRosterData = async () => {
+    const [
+      { data: shiftData, error: shiftError },
+      { data: staffData, error: staffError },
+    ] = await Promise.all([
+      supabase
+        .from("roster_shifts")
+        .select(`
+          id,
+          shift_date,
+          start_time,
+          end_time,
+          role,
+          staff:staff_id (
+            id,
+            name
+          )
+        `),
+      supabase
+        .from("staff")
+        .select("id,name,active")
+        .order("name", { ascending: true }),
+    ]);
 
-    if (error) {
-      console.error("Shift load error:", error);
+    if (shiftError) {
+      console.error("Shift load error:", shiftError);
     } else {
-      setShifts(data || []);
+      setShifts(shiftData || []);
+    }
+
+    if (staffError) {
+      console.error("Staff load error:", staffError);
+    } else {
+      setStaffOptions((staffData || []).filter((s) => s.active !== false));
     }
   };
 
-  loadShifts();
+  loadRosterData();
 }, []);
     const formatSelectedDateLabel = (dateStr) => {
     const d = new Date(dateStr);
@@ -292,16 +375,80 @@ useEffect(() => {
                   </div>
                 )}
 
-                <div className="mt-4 border-t pt-4">
-                  <p className="text-sm text-gray-700">
-                    Next we will add:
-                  </p>
-                  <div className="mt-2 text-sm text-gray-600">
-                    <div>• add shift</div>
-                    <div>• edit times</div>
-                    <div>• choose staff member</div>
-                    <div>• choose role</div>
-                    <div>• delete shift</div>
+                                <div className="mt-4 border-t pt-4">
+                  <h4 className="text-sm font-semibold text-gray-900">
+                    Add shift
+                  </h4>
+
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-sm text-gray-700">
+                        Staff member
+                      </label>
+                      <select
+                        value={newShiftStaffId}
+                        onChange={(e) => setNewShiftStaffId(e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="">Select staff member</option>
+                        {staffOptions.map((staff) => (
+                          <option key={staff.id} value={staff.id}>
+                            {staff.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm text-gray-700">
+                        Role
+                      </label>
+                      <select
+                        value={newShiftRole}
+                        onChange={(e) => setNewShiftRole(e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="pharmacist">Pharmacist</option>
+                        <option value="locum">Locum</option>
+                        <option value="DAA">DAA</option>
+                        <option value="pharmacy assistant">Pharmacy assistant</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm text-gray-700">
+                        Start time
+                      </label>
+                      <input
+                        type="time"
+                        value={newShiftStart}
+                        onChange={(e) => setNewShiftStart(e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm text-gray-700">
+                        End time
+                      </label>
+                      <input
+                        type="time"
+                        value={newShiftEnd}
+                        onChange={(e) => setNewShiftEnd(e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleAddShift}
+                      disabled={savingShift}
+                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingShift ? "Saving..." : "Save shift"}
+                    </button>
                   </div>
                 </div>
               </div>
