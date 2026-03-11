@@ -2,6 +2,28 @@ import React from "react";
 import Link from "next/link";
 
 export default function RosterPage() {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth();
+
+  const firstDayOfMonth = new Date(currentYear, currentMonth, 1);
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const startOffset = (firstDayOfMonth.getDay() + 6) % 7;
+
+  const cells = [];
+
+  for (let i = 0; i < startOffset; i++) {
+    cells.push(null);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    cells.push(day);
+  }
+
+  while (cells.length % 7 !== 0) {
+    cells.push(null);
+  }
+
   return (
     <main className="p-4 md:p-6 max-w-7xl mx-auto">
       <div className="card overflow-hidden">
