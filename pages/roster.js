@@ -1,8 +1,11 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import supabase from "../lib/supabaseClient";
 
 export default function RosterPage() {
   const today = new Date();
+
+const [shifts, setShifts] = useState([]);
 
 const [monthOffset, setMonthOffset] = React.useState(0);
 
@@ -32,7 +35,21 @@ const currentMonth = displayMonth.getMonth();
   while (cells.length % 7 !== 0) {
     cells.push(null);
   }
+useEffect(() => {
+  const loadShifts = async () => {
+    const { data, error } = await supabase
+      .from("roster_shifts")
+      .select("*");
 
+    if (error) {
+      console.error("Shift load error:", error);
+    } else {
+      setShifts(data || []);
+    }
+  };
+
+  loadShifts();
+}, []);
   return (
     <main className="p-4 md:p-6 max-w-7xl mx-auto">
       <div className="card overflow-hidden">
