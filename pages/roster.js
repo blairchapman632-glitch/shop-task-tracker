@@ -305,7 +305,7 @@ useEffect(() => {
             {day}
           </div>
 
-          <div className="pt-2 space-y-1 text-[11px] leading-tight flex-1 overflow-hidden">
+       <div className="pt-1 space-y-[2px] text-[11px] leading-tight flex-1 overflow-hidden">
             {dayShifts.slice(0, 6).map((s) => {
               const roleColour = {
                 pharmacist: "border-l-4 border-purple-600 text-purple-700",
@@ -317,19 +317,17 @@ useEffect(() => {
               const start = formatRosterTime(s.start_time);
               const end = formatRosterTime(s.end_time);
 
-              return (
-                <div
-                  key={s.id}
-                  className={`rounded bg-white px-2 py-1 ${roleColour[s.role] || "border-l-4 border-gray-400 text-gray-700"}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="truncate font-medium">{s.staff?.name}</div>
-                    <div className="tabular-nums text-[10px] text-gray-600 shrink-0">
-                      {start}–{end}
-                    </div>
-                  </div>
-                </div>
-              );
+             return (
+  <div
+    key={s.id}
+    className={`flex items-center justify-between text-[11px] leading-tight py-[1px] ${roleColour[s.role] || "text-gray-700"}`}
+  >
+    <span className="truncate">{s.staff?.name}</span>
+    <span className="tabular-nums shrink-0 text-gray-600">
+      {start}–{end}
+    </span>
+  </div>
+);
             })}
 
             {dayShifts.length > 6 ? (
