@@ -103,7 +103,17 @@ const currentMonth = displayMonth.getMonth();
     key={i}
     className={`border rounded-lg h-24 p-2 text-xs ${day ? "bg-gray-50" : "bg-white"}`}
   >
-    {day ? <div className="font-medium">{day}</div> : null}
+    {day ? (
+  <>
+    <div className="font-medium mb-1">{day}</div>
+
+    <div className="space-y-1 text-[11px]">
+      <div className="rounded bg-blue-100 px-1 py-0.5">Pharmacist</div>
+      <div className="rounded bg-green-100 px-1 py-0.5">Dispense</div>
+      <div className="rounded bg-purple-100 px-1 py-0.5">Retail</div>
+    </div>
+  </>
+) : null}
   </div>
 ))}
 
