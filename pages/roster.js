@@ -1,0 +1,50 @@
+import React from "react";
+import Link from "next/link";
+
+export default function RosterPage() {
+  return (
+    <main className="p-4 md:p-6 max-w-7xl mx-auto">
+      <div className="card overflow-hidden">
+
+        {/* Header */}
+        <div className="px-4 md:px-6 pt-4 md:pt-6 pb-3 border-b-2 border-blue-500">
+          <div className="flex items-center justify-between">
+
+            <h1 className="h1-tight">Roster</h1>
+
+            <div className="flex items-center gap-2">
+              <Link
+                href="/"
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Home
+              </Link>
+
+              <Link
+                href="/admin"
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Admin
+              </Link>
+            </div>
+
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 md:p-6">
+          <div className="rounded-xl border bg-white p-4">
+
+            <h2 className="section-title mb-2">Monthly Roster</h2>
+
+            <p className="text-sm text-gray-600">
+              The roster calendar will appear here.
+            </p>
+
+          </div>
+        </div>
+
+      </div>
+    </main>
+  );
+}
