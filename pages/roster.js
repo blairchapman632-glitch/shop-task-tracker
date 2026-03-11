@@ -33,15 +33,32 @@ export default function RosterPage() {
 
         {/* Content */}
         <div className="p-4 md:p-6">
-          <div className="rounded-xl border bg-white p-4">
+        <div className="rounded-xl border bg-white p-4">
 
-            <h2 className="section-title mb-2">Monthly Roster</h2>
+  <h2 className="section-title mb-4">Monthly Roster</h2>
 
-            <p className="text-sm text-gray-600">
-              The roster calendar will appear here.
-            </p>
+  <div className="grid grid-cols-7 gap-2 text-sm">
 
-          </div>
+    <div className="font-medium text-center">Mon</div>
+    <div className="font-medium text-center">Tue</div>
+    <div className="font-medium text-center">Wed</div>
+    <div className="font-medium text-center">Thu</div>
+    <div className="font-medium text-center">Fri</div>
+    <div className="font-medium text-center">Sat</div>
+    <div className="font-medium text-center">Sun</div>
+
+    {Array.from({ length: 35 }).map((_, i) => (
+      <div
+        key={i}
+        className="border rounded-lg h-24 p-2 text-xs bg-gray-50"
+      >
+        Day {i + 1}
+      </div>
+    ))}
+
+  </div>
+
+</div>
         </div>
 
       </div>
