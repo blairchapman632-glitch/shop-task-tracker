@@ -3,8 +3,17 @@ import Link from "next/link";
 
 export default function RosterPage() {
   const today = new Date();
-  const currentYear = today.getFullYear();
-  const currentMonth = today.getMonth();
+
+const [monthOffset, setMonthOffset] = React.useState(0);
+
+const displayMonth = new Date(
+  today.getFullYear(),
+  today.getMonth() + monthOffset,
+  1
+);
+
+const currentYear = displayMonth.getFullYear();
+const currentMonth = displayMonth.getMonth();
 
   const firstDayOfMonth = new Date(currentYear, currentMonth, 1);
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -57,9 +66,27 @@ export default function RosterPage() {
         <div className="p-4 md:p-6">
         <div className="rounded-xl border bg-white p-4">
 
-  <h2 className="section-title mb-4">
-  {new Date().toLocaleString("en-AU", { month: "long" })} {new Date().getFullYear()}
-</h2>
+ <div className="flex items-center justify-between mb-4">
+
+  <button
+    className="px-3 py-1 rounded-md border bg-white text-sm hover:bg-gray-50"
+    onClick={() => setMonthOffset((m) => m - 1)}
+  >
+    ←
+  </button>
+
+  <h2 className="section-title">
+    {displayMonth.toLocaleString("en-AU", { month: "long", year: "numeric" })}
+  </h2>
+
+  <button
+    className="px-3 py-1 rounded-md border bg-white text-sm hover:bg-gray-50"
+    onClick={() => setMonthOffset((m) => m + 1)}
+  >
+    →
+  </button>
+
+</div>
 
   <div className="grid grid-cols-7 gap-2 text-sm">
 
