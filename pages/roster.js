@@ -21,6 +21,10 @@ const formatRosterTime = (time) => {
 const [monthOffset, setMonthOffset] = React.useState(0);
 const [selectedDate, setSelectedDate] = useState(null);
 
+const selectedDayShifts = selectedDate
+  ? shifts.filter((s) => s.shift_date === selectedDate)
+  : [];
+
 const displayMonth = new Date(
   today.getFullYear(),
   today.getMonth() + monthOffset,
@@ -245,14 +249,61 @@ useEffect(() => {
                 </button>
               </div>
 
-              <div className="p-4">
-                <p className="text-sm text-gray-700">
-                  Placeholder modal only for now.
-                </p>
-                <p className="mt-2 text-sm text-gray-600">
-                  Next we will load that day’s shifts here and add the controls
-                  for adding, editing, and deleting shifts.
-                </p>
+                           <div className="p-4">
+                {selectedDayShifts.length === 0 ? (
+                  <p className="text-sm text-gray-600">
+                    No shifts added for this day yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedDayShifts.map((s) => {
+                      const roleColour = {
+                        pharmacist: "border-l-4 border-purple-600",
+                        locum: "border-l-4 border-blue-600",
+                        DAA: "border-l-4 border-green-600",
+                        "pharmacy assistant": "border-l-4 border-black",
+                      };
+
+                      const start = formatRosterTime(s.start_time);
+                      const end = formatRosterTime(s.end_time);
+
+                      return (
+                        <div
+                          key={s.id}
+                          className={`rounded-lg bg-gray-50 px-3 py-2 ${roleColour[s.role] || "border-l-4 border-gray-400"}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="font-medium text-gray-900">
+                                {s.staff?.name}
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                {s.role}
+                              </div>
+                            </div>
+
+                            <div className="text-sm tabular-nums text-gray-700">
+                              {start}–{end}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="mt-4 border-t pt-4">
+                  <p className="text-sm text-gray-700">
+                    Next we will add:
+                  </p>
+                  <div className="mt-2 text-sm text-gray-600">
+                    <div>• add shift</div>
+                    <div>• edit times</div>
+                    <div>• choose staff member</div>
+                    <div>• choose role</div>
+                    <div>• delete shift</div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
