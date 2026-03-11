@@ -37,9 +37,19 @@ const currentMonth = displayMonth.getMonth();
   }
 useEffect(() => {
   const loadShifts = async () => {
-    const { data, error } = await supabase
-      .from("roster_shifts")
-      .select("*");
+   const { data, error } = await supabase
+  .from("roster_shifts")
+  .select(`
+    id,
+    shift_date,
+    start_time,
+    end_time,
+    role,
+    staff:staff_id (
+      id,
+      name
+    )
+  `);
 
     if (error) {
       console.error("Shift load error:", error);
@@ -120,14 +130,35 @@ useEffect(() => {
     key={i}
    className={`border rounded-lg min-h-[120px] p-2 text-xs ${day ? "bg-gray-50" : "bg-white"}`}
   >
-    {day ? (
+   {day ? (
   <>
     <div className="font-medium mb-1">{day}</div>
 
-  <div className="space-y-1 text-[11px] leading-tight">
-      <div className="rounded bg-blue-100 px-1 py-0.5">Pharmacist</div>
-      <div className="rounded bg-green-100 px-1 py-0.5">Dispense</div>
-      <div className="rounded bg-purple-100 px-1 py-0.5">Retail</div>
+    <div className="space-y-0.5 text-[11px] leading-tight">
+      {shifts
+        .filter((s) => {
+          const d = new Date(s.shift_date);
+          return d.getDate() === day &&
+                 d.getMonth() === currentMonth &&
+                 d.getFullYear() === currentYear;
+        })
+        .map((s) => {
+          const roleColour = {
+            pharmacist: "text-purple-600",
+            locum: "text-blue-600",
+            DAA: "text-green-600",
+            "pharmacy assistant": "text-black"
+          };
+
+          const start = s.start_time?.slice(0,5);
+          const end = s.end_time?.slice(0,5);
+
+          return (
+            <div key={s.id} className={`${roleColour[s.role] || "text-gray-700"}`}>
+              {s.staff?.name} {start}–{end}
+            </div>
+          );
+        })}
     </div>
   </>
 ) : null}
