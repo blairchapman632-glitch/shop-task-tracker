@@ -35,7 +35,9 @@ export default function RosterPage() {
         <div className="p-4 md:p-6">
         <div className="rounded-xl border bg-white p-4">
 
-  <h2 className="section-title mb-4">Monthly Roster</h2>
+  <h2 className="section-title mb-4">
+  {new Date().toLocaleString("en-AU", { month: "long" })} {new Date().getFullYear()}
+</h2>
 
   <div className="grid grid-cols-7 gap-2 text-sm">
 
@@ -47,14 +49,14 @@ export default function RosterPage() {
     <div className="font-medium text-center">Sat</div>
     <div className="font-medium text-center">Sun</div>
 
-    {Array.from({ length: 35 }).map((_, i) => (
-      <div
-        key={i}
-        className="border rounded-lg h-24 p-2 text-xs bg-gray-50"
-      >
-        Day {i + 1}
-      </div>
-    ))}
+  {Array.from({ length: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate() }).map((_, i) => (
+  <div
+    key={i}
+    className="border rounded-lg h-24 p-2 text-xs bg-gray-50"
+  >
+    <div className="font-medium">{i + 1}</div>
+  </div>
+))}
 
   </div>
 
