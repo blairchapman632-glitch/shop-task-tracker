@@ -50,6 +50,37 @@ const handleAddShift = async () => {
   try {
     setSavingShift(true);
 
+    const rosterMonthDate = `${selectedDate.slice(0, 7)}-01`;
+
+    let rosterMonthId = null;
+
+    const { data: existingMonth, error: existingMonthError } = await supabase
+      .from("roster_months")
+      .select("id")
+      .eq("month", rosterMonthDate)
+      .maybeSingle();
+
+    if (existingMonthError) throw existingMonthError;
+
+    if (existingMonth?.id) {
+      rosterMonthId = existingMonth.id;
+    } else {
+      const { data: createdMonth, error: createMonthError } = await supabase
+        .from("roster_months")
+        .insert([
+          {
+            month: rosterMonthDate,
+            status: "draft",
+          },
+        ])
+        .select("id")
+        .single();
+
+      if (createMonthError) throw createMonthError;
+
+      rosterMonthId = createdMonth.id;
+    }
+
     const { error: insertError } = await supabase
       .from("roster_shifts")
       .insert([
@@ -59,6 +90,7 @@ const handleAddShift = async () => {
           start_time: newShiftStart,
           end_time: newShiftEnd,
           role: newShiftRole,
+          roster_month_id: rosterMonthId,
         },
       ]);
 
