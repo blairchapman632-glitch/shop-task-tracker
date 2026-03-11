@@ -159,8 +159,8 @@ useEffect(() => {
       })
     : [];
 
-  const dateString = day
-    ? new Date(currentYear, currentMonth, day).toISOString().split("T")[0]
+   const dateString = day
+    ? `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`
     : null;
 
   return (
