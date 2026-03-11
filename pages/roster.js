@@ -49,12 +49,12 @@ export default function RosterPage() {
     <div className="font-medium text-center">Sat</div>
     <div className="font-medium text-center">Sun</div>
 
-  {Array.from({ length: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate() }).map((_, i) => (
+ {cells.map((day, i) => (
   <div
     key={i}
-    className="border rounded-lg h-24 p-2 text-xs bg-gray-50"
+    className={`border rounded-lg h-24 p-2 text-xs ${day ? "bg-gray-50" : "bg-white"}`}
   >
-    <div className="font-medium">{i + 1}</div>
+    {day ? <div className="font-medium">{day}</div> : null}
   </div>
 ))}
 
