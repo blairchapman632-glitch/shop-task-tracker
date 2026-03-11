@@ -72,7 +72,7 @@ useEffect(() => {
 
   loadShifts();
 }, []);
-    const formatSelectedDateLabel = (dateStr: string) => {
+    const formatSelectedDateLabel = (dateStr) => {
     const d = new Date(dateStr);
     return d.toLocaleDateString("en-AU", {
       weekday: "long",
