@@ -11,11 +11,16 @@ const formatRosterTime = (time) => {
   if (!time) return "";
 
   const [hourStr, minuteStr] = String(time).split(":");
-  const hour = Number(hourStr);
+  let hour = Number(hourStr);
   const minute = Number(minuteStr);
 
-  if (minute === 0) return String(hour);
-  return `${hour}.${String(minute).padStart(2, "0")}`;
+  const suffix = hour >= 12 ? "pm" : "am";
+  hour = hour % 12;
+
+  if (hour === 0) hour = 12;
+
+  if (minute === 0) return `${hour}${suffix}`;
+  return `${hour}.${String(minute).padStart(2, "0")}${suffix}`;
 };
 
 const [monthOffset, setMonthOffset] = React.useState(0);
@@ -317,9 +322,11 @@ useEffect(() => {
                   key={s.id}
                   className={`rounded bg-white px-2 py-1 ${roleColour[s.role] || "border-l-4 border-gray-400 text-gray-700"}`}
                 >
-                  <div className="truncate font-medium">{s.staff?.name}</div>
-                  <div className="tabular-nums text-[10px] text-gray-600">
-                    {start}–{end}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="truncate font-medium">{s.staff?.name}</div>
+                    <div className="tabular-nums text-[10px] text-gray-600 shrink-0">
+                      {start}–{end}
+                    </div>
                   </div>
                 </div>
               );
@@ -344,8 +351,8 @@ useEffect(() => {
 
         {selectedDate ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-lg rounded-xl bg-white shadow-xl">
-              <div className="flex items-center justify-between border-b px-4 py-3">
+            <div className="w-full max-w-lg max-h-[90vh] overflow-hidden rounded-xl bg-white shadow-xl flex flex-col">
+              <div className="flex items-center justify-between border-b px-4 py-3 shrink-0">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">
                     Day editor
@@ -354,17 +361,9 @@ useEffect(() => {
                     {formatSelectedDateLabel(selectedDate)}
                   </p>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedDate(null)}
-                  className="rounded-md border px-3 py-1 text-sm hover:bg-gray-50"
-                >
-                  Close
-                </button>
               </div>
 
-                           <div className="p-4">
+              <div className="flex-1 overflow-y-auto p-4">
                 {selectedDayShifts.length === 0 ? (
                   <p className="text-sm text-gray-600">
                     No shifts added for this day yet.
@@ -388,17 +387,18 @@ useEffect(() => {
                           className={`rounded-lg bg-gray-50 px-3 py-2 ${roleColour[s.role] || "border-l-4 border-gray-400"}`}
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="font-medium text-gray-900">
-                                {s.staff?.name}
+                            <div className="min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="font-medium text-gray-900 truncate">
+                                  {s.staff?.name}
+                                </div>
+                                <div className="text-sm tabular-nums text-gray-700 shrink-0">
+                                  {start}–{end}
+                                </div>
                               </div>
                               <div className="text-sm text-gray-600">
                                 {s.role}
                               </div>
-                            </div>
-
-                            <div className="text-sm tabular-nums text-gray-700">
-                              {start}–{end}
                             </div>
                           </div>
                         </div>
@@ -407,7 +407,7 @@ useEffect(() => {
                   </div>
                 )}
 
-                                <div className="mt-4 border-t pt-4">
+                <div className="mt-4 border-t pt-4">
                   <h4 className="text-sm font-semibold text-gray-900">
                     Add shift
                   </h4>
@@ -471,17 +471,27 @@ useEffect(() => {
                       />
                     </div>
                   </div>
+                </div>
+              </div>
 
-                  <div className="mt-4 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={handleAddShift}
-                      disabled={savingShift}
-                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {savingShift ? "Saving..." : "Save shift"}
-                    </button>
-                  </div>
+              <div className="border-t bg-white px-4 py-3 shrink-0">
+                <div className="flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(null)}
+                    className="rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
+                  >
+                    Close
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleAddShift}
+                    disabled={savingShift}
+                    className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {savingShift ? "Saving..." : "Save shift"}
+                  </button>
                 </div>
               </div>
             </div>
