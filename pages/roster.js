@@ -19,7 +19,7 @@ const formatRosterTime = (time) => {
 };
 
 const [monthOffset, setMonthOffset] = React.useState(0);
-const [selectedDate, setSelectedDate] = useState<string | null>(null);
+const [selectedDate, setSelectedDate] = useState(null);
 
 const displayMonth = new Date(
   today.getFullYear(),
