@@ -7,6 +7,17 @@ export default function RosterPage() {
 
 const [shifts, setShifts] = useState([]);
 
+const formatRosterTime = (time) => {
+  if (!time) return "";
+
+  const [hourStr, minuteStr] = String(time).split(":");
+  const hour = Number(hourStr);
+  const minute = Number(minuteStr);
+
+  if (minute === 0) return String(hour);
+  return `${hour}.${String(minute).padStart(2, "0")}`;
+};
+
 const [monthOffset, setMonthOffset] = React.useState(0);
 
 const displayMonth = new Date(
@@ -150,13 +161,17 @@ useEffect(() => {
             "pharmacy assistant": "text-black"
           };
 
-          const start = s.start_time?.slice(0,5);
-          const end = s.end_time?.slice(0,5);
+          const start = formatRosterTime(s.start_time);
+const end = formatRosterTime(s.end_time);
 
           return (
-            <div key={s.id} className={`${roleColour[s.role] || "text-gray-700"}`}>
-              {s.staff?.name} {start}–{end}
-            </div>
+            <div
+  key={s.id}
+  className={`flex justify-between ${roleColour[s.role] || "text-gray-700"}`}
+>
+  <span className="truncate">{s.staff?.name}</span>
+  <span className="tabular-nums">{start}–{end}</span>
+</div>
           );
         })}
     </div>
