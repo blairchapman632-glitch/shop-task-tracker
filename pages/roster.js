@@ -184,64 +184,7 @@ const handleCopyWeek = async (targetWeek) => {
     console.error("Copy week error:", err);
     alert("Couldn't copy week: " + (err?.message || String(err)));
   }
-};
-  try {
-    const source = new Date(sourceDate);
-    const dayIndex = (source.getDay() + 6) % 7;
-    const monday = new Date(source);
-    monday.setDate(source.getDate() - dayIndex);
 
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-
-
-
-    if (error) throw error;
-
-    if (!weekShifts || weekShifts.length === 0) {
-      alert("No shifts found in that week.");
-      return;
-    }
-
-    const targetDateStr = prompt("Enter a date in the week you want to copy TO (YYYY-MM-DD):");
-
-    if (!targetDateStr) return;
-
-    const targetDate = new Date(targetDateStr);
-    const targetDayIndex = (targetDate.getDay() + 6) % 7;
-    const targetMonday = new Date(targetDate);
-    targetMonday.setDate(targetDate.getDate() - targetDayIndex);
-
-    const newShifts = weekShifts.map((shift) => {
-      const original = new Date(shift.shift_date);
-      const weekday = (original.getDay() + 6) % 7;
-
-      const newDate = new Date(targetMonday);
-      newDate.setDate(targetMonday.getDate() + weekday);
-
-      return {
-        staff_id: shift.staff_id,
-        shift_date: newDate.toISOString().slice(0, 10),
-        start_time: shift.start_time,
-        end_time: shift.end_time,
-        role: shift.role,
-        roster_month_id: shift.roster_month_id,
-      };
-    });
-
-    const { error: insertError } = await supabase
-      .from("roster_shifts")
-      .insert(newShifts);
-
-    if (insertError) throw insertError;
-
-    await refreshShifts();
-    alert("Week copied successfully.");
-  } catch (err) {
-    console.error("Copy week error:", err);
-    alert("Couldn't copy week: " + (err?.message || String(err)));
-  }
-};
 
 const handleCopyPreviousMonth = async () => {
   try {
