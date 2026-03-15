@@ -294,14 +294,14 @@ useEffect(() => {
       onClick={() => {
         if (dateString) setSelectedDate(dateString);
       }}
-      className={`border rounded-lg min-h-[150px] text-xs text-left w-full ${
+      className={`border rounded-lg min-h-[125px] text-xs text-left w-full ${
         day ? "bg-gray-50 hover:bg-gray-100 cursor-pointer" : "bg-white"
       }`}
       disabled={!day}
     >
       {day ? (
         <div className="h-full flex flex-col p-2">
-          <div className="text-[11px] font-semibold text-gray-700 pb-1 shrink-0">
+          <div className="text-[11px] font-semibold text-blue-700 pb-1 shrink-0">
   {day}
 </div>
      <div className="pt-0.5 space-y-[1px] text-[10px] leading-tight flex-1 overflow-hidden">
@@ -319,10 +319,10 @@ useEffect(() => {
              return (
 <div
   key={s.id}
-  className={`flex items-center justify-between text-[10px] leading-tight py-0 ${roleColour[s.role] || "text-gray-700"}`}
+ className={`flex items-center justify-between text-[11px] leading-tight py-0 ${roleColour[s.role] || "text-gray-700"}`}
 >
   <span className="truncate pr-1">{s.staff?.name}</span>
-  <span className="tabular-nums shrink-0 text-[10px] text-gray-600">
+  <span className="tabular-nums shrink-0 text-[11px] text-gray-600">
     {start}–{end}
   </span>
 </div>
