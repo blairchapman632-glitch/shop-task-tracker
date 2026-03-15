@@ -301,11 +301,10 @@ useEffect(() => {
     >
       {day ? (
         <div className="h-full flex flex-col p-2">
-          <div className="font-medium text-[12px] leading-none pb-2 border-b border-gray-200 shrink-0">
-            {day}
-          </div>
-
-       <div className="pt-1 space-y-[2px] text-[11px] leading-tight flex-1 overflow-hidden">
+          <div className="text-[11px] font-semibold text-gray-700 pb-1 shrink-0">
+  {day}
+</div>
+     <div className="pt-0.5 space-y-[1px] text-[10px] leading-tight flex-1 overflow-hidden">
             {dayShifts.slice(0, 6).map((s) => {
               const roleColour = {
                 pharmacist: "border-l-4 border-purple-600 text-purple-700",
@@ -318,15 +317,15 @@ useEffect(() => {
               const end = formatRosterTime(s.end_time);
 
              return (
-  <div
-    key={s.id}
-    className={`flex items-center justify-between text-[11px] leading-tight py-[1px] ${roleColour[s.role] || "text-gray-700"}`}
-  >
-    <span className="truncate">{s.staff?.name}</span>
-    <span className="tabular-nums shrink-0 text-gray-600">
-      {start}–{end}
-    </span>
-  </div>
+<div
+  key={s.id}
+  className={`flex items-center justify-between text-[10px] leading-tight py-0 ${roleColour[s.role] || "text-gray-700"}`}
+>
+  <span className="truncate pr-1">{s.staff?.name}</span>
+  <span className="tabular-nums shrink-0 text-[10px] text-gray-600">
+    {start}–{end}
+  </span>
+</div>
 );
             })}
 
