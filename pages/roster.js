@@ -301,7 +301,7 @@ useEffect(() => {
     >
       {day ? (
         <div className="h-full flex flex-col p-2">
-          <div className="text-[11px] font-semibold text-blue-700 pb-1 shrink-0">
+          <div className="text-[12px] font-bold text-blue-700 pb-1 shrink-0">
   {day}
 </div>
      <div className="pt-0.5 space-y-[1px] text-[10px] leading-tight flex-1 overflow-hidden">
