@@ -121,6 +121,72 @@ const handleUpdateShift = async () => {
   }
 };
 
+const handleCopyWeek = async (sourceDate) => {
+  try {
+    const source = new Date(sourceDate);
+    const dayIndex = (source.getDay() + 6) % 7;
+    const monday = new Date(source);
+    monday.setDate(source.getDate() - dayIndex);
+
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+
+    const mondayStr = monday.toISOString().slice(0, 10);
+    const sundayStr = sunday.toISOString().slice(0, 10);
+
+    const { data: weekShifts, error } = await supabase
+      .from("roster_shifts")
+      .select("*")
+      .gte("shift_date", mondayStr)
+      .lte("shift_date", sundayStr);
+
+    if (error) throw error;
+
+    if (!weekShifts || weekShifts.length === 0) {
+      alert("No shifts found in that week.");
+      return;
+    }
+
+    const targetDateStr = prompt("Enter a date in the week you want to copy TO (YYYY-MM-DD):");
+
+    if (!targetDateStr) return;
+
+    const targetDate = new Date(targetDateStr);
+    const targetDayIndex = (targetDate.getDay() + 6) % 7;
+    const targetMonday = new Date(targetDate);
+    targetMonday.setDate(targetDate.getDate() - targetDayIndex);
+
+    const newShifts = weekShifts.map((shift) => {
+      const original = new Date(shift.shift_date);
+      const weekday = (original.getDay() + 6) % 7;
+
+      const newDate = new Date(targetMonday);
+      newDate.setDate(targetMonday.getDate() + weekday);
+
+      return {
+        staff_id: shift.staff_id,
+        shift_date: newDate.toISOString().slice(0, 10),
+        start_time: shift.start_time,
+        end_time: shift.end_time,
+        role: shift.role,
+        roster_month_id: shift.roster_month_id,
+      };
+    });
+
+    const { error: insertError } = await supabase
+      .from("roster_shifts")
+      .insert(newShifts);
+
+    if (insertError) throw insertError;
+
+    await refreshShifts();
+    alert("Week copied successfully.");
+  } catch (err) {
+    console.error("Copy week error:", err);
+    alert("Couldn't copy week: " + (err?.message || String(err)));
+  }
+};
+
 const handleCopyPreviousMonth = async () => {
   try {
     setCopyingMonth(true);
@@ -526,17 +592,23 @@ useEffect(() => {
     : null;
 
   return (
-    <button
-      key={i}
-      type="button"
-      onClick={() => {
-        if (dateString) setSelectedDate(dateString);
-      }}
-      className={`border rounded-lg min-h-[125px] text-xs text-left w-full ${
-        day ? "bg-gray-50 hover:bg-gray-100 cursor-pointer" : "bg-white"
-      }`}
-      disabled={!day}
-    >
+ <button
+  type="button"
+  onClick={() => {
+    if (dateString) setSelectedDate(dateString);
+  }}
+  onContextMenu={(e) => {
+    if (!dateString) return;
+    e.preventDefault();
+    const confirmed = window.confirm("Copy this week to another week?");
+    if (!confirmed) return;
+    handleCopyWeek(dateString);
+  }}
+  className={`border rounded-lg min-h-[125px] text-xs text-left w-full ${
+    day ? "bg-gray-50 hover:bg-gray-100 cursor-pointer" : "bg-white"
+  }`}
+  disabled={!day}
+>
       {day ? (
         <div className="h-full flex flex-col p-2">
           <div className="text-[12px] font-bold text-blue-700 pb-1 shrink-0">
@@ -718,44 +790,77 @@ useEffect(() => {
                                   <div className="text-sm text-gray-600">
                                     {s.role}
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleStartEditShift(s)}
-                                      className="rounded-md border border-blue-200 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
-                                    >
-                                      Edit
-                                    </button>
+<div className="flex items-center gap-2">
+  <button
+    type="button"
+    onClick={() => handleStartEditShift(s)}
+    className="rounded-md border border-blue-200 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+  >
+    Edit
+  </button>
 
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        const confirmed = window.confirm(`Delete shift for ${s.staff?.name}?`);
-                                        if (!confirmed) return;
+  <button
+    type="button"
+    onClick={async () => {
+      const confirmed = window.confirm(`Duplicate shift for ${s.staff?.name}?`);
+      if (!confirmed) return;
 
-                                        try {
-                                          const { error } = await supabase
-                                            .from("roster_shifts")
-                                            .delete()
-                                            .eq("id", s.id);
+      try {
+        const { error } = await supabase
+          .from("roster_shifts")
+          .insert([
+            {
+              staff_id: s.staff_id,
+              shift_date: selectedDate,
+              start_time: s.start_time,
+              end_time: s.end_time,
+              role: s.role,
+              roster_month_id: s.roster_month_id || null,
+            },
+          ]);
 
-                                          if (error) throw error;
+        if (error) throw error;
 
-                                          if (editingShiftId === s.id) {
-                                            handleCancelEditShift();
-                                          }
+        await refreshShifts();
+      } catch (err) {
+        console.error("Duplicate shift error:", err);
+        alert("Couldn't duplicate shift: " + (err?.message || String(err)));
+      }
+    }}
+    className="rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+  >
+    Duplicate
+  </button>
 
-                                          await refreshShifts();
-                                        } catch (err) {
-                                          console.error("Delete shift error:", err);
-                                          alert("Couldn't delete shift: " + (err?.message || String(err)));
-                                        }
-                                      }}
-                                      className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-                                    >
-                                      Delete
-                                    </button>
-                                  </div>
+  <button
+    type="button"
+    onClick={async () => {
+      const confirmed = window.confirm(`Delete shift for ${s.staff?.name}?`);
+      if (!confirmed) return;
+
+      try {
+        const { error } = await supabase
+          .from("roster_shifts")
+          .delete()
+          .eq("id", s.id);
+
+        if (error) throw error;
+
+        if (editingShiftId === s.id) {
+          handleCancelEditShift();
+        }
+
+        await refreshShifts();
+      } catch (err) {
+        console.error("Delete shift error:", err);
+        alert("Couldn't delete shift: " + (err?.message || String(err)));
+      }
+    }}
+    className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+  >
+    Delete
+  </button>
+</div>
                                 </div>
                               </div>
                             </div>
