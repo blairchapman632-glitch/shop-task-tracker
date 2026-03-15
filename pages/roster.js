@@ -68,14 +68,14 @@ const handleCopyPreviousMonth = async () => {
     const previousMonthIndex = previousMonth.getMonth();
     const previousMonthDate = `${previousYear}-${String(previousMonthIndex + 1).padStart(2, "0")}-01`;
 
+    const targetMonthEndDate = `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`;
+    const previousMonthEndDate = `${previousYear}-${String(previousMonthIndex + 2).padStart(2, "0")}-01`;
+
     const { data: existingTargetShifts, error: existingTargetShiftsError } = await supabase
       .from("roster_shifts")
       .select("id")
       .gte("shift_date", targetMonthDate)
-      .lt(
-        "shift_date",
-        `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`
-      )
+      .lt("shift_date", targetMonthEndDate)
       .limit(1);
 
     if (existingTargetShiftsError) throw existingTargetShiftsError;
@@ -96,10 +96,7 @@ const handleCopyPreviousMonth = async () => {
         role
       `)
       .gte("shift_date", previousMonthDate)
-      .lt(
-        "shift_date",
-        `${previousYear}-${String(previousMonthIndex + 2).padStart(2, "0")}-01`
-      )
+      .lt("shift_date", previousMonthEndDate)
       .order("shift_date", { ascending: true });
 
     if (previousShiftsError) throw previousShiftsError;
@@ -138,17 +135,44 @@ const handleCopyPreviousMonth = async () => {
       targetRosterMonthId = createdTargetMonth.id;
     }
 
+    const getWeekdayIndexMondayFirst = (date) => {
+      return (date.getDay() + 6) % 7;
+    };
+
+    const getWeekdayOccurrenceInMonth = (date) => {
+      return Math.floor((date.getDate() - 1) / 7) + 1;
+    };
+
+    const findMatchingDateInTargetMonth = (weekdayIndex, occurrence) => {
+      const daysInTargetMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+      let count = 0;
+
+      for (let day = 1; day <= daysInTargetMonth; day++) {
+        const candidate = new Date(currentYear, currentMonth, day);
+        const candidateWeekday = getWeekdayIndexMondayFirst(candidate);
+
+        if (candidateWeekday === weekdayIndex) {
+          count += 1;
+
+          if (count === occurrence) {
+            return `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          }
+        }
+      }
+
+      return null;
+    };
+
     const copiedShifts = previousShifts
       .map((shift) => {
         const originalDate = new Date(shift.shift_date);
-        const dayOfMonth = originalDate.getDate();
-        const maxDayInTargetMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        const weekdayIndex = getWeekdayIndexMondayFirst(originalDate);
+        const occurrence = getWeekdayOccurrenceInMonth(originalDate);
+        const newShiftDate = findMatchingDateInTargetMonth(weekdayIndex, occurrence);
 
-        if (dayOfMonth > maxDayInTargetMonth) {
+        if (!newShiftDate) {
           return null;
         }
-
-        const newShiftDate = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`;
 
         return {
           staff_id: shift.staff_id,
@@ -173,7 +197,7 @@ const handleCopyPreviousMonth = async () => {
     if (insertCopiedShiftsError) throw insertCopiedShiftsError;
 
     await refreshShifts();
-    alert("Previous month roster copied.");
+    alert("Previous month roster copied by weekday pattern.");
   } catch (err) {
     console.error("Copy month error:", err);
     alert("Couldn't copy previous month roster: " + (err?.message || String(err)));
