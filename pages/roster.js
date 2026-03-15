@@ -38,7 +38,10 @@ const [editShiftRole, setEditShiftRole] = useState("pharmacist");
 const [editShiftStart, setEditShiftStart] = useState("09:00");
 const [editShiftEnd, setEditShiftEnd] = useState("17:00");
 const [savingEditShift, setSavingEditShift] = useState(false);
-
+const [draggedShiftId, setDraggedShiftId] = useState(null);
+const [dragTargetDate, setDragTargetDate] = useState(null);
+const [dragCopyMode, setDragCopyMode] = useState(false);
+const [savingDraggedShift, setSavingDraggedShift] = useState(false);
 const selectedDayShifts = selectedDate
   ? shifts.filter((s) => s.shift_date === selectedDate)
   : [];
@@ -121,7 +124,139 @@ const handleUpdateShift = async () => {
   }
 };
 
+const getRosterMonthIdForDate = async (dateStr) => {
+  const rosterMonthDate = `${dateStr.slice(0, 7)}-01`;
 
+  const { data: existingMonth, error: existingMonthError } = await supabase
+    .from("roster_months")
+    .select("id")
+    .eq("month", rosterMonthDate)
+    .maybeSingle();
+
+  if (existingMonthError) throw existingMonthError;
+
+  if (existingMonth?.id) {
+    return existingMonth.id;
+  }
+
+  const { data: createdMonth, error: createMonthError } = await supabase
+    .from("roster_months")
+    .insert([
+      {
+        month: rosterMonthDate,
+        status: "draft",
+      },
+    ])
+    .select("id")
+    .single();
+
+  if (createMonthError) throw createMonthError;
+
+  return createdMonth.id;
+};
+
+const handleShiftDragStart = (event, shift) => {
+  event.stopPropagation();
+  setDraggedShiftId(shift.id);
+  setDragCopyMode(Boolean(event.altKey));
+
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = event.altKey ? "copy" : "move";
+    event.dataTransfer.setData("text/plain", String(shift.id));
+  }
+};
+
+const handleShiftDragEnd = () => {
+  setDraggedShiftId(null);
+  setDragTargetDate(null);
+  setDragCopyMode(false);
+};
+
+const handleDayDragOver = (event, dateString) => {
+  if (!dateString || savingDraggedShift) return;
+  event.preventDefault();
+  setDragTargetDate(dateString);
+
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = dragCopyMode ? "copy" : "move";
+  }
+};
+
+const handleDayDragLeave = (dateString) => {
+  if (dragTargetDate === dateString) {
+    setDragTargetDate(null);
+  }
+};
+
+const handleDayDrop = async (event, dateString) => {
+  event.preventDefault();
+  event.stopPropagation();
+
+  const droppedShiftId = Number(
+    event.dataTransfer?.getData("text/plain") || draggedShiftId
+  );
+
+  setDragTargetDate(null);
+
+  if (!dateString || !droppedShiftId || savingDraggedShift) {
+    return;
+  }
+
+  const draggedShift = shifts.find((shift) => shift.id === droppedShiftId);
+
+  if (!draggedShift) {
+    handleShiftDragEnd();
+    return;
+  }
+
+  if (!dragCopyMode && draggedShift.shift_date === dateString) {
+    handleShiftDragEnd();
+    return;
+  }
+
+  try {
+    setSavingDraggedShift(true);
+
+    if (dragCopyMode) {
+      const targetRosterMonthId = await getRosterMonthIdForDate(dateString);
+
+      const { error } = await supabase
+        .from("roster_shifts")
+        .insert([
+          {
+            staff_id: draggedShift.staff_id || draggedShift.staff?.id,
+            shift_date: dateString,
+            start_time: draggedShift.start_time,
+            end_time: draggedShift.end_time,
+            role: draggedShift.role,
+            roster_month_id: targetRosterMonthId,
+          },
+        ]);
+
+      if (error) throw error;
+    } else {
+      const targetRosterMonthId = await getRosterMonthIdForDate(dateString);
+
+      const { error } = await supabase
+        .from("roster_shifts")
+        .update({
+          shift_date: dateString,
+          roster_month_id: targetRosterMonthId,
+        })
+        .eq("id", droppedShiftId);
+
+      if (error) throw error;
+    }
+
+    await refreshShifts();
+  } catch (err) {
+    console.error("Drag shift error:", err);
+    alert("Couldn't save dragged shift: " + (err?.message || String(err)));
+  } finally {
+    setSavingDraggedShift(false);
+    handleShiftDragEnd();
+  }
+};
 
 const handleCopyPreviousMonth = async () => {
   try {
@@ -533,23 +668,52 @@ const getWeekOfMonth = (dateStr) => {
     : null;
 
   return (
- <button
-  type="button"
+ <div
   onClick={() => {
-    if (dateString) setSelectedDate(dateString);
+    if (!dateString || draggedShiftId || savingDraggedShift) return;
+    setSelectedDate(dateString);
   }}
-
+  onDragOver={(event) => {
+    if (!dateString) return;
+    handleDayDragOver(event, dateString);
+  }}
+  onDragLeave={() => {
+    if (!dateString) return;
+    handleDayDragLeave(dateString);
+  }}
+  onDrop={(event) => {
+    if (!dateString) return;
+    handleDayDrop(event, dateString);
+  }}
   className={`border rounded-lg min-h-[125px] text-xs text-left w-full ${
     day ? "bg-gray-50 hover:bg-gray-100 cursor-pointer" : "bg-white"
+  } ${
+    dragTargetDate === dateString
+      ? dragCopyMode
+        ? "ring-2 ring-green-400 bg-green-50"
+        : "ring-2 ring-blue-400 bg-blue-50"
+      : ""
   }`}
-  disabled={!day}
 >
       {day ? (
         <div className="h-full flex flex-col p-2">
-          <div className="text-[12px] font-bold text-blue-700 pb-1 shrink-0">
-  {day}
-</div>
-     <div className="pt-0.5 space-y-[1px] text-[10px] leading-tight flex-1 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 pb-1 shrink-0">
+            <div className="text-[12px] font-bold text-blue-700">
+              {day}
+            </div>
+
+            {dragTargetDate === dateString ? (
+              <div className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${
+                dragCopyMode
+                  ? "bg-green-100 text-green-700"
+                  : "bg-blue-100 text-blue-700"
+              }`}>
+                {dragCopyMode ? "Copy here" : "Move here"}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="pt-0.5 space-y-[1px] text-[10px] leading-tight flex-1 overflow-hidden">
             {dayShifts.slice(0, 6).map((s) => {
               const roleColour = {
                 pharmacist: "border-l-4 border-purple-600 text-purple-700",
@@ -560,18 +724,28 @@ const getWeekOfMonth = (dateStr) => {
 
               const start = formatRosterTime(s.start_time);
               const end = formatRosterTime(s.end_time);
+              const isDraggingThisShift = draggedShiftId === s.id;
 
-             return (
-<div
-  key={s.id}
- className={`flex items-center justify-between text-[11px] leading-tight py-0 ${roleColour[s.role] || "text-gray-700"}`}
->
-  <span className="truncate pr-1">{s.staff?.name}</span>
-  <span className="tabular-nums shrink-0 text-[11px] text-gray-600">
-    {start}–{end}
-  </span>
-</div>
-);
+              return (
+                <div
+                  key={s.id}
+                  draggable
+                  onDragStart={(event) => handleShiftDragStart(event, s)}
+                  onDragEnd={handleShiftDragEnd}
+                  onClick={(event) => event.stopPropagation()}
+                  className={`flex items-center justify-between text-[11px] leading-tight py-0 px-1 rounded ${
+                    roleColour[s.role] || "text-gray-700"
+                  } ${
+                    isDraggingThisShift ? "opacity-40" : "hover:bg-white/70"
+                  }`}
+                  title="Drag to move. Hold Alt/Option while dragging to copy."
+                >
+                  <span className="truncate pr-1">{s.staff?.name}</span>
+                  <span className="tabular-nums shrink-0 text-[11px] text-gray-600">
+                    {start}–{end}
+                  </span>
+                </div>
+              );
             })}
 
             {dayShifts.length > 6 ? (
@@ -582,7 +756,7 @@ const getWeekOfMonth = (dateStr) => {
           </div>
         </div>
       ) : null}
-    </button>
+    </div>
   );
 })}
 
