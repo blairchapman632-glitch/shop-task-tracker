@@ -121,69 +121,6 @@ const handleUpdateShift = async () => {
   }
 };
 
-const handleCopyWeek = async (targetWeek) => {
-  try {
-    if (!selectedDate) return;
-
-    const sourceWeek = getWeekOfMonth(selectedDate);
-
-    const monthStart = new Date(currentYear, currentMonth, 1);
-    const monthEnd = new Date(currentYear, currentMonth + 1, 0);
-
-    const startStr = monthStart.toISOString().slice(0, 10);
-    const endStr = monthEnd.toISOString().slice(0, 10);
-
-    const { data: monthShifts, error } = await supabase
-      .from("roster_shifts")
-      .select("*")
-      .gte("shift_date", startStr)
-      .lte("shift_date", endStr);
-
-    if (error) throw error;
-
-    const weekShifts = monthShifts.filter((s) => {
-      const d = new Date(s.shift_date);
-      const week = Math.floor((d.getDate() - 1) / 7) + 1;
-      return week === sourceWeek;
-    });
-
-    if (weekShifts.length === 0) {
-      alert("No shifts found in this week.");
-      return;
-    }
-
-    const newShifts = weekShifts.map((shift) => {
-      const original = new Date(shift.shift_date);
-      const weekday = (original.getDay() + 6) % 7;
-
-      const newDay = (targetWeek - 1) * 7 + 1 + weekday;
-
-      if (newDay > monthEnd.getDate()) return null;
-
-      const newDate = new Date(currentYear, currentMonth, newDay);
-
-      return {
-        staff_id: shift.staff_id,
-        shift_date: newDate.toISOString().slice(0, 10),
-        start_time: shift.start_time,
-        end_time: shift.end_time,
-        role: shift.role,
-        roster_month_id: shift.roster_month_id,
-      };
-    }).filter(Boolean);
-
-    const { error: insertError } = await supabase
-      .from("roster_shifts")
-      .insert(newShifts);
-
-    if (insertError) throw insertError;
-
-    await refreshShifts();
-    alert("Week copied.");
-  } catch (err) {
-    console.error("Copy week error:", err);
-    alert("Couldn't copy week: " + (err?.message || String(err)));
-  }
 
 
 const handleCopyPreviousMonth = async () => {
