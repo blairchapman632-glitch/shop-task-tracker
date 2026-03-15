@@ -122,13 +122,6 @@ const handleUpdateShift = async () => {
 };
 
 const handleCopyPreviousMonth = async () => {
-
-  if (refreshError) throw refreshError;
-
-  setShifts(refreshedShifts || []);
-};
-
-const handleCopyPreviousMonth = async () => {
   try {
     setCopyingMonth(true);
 
@@ -142,7 +135,7 @@ const handleCopyPreviousMonth = async () => {
     const targetMonthEndDate = `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`;
     const previousMonthEndDate = `${previousYear}-${String(previousMonthIndex + 2).padStart(2, "0")}-01`;
 
-       const { error: deleteExistingTargetShiftsError } = await supabase
+    const { error: deleteExistingTargetShiftsError } = await supabase
       .from("roster_shifts")
       .delete()
       .gte("shift_date", targetMonthDate)
