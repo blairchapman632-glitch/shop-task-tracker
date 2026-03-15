@@ -196,6 +196,8 @@ const handleDayDrop = async (event, dateString) => {
     event.dataTransfer?.getData("text/plain") || draggedShiftId
   );
 
+  const isCopyDrop = Boolean(event.altKey || dragCopyMode);
+
   setDragTargetDate(null);
 
   if (!dateString || !droppedShiftId || savingDraggedShift) {
@@ -209,15 +211,28 @@ const handleDayDrop = async (event, dateString) => {
     return;
   }
 
-  if (!dragCopyMode && draggedShift.shift_date === dateString) {
+  if (!isCopyDrop && draggedShift.shift_date === dateString) {
     handleShiftDragEnd();
     return;
   }
 
+  const previousShifts = shifts;
+
   try {
     setSavingDraggedShift(true);
 
-    if (dragCopyMode) {
+    if (isCopyDrop) {
+      const optimisticCopyId = `temp-copy-${draggedShift.id}-${dateString}-${Date.now()}`;
+
+      setShifts((current) => [
+        ...current,
+        {
+          ...draggedShift,
+          id: optimisticCopyId,
+          shift_date: dateString,
+        },
+      ]);
+
       const targetRosterMonthId = await getRosterMonthIdForDate(dateString);
 
       const { error } = await supabase
@@ -235,6 +250,17 @@ const handleDayDrop = async (event, dateString) => {
 
       if (error) throw error;
     } else {
+      setShifts((current) =>
+        current.map((shift) =>
+          shift.id === droppedShiftId
+            ? {
+                ...shift,
+                shift_date: dateString,
+              }
+            : shift
+        )
+      );
+
       const targetRosterMonthId = await getRosterMonthIdForDate(dateString);
 
       const { error } = await supabase
@@ -250,6 +276,7 @@ const handleDayDrop = async (event, dateString) => {
 
     await refreshShifts();
   } catch (err) {
+    setShifts(previousShifts);
     console.error("Drag shift error:", err);
     alert("Couldn't save dragged shift: " + (err?.message || String(err)));
   } finally {
@@ -688,7 +715,7 @@ const getWeekOfMonth = (dateStr) => {
   className={`border rounded-lg min-h-[125px] text-xs text-left w-full ${
     day ? "bg-gray-50 hover:bg-gray-100 cursor-pointer" : "bg-white"
   } ${
-    dragTargetDate === dateString
+    dateString && dragTargetDate === dateString
       ? dragCopyMode
         ? "ring-2 ring-green-400 bg-green-50"
         : "ring-2 ring-blue-400 bg-blue-50"
@@ -727,7 +754,7 @@ const getWeekOfMonth = (dateStr) => {
               const isDraggingThisShift = draggedShiftId === s.id;
 
               return (
-                <div
+                               <div
                   key={s.id}
                   draggable
                   onDragStart={(event) => handleShiftDragStart(event, s)}
@@ -738,7 +765,7 @@ const getWeekOfMonth = (dateStr) => {
                   } ${
                     isDraggingThisShift ? "opacity-40" : "hover:bg-white/70"
                   }`}
-                  title="Drag to move. Hold Alt/Option while dragging to copy."
+                  title="Drag to move. Hold Alt while dragging to copy."
                 >
                   <span className="truncate pr-1">{s.staff?.name}</span>
                   <span className="tabular-nums shrink-0 text-[11px] text-gray-600">
