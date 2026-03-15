@@ -121,7 +121,70 @@ const handleUpdateShift = async () => {
   }
 };
 
-const handleCopyWeek = async (sourceDate) => {
+const handleCopyWeek = async (targetWeek) => {
+  try {
+    if (!selectedDate) return;
+
+    const sourceWeek = getWeekOfMonth(selectedDate);
+
+    const monthStart = new Date(currentYear, currentMonth, 1);
+    const monthEnd = new Date(currentYear, currentMonth + 1, 0);
+
+    const startStr = monthStart.toISOString().slice(0, 10);
+    const endStr = monthEnd.toISOString().slice(0, 10);
+
+    const { data: monthShifts, error } = await supabase
+      .from("roster_shifts")
+      .select("*")
+      .gte("shift_date", startStr)
+      .lte("shift_date", endStr);
+
+    if (error) throw error;
+
+    const weekShifts = monthShifts.filter((s) => {
+      const d = new Date(s.shift_date);
+      const week = Math.floor((d.getDate() - 1) / 7) + 1;
+      return week === sourceWeek;
+    });
+
+    if (weekShifts.length === 0) {
+      alert("No shifts found in this week.");
+      return;
+    }
+
+    const newShifts = weekShifts.map((shift) => {
+      const original = new Date(shift.shift_date);
+      const weekday = (original.getDay() + 6) % 7;
+
+      const newDay = (targetWeek - 1) * 7 + 1 + weekday;
+
+      if (newDay > monthEnd.getDate()) return null;
+
+      const newDate = new Date(currentYear, currentMonth, newDay);
+
+      return {
+        staff_id: shift.staff_id,
+        shift_date: newDate.toISOString().slice(0, 10),
+        start_time: shift.start_time,
+        end_time: shift.end_time,
+        role: shift.role,
+        roster_month_id: shift.roster_month_id,
+      };
+    }).filter(Boolean);
+
+    const { error: insertError } = await supabase
+      .from("roster_shifts")
+      .insert(newShifts);
+
+    if (insertError) throw insertError;
+
+    await refreshShifts();
+    alert("Week copied.");
+  } catch (err) {
+    console.error("Copy week error:", err);
+    alert("Couldn't copy week: " + (err?.message || String(err)));
+  }
+};
   try {
     const source = new Date(sourceDate);
     const dayIndex = (source.getDay() + 6) % 7;
@@ -490,15 +553,20 @@ useEffect(() => {
 
   loadRosterData();
 }, []);
-    const formatSelectedDateLabel = (dateStr) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("en-AU", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
-  };
+ const formatSelectedDateLabel = (dateStr) => {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("en-AU", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+};
+
+const getWeekOfMonth = (dateStr) => {
+  const d = new Date(dateStr);
+  return Math.floor((d.getDate() - 1) / 7) + 1;
+};
 
   return (
     <main className="p-4 md:p-6 max-w-7xl mx-auto">
@@ -661,9 +729,25 @@ useEffect(() => {
             <div className="w-full max-w-lg max-h-[90vh] overflow-hidden rounded-xl bg-white shadow-xl flex flex-col">
               <div className="flex items-center justify-between border-b px-4 py-3 shrink-0">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Day editor
-                  </h3>
+                <div className="flex items-center gap-3">
+  <h3 className="text-lg font-semibold text-gray-900">
+    Day editor
+  </h3>
+
+  <div className="flex items-center gap-1">
+    <span className="text-xs text-gray-500">Copy week →</span>
+
+    {[1,2,3,4,5,6].map((w) => (
+      <button
+        key={w}
+        onClick={() => handleCopyWeek(w)}
+        className="px-2 py-1 text-xs rounded border hover:bg-gray-100"
+      >
+        {w}
+      </button>
+    ))}
+  </div>
+</div>
                   <p className="text-sm text-gray-600">
                     {formatSelectedDateLabel(selectedDate)}
                   </p>
