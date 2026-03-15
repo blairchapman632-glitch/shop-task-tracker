@@ -32,6 +32,12 @@ const [newShiftStart, setNewShiftStart] = useState("09:00");
 const [newShiftEnd, setNewShiftEnd] = useState("17:00");
 const [savingShift, setSavingShift] = useState(false);
 const [copyingMonth, setCopyingMonth] = useState(false);
+const [editingShiftId, setEditingShiftId] = useState(null);
+const [editShiftStaffId, setEditShiftStaffId] = useState("");
+const [editShiftRole, setEditShiftRole] = useState("pharmacist");
+const [editShiftStart, setEditShiftStart] = useState("09:00");
+const [editShiftEnd, setEditShiftEnd] = useState("17:00");
+const [savingEditShift, setSavingEditShift] = useState(false);
 
 const selectedDayShifts = selectedDate
   ? shifts.filter((s) => s.shift_date === selectedDate)
@@ -46,11 +52,76 @@ const refreshShifts = async () => {
       start_time,
       end_time,
       role,
+      staff_id,
       staff:staff_id (
         id,
         name
       )
     `);
+
+  if (refreshError) throw refreshError;
+
+  setShifts(refreshedShifts || []);
+};
+
+const handleStartEditShift = (shift) => {
+  setEditingShiftId(shift.id);
+  setEditShiftStaffId(String(shift.staff_id || shift.staff?.id || ""));
+  setEditShiftRole(shift.role || "pharmacist");
+  setEditShiftStart(shift.start_time || "09:00");
+  setEditShiftEnd(shift.end_time || "17:00");
+};
+
+const handleCancelEditShift = () => {
+  setEditingShiftId(null);
+  setEditShiftStaffId("");
+  setEditShiftRole("pharmacist");
+  setEditShiftStart("09:00");
+  setEditShiftEnd("17:00");
+};
+
+const handleUpdateShift = async () => {
+  if (!editingShiftId) {
+    alert("No shift selected.");
+    return;
+  }
+
+  if (!editShiftStaffId) {
+    alert("Please choose a staff member.");
+    return;
+  }
+
+  if (!editShiftStart || !editShiftEnd) {
+    alert("Please enter a start and end time.");
+    return;
+  }
+
+  try {
+    setSavingEditShift(true);
+
+    const { error } = await supabase
+      .from("roster_shifts")
+      .update({
+        staff_id: Number(editShiftStaffId),
+        role: editShiftRole,
+        start_time: editShiftStart,
+        end_time: editShiftEnd,
+      })
+      .eq("id", editingShiftId);
+
+    if (error) throw error;
+
+    await refreshShifts();
+    handleCancelEditShift();
+  } catch (err) {
+    console.error("Update shift error:", err);
+    alert("Couldn't update shift: " + (err?.message || String(err)));
+  } finally {
+    setSavingEditShift(false);
+  }
+};
+
+const handleCopyPreviousMonth = async () => {
 
   if (refreshError) throw refreshError;
 
@@ -551,53 +622,151 @@ useEffect(() => {
 
                       const start = formatRosterTime(s.start_time);
                       const end = formatRosterTime(s.end_time);
+                      const isEditingThisShift = editingShiftId === s.id;
 
                       return (
                         <div
                           key={s.id}
                           className={`rounded-lg bg-gray-50 px-3 py-2 ${roleColour[s.role] || "border-l-4 border-gray-400"}`}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="font-medium text-gray-900 truncate">
-                                  {s.staff?.name}
+                          {isEditingThisShift ? (
+                            <div className="space-y-3">
+                              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <div className="md:col-span-2">
+                                  <label className="mb-1 block text-sm text-gray-700">
+                                    Staff member
+                                  </label>
+                                  <select
+                                    value={editShiftStaffId}
+                                    onChange={(e) => setEditShiftStaffId(e.target.value)}
+                                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                                  >
+                                    <option value="">Select staff member</option>
+                                    {staffOptions.map((staff) => (
+                                      <option key={staff.id} value={staff.id}>
+                                        {staff.name}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </div>
-                                <div className="text-sm tabular-nums text-gray-700 shrink-0">
-                                  {start}–{end}
+
+                                <div>
+                                  <label className="mb-1 block text-sm text-gray-700">
+                                    Role
+                                  </label>
+                                  <select
+                                    value={editShiftRole}
+                                    onChange={(e) => setEditShiftRole(e.target.value)}
+                                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                                  >
+                                    <option value="pharmacist">Pharmacist</option>
+                                    <option value="locum">Locum</option>
+                                    <option value="DAA">DAA</option>
+                                    <option value="pharmacy assistant">Pharmacy assistant</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="mb-1 block text-sm text-gray-700">
+                                    Start time
+                                  </label>
+                                  <input
+                                    type="time"
+                                    value={editShiftStart}
+                                    onChange={(e) => setEditShiftStart(e.target.value)}
+                                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="mb-1 block text-sm text-gray-700">
+                                    End time
+                                  </label>
+                                  <input
+                                    type="time"
+                                    value={editShiftEnd}
+                                    onChange={(e) => setEditShiftEnd(e.target.value)}
+                                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                                  />
                                 </div>
                               </div>
-                              <div className="mt-1 flex items-center justify-between gap-3">
-                                <div className="text-sm text-gray-600">
-                                  {s.role}
-                                </div>
+
+                              <div className="flex items-center justify-end gap-2">
                                 <button
                                   type="button"
-                                  onClick={async () => {
-                                    const confirmed = window.confirm(`Delete shift for ${s.staff?.name}?`);
-                                    if (!confirmed) return;
-
-                                    try {
-                                      const { error } = await supabase
-                                        .from("roster_shifts")
-                                        .delete()
-                                        .eq("id", s.id);
-
-                                      if (error) throw error;
-
-                                      await refreshShifts();
-                                    } catch (err) {
-                                      console.error("Delete shift error:", err);
-                                      alert("Couldn't delete shift: " + (err?.message || String(err)));
-                                    }
-                                  }}
-                                  className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                                  onClick={handleCancelEditShift}
+                                  className="rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
                                 >
-                                  Delete
+                                  Cancel
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={handleUpdateShift}
+                                  disabled={savingEditShift}
+                                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {savingEditShift ? "Saving..." : "Save changes"}
                                 </button>
                               </div>
                             </div>
-                          </div>
+                          ) : (
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="font-medium text-gray-900 truncate">
+                                    {s.staff?.name}
+                                  </div>
+                                  <div className="text-sm tabular-nums text-gray-700 shrink-0">
+                                    {start}–{end}
+                                  </div>
+                                </div>
+                                <div className="mt-1 flex items-center justify-between gap-3">
+                                  <div className="text-sm text-gray-600">
+                                    {s.role}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartEditShift(s)}
+                                      className="rounded-md border border-blue-200 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
+                                    >
+                                      Edit
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const confirmed = window.confirm(`Delete shift for ${s.staff?.name}?`);
+                                        if (!confirmed) return;
+
+                                        try {
+                                          const { error } = await supabase
+                                            .from("roster_shifts")
+                                            .delete()
+                                            .eq("id", s.id);
+
+                                          if (error) throw error;
+
+                                          if (editingShiftId === s.id) {
+                                            handleCancelEditShift();
+                                          }
+
+                                          await refreshShifts();
+                                        } catch (err) {
+                                          console.error("Delete shift error:", err);
+                                          alert("Couldn't delete shift: " + (err?.message || String(err)));
+                                        }
+                                      }}
+                                      className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
