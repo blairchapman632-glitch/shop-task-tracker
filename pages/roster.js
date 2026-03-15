@@ -71,19 +71,13 @@ const handleCopyPreviousMonth = async () => {
     const targetMonthEndDate = `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`;
     const previousMonthEndDate = `${previousYear}-${String(previousMonthIndex + 2).padStart(2, "0")}-01`;
 
-    const { data: existingTargetShifts, error: existingTargetShiftsError } = await supabase
+       const { error: deleteExistingTargetShiftsError } = await supabase
       .from("roster_shifts")
-      .select("id")
+      .delete()
       .gte("shift_date", targetMonthDate)
-      .lt("shift_date", targetMonthEndDate)
-      .limit(1);
+      .lt("shift_date", targetMonthEndDate);
 
-    if (existingTargetShiftsError) throw existingTargetShiftsError;
-
-    if (existingTargetShifts && existingTargetShifts.length > 0) {
-      alert("This month already has shifts. Copy cancelled.");
-      return;
-    }
+    if (deleteExistingTargetShiftsError) throw deleteExistingTargetShiftsError;
 
     const { data: previousShifts, error: previousShiftsError } = await supabase
       .from("roster_shifts")
@@ -564,7 +558,7 @@ useEffect(() => {
                           className={`rounded-lg bg-gray-50 px-3 py-2 ${roleColour[s.role] || "border-l-4 border-gray-400"}`}
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-2">
                                 <div className="font-medium text-gray-900 truncate">
                                   {s.staff?.name}
@@ -573,8 +567,34 @@ useEffect(() => {
                                   {start}–{end}
                                 </div>
                               </div>
-                              <div className="text-sm text-gray-600">
-                                {s.role}
+                              <div className="mt-1 flex items-center justify-between gap-3">
+                                <div className="text-sm text-gray-600">
+                                  {s.role}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const confirmed = window.confirm(`Delete shift for ${s.staff?.name}?`);
+                                    if (!confirmed) return;
+
+                                    try {
+                                      const { error } = await supabase
+                                        .from("roster_shifts")
+                                        .delete()
+                                        .eq("id", s.id);
+
+                                      if (error) throw error;
+
+                                      await refreshShifts();
+                                    } catch (err) {
+                                      console.error("Delete shift error:", err);
+                                      alert("Couldn't delete shift: " + (err?.message || String(err)));
+                                    }
+                                  }}
+                                  className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                                >
+                                  Delete
+                                </button>
                               </div>
                             </div>
                           </div>
