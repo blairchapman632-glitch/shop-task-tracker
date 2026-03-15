@@ -31,10 +31,156 @@ const [newShiftRole, setNewShiftRole] = useState("pharmacist");
 const [newShiftStart, setNewShiftStart] = useState("09:00");
 const [newShiftEnd, setNewShiftEnd] = useState("17:00");
 const [savingShift, setSavingShift] = useState(false);
+const [copyingMonth, setCopyingMonth] = useState(false);
 
 const selectedDayShifts = selectedDate
   ? shifts.filter((s) => s.shift_date === selectedDate)
   : [];
+
+const refreshShifts = async () => {
+  const { data: refreshedShifts, error: refreshError } = await supabase
+    .from("roster_shifts")
+    .select(`
+      id,
+      shift_date,
+      start_time,
+      end_time,
+      role,
+      staff:staff_id (
+        id,
+        name
+      )
+    `);
+
+  if (refreshError) throw refreshError;
+
+  setShifts(refreshedShifts || []);
+};
+
+const handleCopyPreviousMonth = async () => {
+  try {
+    setCopyingMonth(true);
+
+    const targetMonthDate = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`;
+
+    const previousMonth = new Date(currentYear, currentMonth - 1, 1);
+    const previousYear = previousMonth.getFullYear();
+    const previousMonthIndex = previousMonth.getMonth();
+    const previousMonthDate = `${previousYear}-${String(previousMonthIndex + 1).padStart(2, "0")}-01`;
+
+    const { data: existingTargetShifts, error: existingTargetShiftsError } = await supabase
+      .from("roster_shifts")
+      .select("id")
+      .gte("shift_date", targetMonthDate)
+      .lt(
+        "shift_date",
+        `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`
+      )
+      .limit(1);
+
+    if (existingTargetShiftsError) throw existingTargetShiftsError;
+
+    if (existingTargetShifts && existingTargetShifts.length > 0) {
+      alert("This month already has shifts. Copy cancelled.");
+      return;
+    }
+
+    const { data: previousShifts, error: previousShiftsError } = await supabase
+      .from("roster_shifts")
+      .select(`
+        id,
+        staff_id,
+        shift_date,
+        start_time,
+        end_time,
+        role
+      `)
+      .gte("shift_date", previousMonthDate)
+      .lt(
+        "shift_date",
+        `${previousYear}-${String(previousMonthIndex + 2).padStart(2, "0")}-01`
+      )
+      .order("shift_date", { ascending: true });
+
+    if (previousShiftsError) throw previousShiftsError;
+
+    if (!previousShifts || previousShifts.length === 0) {
+      alert("No shifts found in the previous month to copy.");
+      return;
+    }
+
+    let targetRosterMonthId = null;
+
+    const { data: existingTargetMonth, error: existingTargetMonthError } = await supabase
+      .from("roster_months")
+      .select("id")
+      .eq("month", targetMonthDate)
+      .maybeSingle();
+
+    if (existingTargetMonthError) throw existingTargetMonthError;
+
+    if (existingTargetMonth?.id) {
+      targetRosterMonthId = existingTargetMonth.id;
+    } else {
+      const { data: createdTargetMonth, error: createdTargetMonthError } = await supabase
+        .from("roster_months")
+        .insert([
+          {
+            month: targetMonthDate,
+            status: "draft",
+          },
+        ])
+        .select("id")
+        .single();
+
+      if (createdTargetMonthError) throw createdTargetMonthError;
+
+      targetRosterMonthId = createdTargetMonth.id;
+    }
+
+    const copiedShifts = previousShifts
+      .map((shift) => {
+        const originalDate = new Date(shift.shift_date);
+        const dayOfMonth = originalDate.getDate();
+        const maxDayInTargetMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+        if (dayOfMonth > maxDayInTargetMonth) {
+          return null;
+        }
+
+        const newShiftDate = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`;
+
+        return {
+          staff_id: shift.staff_id,
+          shift_date: newShiftDate,
+          start_time: shift.start_time,
+          end_time: shift.end_time,
+          role: shift.role,
+          roster_month_id: targetRosterMonthId,
+        };
+      })
+      .filter(Boolean);
+
+    if (copiedShifts.length === 0) {
+      alert("There were no valid shifts to copy into this month.");
+      return;
+    }
+
+    const { error: insertCopiedShiftsError } = await supabase
+      .from("roster_shifts")
+      .insert(copiedShifts);
+
+    if (insertCopiedShiftsError) throw insertCopiedShiftsError;
+
+    await refreshShifts();
+    alert("Previous month roster copied.");
+  } catch (err) {
+    console.error("Copy month error:", err);
+    alert("Couldn't copy previous month roster: " + (err?.message || String(err)));
+  } finally {
+    setCopyingMonth(false);
+  }
+};
 
 const handleAddShift = async () => {
   if (!selectedDate) {
@@ -239,7 +385,7 @@ useEffect(() => {
         <div className="p-4 md:p-6">
         <div className="rounded-xl border bg-white p-4">
 
- <div className="flex items-center justify-between mb-4">
+<div className="flex items-center justify-between mb-4">
 
   <button
     className="px-3 py-1 rounded-md border bg-white text-sm hover:bg-gray-50"
@@ -248,9 +394,19 @@ useEffect(() => {
     ←
   </button>
 
-  <h2 className="section-title">
-    {displayMonth.toLocaleString("en-AU", { month: "long", year: "numeric" })}
-  </h2>
+  <div className="flex items-center gap-3">
+    <h2 className="section-title">
+      {displayMonth.toLocaleString("en-AU", { month: "long", year: "numeric" })}
+    </h2>
+
+    <button
+      onClick={handleCopyPreviousMonth}
+      disabled={copyingMonth}
+      className="rounded-md border px-3 py-1 text-xs font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+    >
+      {copyingMonth ? "Copying..." : "Copy last month"}
+    </button>
+  </div>
 
   <button
     className="px-3 py-1 rounded-md border bg-white text-sm hover:bg-gray-50"
