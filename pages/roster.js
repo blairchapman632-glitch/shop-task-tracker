@@ -194,14 +194,7 @@ const handleCopyWeek = async (targetWeek) => {
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
 
-    const mondayStr = monday.toISOString().slice(0, 10);
-    const sundayStr = sunday.toISOString().slice(0, 10);
 
-    const { data: weekShifts, error } = await supabase
-      .from("roster_shifts")
-      .select("*")
-      .gte("shift_date", mondayStr)
-      .lte("shift_date", sundayStr);
 
     if (error) throw error;
 
@@ -392,7 +385,80 @@ const handleCopyPreviousMonth = async () => {
     setCopyingMonth(false);
   }
 };
+const handleCopyWeek = async (targetWeek) => {
+  try {
+    if (!selectedDate) return;
 
+    const sourceDate = new Date(selectedDate);
+
+    // find Monday of the source week
+    const monday = new Date(sourceDate);
+    const day = monday.getDay();
+    const diff = (day === 0 ? -6 : 1) - day;
+    monday.setDate(monday.getDate() + diff);
+
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+
+    const mondayStr = monday.toISOString().slice(0, 10);
+    const sundayStr = sunday.toISOString().slice(0, 10);
+
+    const { data: weekShifts, error } = await supabase
+      .from("roster_shifts")
+      .select("*")
+      .gte("shift_date", mondayStr)
+      .lte("shift_date", sundayStr);
+
+    if (error) throw error;
+
+    if (!weekShifts || weekShifts.length === 0) {
+      alert("No shifts found in this week.");
+      return;
+    }
+
+    const newShifts = weekShifts.map((shift) => {
+      const original = new Date(shift.shift_date);
+      const weekday = (original.getDay() + 6) % 7;
+
+      const newDay = (targetWeek - 1) * 7 + 1 + weekday;
+
+      const newDate = new Date(currentYear, currentMonth, newDay);
+
+      return {
+        staff_id: shift.staff_id,
+        shift_date: newDate.toISOString().slice(0, 10),
+        start_time: shift.start_time,
+        end_time: shift.end_time,
+        role: shift.role,
+        roster_month_id: shift.roster_month_id,
+      };
+    });
+
+    // delete existing shifts in target week
+    const targetStart = new Date(currentYear, currentMonth, (targetWeek - 1) * 7 + 1);
+    const targetEnd = new Date(targetStart);
+    targetEnd.setDate(targetStart.getDate() + 6);
+
+    await supabase
+      .from("roster_shifts")
+      .delete()
+      .gte("shift_date", targetStart.toISOString().slice(0, 10))
+      .lte("shift_date", targetEnd.toISOString().slice(0, 10));
+
+    const { error: insertError } = await supabase
+      .from("roster_shifts")
+      .insert(newShifts);
+
+    if (insertError) throw insertError;
+
+    await refreshShifts();
+
+    alert("Week copied successfully.");
+  } catch (err) {
+    console.error("Copy week error:", err);
+    alert("Couldn't copy week: " + (err?.message || String(err)));
+  }
+};
 const handleAddShift = async () => {
   if (!selectedDate) {
     alert("No date selected.");
