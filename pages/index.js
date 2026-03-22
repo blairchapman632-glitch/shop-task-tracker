@@ -850,6 +850,16 @@ async function deleteNote(note) {
     const [hh, mm] = String(t).split(":");
     return `${hh}:${mm}`;
   };
+    const debugSummary = {
+    authChecked,
+    currentUserEmail: currentUser?.email || null,
+    currentPharmacyId,
+    loading,
+    taskCount: tasks.length,
+    staffCount: staff.length,
+    noteCount: notes.length,
+    feedCount: feed.length,
+  };
   if (!authChecked || !currentPharmacyId) {
     return (
       <main className="p-6">
@@ -904,7 +914,17 @@ async function deleteNote(note) {
 </div>
 
 
-
+        <div className="mx-4 mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <div><strong>Debug</strong></div>
+          <div>authChecked: {String(debugSummary.authChecked)}</div>
+          <div>currentUserEmail: {String(debugSummary.currentUserEmail)}</div>
+          <div>currentPharmacyId: {String(debugSummary.currentPharmacyId)}</div>
+          <div>loading: {String(debugSummary.loading)}</div>
+          <div>taskCount: {String(debugSummary.taskCount)}</div>
+          <div>staffCount: {String(debugSummary.staffCount)}</div>
+          <div>noteCount: {String(debugSummary.noteCount)}</div>
+          <div>feedCount: {String(debugSummary.feedCount)}</div>
+        </div>
         {/* Content grid */}
         {loading ? (
           <div className="p-6">Loading…</div>
