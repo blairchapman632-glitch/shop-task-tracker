@@ -10,9 +10,11 @@ import supabase from "../lib/supabaseClient";
 
 export default function HomePage() {
   const router = useRouter();
-  const [tasks, setTasks] = useState([]);
+   const [tasks, setTasks] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [currentPharmacyId, setCurrentPharmacyId] = useState(null);
 
   // Selection + UX
   const [selectedStaffId, setSelectedStaffId] = useState(null);
@@ -98,6 +100,27 @@ const [noteText, setNoteText] = useState("");
         return;
       }
 
+      setCurrentUser(data.user);
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("pharmacy_id")
+        .eq("id", data.user.id)
+        .single();
+
+      if (!mounted) return;
+
+      if (profileError) {
+        console.error("Profile load error:", profileError.message);
+        return;
+      }
+
+      if (!profile?.pharmacy_id) {
+        console.error("No pharmacy_id found for logged in user.");
+        return;
+      }
+
+      setCurrentPharmacyId(profile.pharmacy_id);
       setAuthChecked(true);
     }
 
@@ -403,21 +426,25 @@ function isOverdue(task, completedTaskIds, now = new Date()) {
 
   // Load tasks + staff + today's completions
   useEffect(() => {
-    if (!authChecked) return;
+    if (!authChecked || !currentPharmacyId) return;
 
     const load = async () => {
       setLoading(true);
       const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
-        supabase
+                supabase
   .from("tasks")
-  .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,info")
-
+  .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,info,pharmacy_id")
+  .eq("pharmacy_id", currentPharmacyId)
 
    .order("due_time", { ascending: true, nullsFirst: false })
   .order("title", { ascending: true }),
 
 
-        supabase.from("staff").select("id,name,photo_url,active").order("name", { ascending: true }),
+        supabase
+          .from("staff")
+          .select("id,name,photo_url,active,pharmacy_id")
+          .eq("pharmacy_id", currentPharmacyId)
+          .order("name", { ascending: true }),
       ]);
       if (te) console.error("Tasks load error:", te.message);
       if (se) console.error("Staff load error:", se.message);
@@ -444,9 +471,10 @@ setStaff(activeStaff);
 
 
       const { startISO, endISO } = getTodayBoundsISO();
-      const { data: comps, error: ce } = await supabase
+          const { data: comps, error: ce } = await supabase
         .from("completions")
-        .select("task_id, staff_id, completed_at")
+        .select("task_id, staff_id, completed_at, pharmacy_id")
+        .eq("pharmacy_id", currentPharmacyId)
         .gte("completed_at", startISO)
         .lt("completed_at", endISO)
         .order("completed_at", { ascending: false });
@@ -470,7 +498,7 @@ setStaff(activeStaff);
       setLoading(false);
     };
     load();
-  }, [authChecked]);
+  }, [authChecked, currentPharmacyId]);
   // Load leaderboard data (current week + current month)
   useEffect(() => {
     // Only run once tasks & staff are available
@@ -531,13 +559,14 @@ setStaff(activeStaff);
   }, [tasks, staff, leadersRefreshKey]);
 // Load kiosk notes: last 7 days or pinned
 useEffect(() => {
-  if (!authChecked) return;
+  if (!authChecked || !currentPharmacyId) return;
 
   const loadNotes = async () => {
     try {
-    let q = supabase
+        let q = supabase
   .from("kiosk_notes")
-  .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id")
+  .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, pharmacy_id")
+  .eq("pharmacy_id", currentPharmacyId)
   .or("deleted.is.null,deleted.eq.false") // show only non-deleted (treat null as false)
   .order("pinned", { ascending: false })
   .order("last_activity_at", { ascending: false, nullsFirst: false })
@@ -555,9 +584,10 @@ const { data, error } = await q;
       const noteIdsForReplies = (data || []).map((n) => n.id);
 
       if (noteIdsForReplies.length) {
-        const { data: repData, error: repErr } = await supabase
+                const { data: repData, error: repErr } = await supabase
           .from("kiosk_note_replies")
-          .select("id, note_id, staff_id, body, created_at")
+          .select("id, note_id, staff_id, body, created_at, pharmacy_id")
+          .eq("pharmacy_id", currentPharmacyId)
           .in("note_id", noteIdsForReplies)
           .order("created_at", { ascending: true });
 
@@ -577,9 +607,10 @@ const { data, error } = await q;
 const noteIds = (data || []).map(n => n.id);
 
 if (noteIds.length) {
-  const { data: rdata, error: rerr } = await supabase
+   const { data: rdata, error: rerr } = await supabase
     .from("kiosk_note_reactions")
-    .select("note_id, staff_id, reaction")
+    .select("note_id, staff_id, reaction, pharmacy_id")
+    .eq("pharmacy_id", currentPharmacyId)
     .in("note_id", noteIds);
 
   if (rerr) throw rerr;
@@ -610,7 +641,7 @@ if (noteIds.length) {
   };
 
   loadNotes();
-}, [authChecked, staff.length, leadersRefreshKey, selectedStaffId, showResolved]);
+}, [authChecked, currentPharmacyId, staff.length, leadersRefreshKey, selectedStaffId, showResolved]);
 
 
 
@@ -819,10 +850,10 @@ async function deleteNote(note) {
     const [hh, mm] = String(t).split(":");
     return `${hh}:${mm}`;
   };
-  if (!authChecked) {
+  if (!authChecked || !currentPharmacyId) {
     return (
       <main className="p-6">
-        <div className="text-sm text-gray-600">Checking login...</div>
+        <div className="text-sm text-gray-600">Loading pharmacy...</div>
       </main>
     );
   }
