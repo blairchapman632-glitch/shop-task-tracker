@@ -432,8 +432,8 @@ function isOverdue(task, completedTaskIds, now = new Date()) {
       setLoading(true);
       const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
                 supabase
-  .from("tasks")
-  .select("id,title,active,points,due_time,frequency,days_of_week,weekly_day,day_of_month,specific_date,info,pharmacy_id")
+   .from("tasks")
+  .select("*")
   .eq("pharmacy_id", currentPharmacyId)
 
    .order("due_time", { ascending: true, nullsFirst: false })
@@ -441,10 +441,10 @@ function isOverdue(task, completedTaskIds, now = new Date()) {
 
 
         supabase
-          .from("staff")
-          .select("id,name,photo_url,active,pharmacy_id")
-          .eq("pharmacy_id", currentPharmacyId)
-          .order("name", { ascending: true }),
+           .from("staff")
+  .select("*")
+  .eq("pharmacy_id", currentPharmacyId)
+  .order("name", { ascending: true }),
       ]);
       if (te) console.error("Tasks load error:", te.message);
       if (se) console.error("Staff load error:", se.message);
