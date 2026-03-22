@@ -60,25 +60,41 @@ export default function LoginPage() {
           .replace(/^-+|-+$/g, "")
           .slice(0, 50);
 
-        const { data: pharmacy, error: pharmacyError } = await supabase
-          .from("pharmacies")
-          .insert([
-            {
-              name: cleanPharmacyName,
-              slug: slug || `pharmacy-${Date.now()}`,
-              owner_user_id: userId,
-            },
-          ])
-          .select("id")
-          .single();
+        let pharmacyId = null;
 
-        if (pharmacyError) throw pharmacyError;
+        const { data: existingPharmacy, error: existingPharmacyError } = await supabase
+          .from("pharmacies")
+          .select("id")
+          .eq("slug", slug || `pharmacy-${Date.now()}`)
+          .maybeSingle();
+
+        if (existingPharmacyError) throw existingPharmacyError;
+
+        if (existingPharmacy?.id) {
+          pharmacyId = existingPharmacy.id;
+        } else {
+          const { data: pharmacy, error: pharmacyError } = await supabase
+            .from("pharmacies")
+            .insert([
+              {
+                name: cleanPharmacyName,
+                slug: slug || `pharmacy-${Date.now()}`,
+                owner_user_id: userId,
+              },
+            ])
+            .select("id")
+            .single();
+
+          if (pharmacyError) throw pharmacyError;
+
+          pharmacyId = pharmacy.id;
+        }
 
         const { error: profileError } = await supabase
           .from("profiles")
           .update({
             full_name: cleanFullName,
-            pharmacy_id: pharmacy.id,
+            pharmacy_id: pharmacyId,
             role: "owner",
           })
           .eq("id", userId);
