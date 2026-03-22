@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/router";
 
 import { createPortal } from "react-dom";
 
@@ -8,6 +9,7 @@ import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
 
 export default function HomePage() {
+  const router = useRouter();
   const [tasks, setTasks] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -81,6 +83,30 @@ setNotes((prev) =>
 }, [notes.length]);
 
 const [noteText, setNoteText] = useState("");
+    const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function checkAuth() {
+      const { data, error } = await supabase.auth.getUser();
+
+      if (!mounted) return;
+
+      if (error || !data?.user) {
+        router.replace("/login");
+        return;
+      }
+
+      setAuthChecked(true);
+    }
+
+    checkAuth();
+
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
 const [notesSaving, setNotesSaving] = useState(false);
   // Post a reply to a note
   // Resolve / reopen a note (records who did it)
@@ -377,6 +403,8 @@ function isOverdue(task, completedTaskIds, now = new Date()) {
 
   // Load tasks + staff + today's completions
   useEffect(() => {
+    if (!authChecked) return;
+
     const load = async () => {
       setLoading(true);
       const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
@@ -442,7 +470,7 @@ setStaff(activeStaff);
       setLoading(false);
     };
     load();
-  }, []);
+  }, [authChecked]);
   // Load leaderboard data (current week + current month)
   useEffect(() => {
     // Only run once tasks & staff are available
@@ -503,6 +531,8 @@ setStaff(activeStaff);
   }, [tasks, staff, leadersRefreshKey]);
 // Load kiosk notes: last 7 days or pinned
 useEffect(() => {
+  if (!authChecked) return;
+
   const loadNotes = async () => {
     try {
     let q = supabase
@@ -580,7 +610,7 @@ if (noteIds.length) {
   };
 
   loadNotes();
-}, [staff.length, leadersRefreshKey, selectedStaffId, showResolved]);
+}, [authChecked, staff.length, leadersRefreshKey, selectedStaffId, showResolved]);
 
 
 
@@ -789,7 +819,13 @@ async function deleteNote(note) {
     const [hh, mm] = String(t).split(":");
     return `${hh}:${mm}`;
   };
-
+  if (!authChecked) {
+    return (
+      <main className="p-6">
+        <div className="text-sm text-gray-600">Checking login...</div>
+      </main>
+    );
+  }
   return (
     <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-visible">
   
