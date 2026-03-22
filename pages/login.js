@@ -7,84 +7,207 @@ import supabase from "../lib/supabaseClient";
 export default function LoginPage() {
   const router = useRouter();
 
+  const [mode, setMode] = useState("login");
+  const [pharmacyName, setPharmacyName] = useState("");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleLogin() {
+  async function handleSubmit(e) {
+    e.preventDefault();
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      if (mode === "signup") {
+        const cleanPharmacyName = pharmacyName.trim();
+        const cleanFullName = fullName.trim();
 
-    setLoading(false);
+        if (!cleanPharmacyName) {
+          alert("Please enter your pharmacy name.");
+          setLoading(false);
+          return;
+        }
 
-    if (error) {
-      alert(error.message);
-    } else {
+        if (!cleanFullName) {
+          alert("Please enter your name.");
+          setLoading(false);
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              full_name: cleanFullName,
+              pharmacy_name: cleanPharmacyName,
+            },
+          },
+        });
+
+        if (error) throw error;
+
+        const userId = data?.user?.id;
+
+        if (!userId) {
+          throw new Error("User account was created but no user id was returned.");
+        }
+
+        const slug = cleanPharmacyName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 50);
+
+        const { data: pharmacy, error: pharmacyError } = await supabase
+          .from("pharmacies")
+          .insert([
+            {
+              name: cleanPharmacyName,
+              slug: slug || `pharmacy-${Date.now()}`,
+              owner_user_id: userId,
+            },
+          ])
+          .select("id")
+          .single();
+
+        if (pharmacyError) throw pharmacyError;
+
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .update({
+            full_name: cleanFullName,
+            pharmacy_id: pharmacy.id,
+            role: "owner",
+          })
+          .eq("id", userId);
+
+        if (profileError) throw profileError;
+
+        alert("Account created successfully.");
+        router.push("/");
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (error) throw error;
+
       router.push("/");
-    }
-  }
-
-  async function handleSignup() {
-    setLoading(true);
-
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    setLoading(false);
-
-    if (error) {
-      alert(error.message);
-    } else {
-      alert("Account created! Logging you in...");
-      router.push("/");
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white p-6 rounded-xl shadow w-full max-w-sm space-y-4">
-        <h1 className="text-lg font-semibold text-center">
+    <main className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <h1 className="text-2xl font-bold text-gray-900">
           Pharmacy Login
         </h1>
+        <p className="mt-1 text-sm text-gray-600">
+          {mode === "login"
+            ? "Log in to your pharmacy app"
+            : "Create your pharmacy app"}
+        </p>
 
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full border px-3 py-2 rounded"
-        />
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+          {mode === "signup" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Pharmacy name
+                </label>
+                <input
+                  type="text"
+                  value={pharmacyName}
+                  onChange={(e) => setPharmacyName(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+                  placeholder="e.g. Byford Pharmacy"
+                />
+              </div>
 
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full border px-3 py-2 rounded"
-        />
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Your name
+                </label>
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+                  placeholder="e.g. Blair Chapman"
+                />
+              </div>
+            </>
+          )}
 
-        <button
-          onClick={handleLogin}
-          disabled={loading}
-          className="w-full bg-blue-600 text-white py-2 rounded"
-        >
-          {loading ? "Loading..." : "Login"}
-        </button>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Email
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+              placeholder="you@example.com"
+            />
+          </div>
 
-        <button
-          onClick={handleSignup}
-          disabled={loading}
-          className="w-full border py-2 rounded"
-        >
-          Create Pharmacy Account
-        </button>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+              placeholder="Password"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            {loading
+              ? "Please wait..."
+              : mode === "login"
+              ? "Log in"
+              : "Create account"}
+          </button>
+        </form>
+
+        <div className="mt-4 text-sm">
+          {mode === "login" ? (
+            <button
+              type="button"
+              onClick={() => setMode("signup")}
+              className="text-blue-600 hover:underline"
+            >
+              Need an account? Create your pharmacy app
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setMode("login")}
+              className="text-blue-600 hover:underline"
+            >
+              Already have an account? Log in
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+    </main>
   );
 }
