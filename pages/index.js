@@ -681,7 +681,7 @@ const staffById = useMemo(
         if (!ok) return;
 
         // Delete today's completion row
-        await undoCompletion(supabase, Number(task.id));
+       undoCompletion(supabase, task.id, currentPharmacyId)
 
         // Update local state
         setCompletedTaskIds((prev) => {
