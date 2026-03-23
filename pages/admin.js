@@ -357,6 +357,8 @@ export default function AdminPage() {
 
         if (error) throw error;
       } else {
+        console.log("currentPharmacyId", currentPharmacyId);
+        
         const { error } = await supabase.from("tasks").insert([
           {
             ...row,
