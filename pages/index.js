@@ -712,7 +712,7 @@ const staffById = useMemo(
         alert("Tap your photo first (right side), then tap the task.");
         return;
       }
-      await recordCompletion(supabase, Number(task.id), Number(selectedStaffId));
+     recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId)
 
       setCompletedTaskIds((prev) => {
         const next = new Set(prev);
