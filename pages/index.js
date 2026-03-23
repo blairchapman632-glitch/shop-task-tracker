@@ -205,11 +205,12 @@ const postReply = async (noteId) => {
   setReplySavingNoteId(noteId);
   try {
     const { data, error } = await supabase
-      .from("kiosk_note_replies")
+            .from("kiosk_note_replies")
       .insert({
-        note_id: Number(noteId),
+        note_id: Number(replyingTo),
         staff_id: Number(selectedStaffId),
         body,
+        pharmacy_id: currentPharmacyId,
       })
       .select("id, note_id, staff_id, body, created_at")
       .single();
@@ -759,11 +760,12 @@ const postNote = async () => {
   try {
    const { data, error } = await supabase
   .from("kiosk_notes")
-  .insert({
-    body,
-    staff_id: Number(selectedStaffId),
-    deleted: false, // explicit for safety if no DB default
-  })
+.insert({
+  body,
+  staff_id: Number(selectedStaffId),
+  deleted: false,
+  pharmacy_id: currentPharmacyId,
+})
  .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at")
 
   .single();
