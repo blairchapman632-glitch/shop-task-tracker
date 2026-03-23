@@ -207,7 +207,7 @@ const postReply = async (noteId) => {
     const { data, error } = await supabase
             .from("kiosk_note_replies")
       .insert({
-        note_id: Number(note.id),
+        note_id: Number(noteId),
         staff_id: Number(selectedStaffId),
         body,
         pharmacy_id: currentPharmacyId,
