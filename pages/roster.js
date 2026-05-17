@@ -19,14 +19,14 @@ const formatTime = (time) => {
 const roleColour = {
   pharmacist: "text-purple-700",
   locum: "text-blue-700",
-  DAA: "text-green-700",
+  DAA: "text-orange-600",
   "pharmacy assistant": "text-teal-700",
 };
 
 const roleBorder = {
   pharmacist: "border-purple-400",
   locum: "border-blue-400",
-  DAA: "border-green-400",
+  DAA: "border-orange-400",
   "pharmacy assistant": "border-teal-400",
 };
 
@@ -148,8 +148,20 @@ export default function RosterPage() {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7 !== 0) cells.push(null);
 
-  const selectedDayShifts = selectedDate
-    ? shifts.filter((s) => s.shift_date === selectedDate)
+  const sortShifts = (shiftsToSort) => {
+    const roleGroup = (role) => {
+      if (role === "pharmacy assistant" || role === "DAA") return 0;
+      return 1;
+    };
+    return [...shiftsToSort].sort((a, b) => {
+      const groupDiff = roleGroup(a.role) - roleGroup(b.role);
+      if (groupDiff !== 0) return groupDiff;
+      return (a.start_time || "").localeCompare(b.start_time || "");
+    });
+  };
+
+const selectedDayShifts = selectedDate
+    ? sortShifts(shifts.filter((s) => s.shift_date === selectedDate))
     : [];
 
   const selectedHoliday = selectedDate
@@ -717,7 +729,7 @@ export default function RosterPage() {
             <div className="print-legend mt-3 flex justify-center gap-6">
               <span className="text-purple-700 font-semibold">● Pharmacist</span>
               <span className="text-blue-700 font-semibold">● Locum</span>
-              <span className="text-green-700 font-semibold">● DAA</span>
+              <span className="text-orange-600 font-semibold">● DAA</span>
               <span className="text-teal-700 font-semibold">● Pharmacy Assistant</span>
             </div>
           </div>
@@ -748,7 +760,7 @@ export default function RosterPage() {
             {[
               { label: "Pharmacist", cls: "text-purple-700" },
               { label: "Locum", cls: "text-blue-700" },
-              { label: "DAA", cls: "text-green-700" },
+              { label: "DAA", cls: "text-orange-600" },
               { label: "Pharmacy Assistant", cls: "text-teal-700" },
             ].map(({ label, cls }) => (
               <span key={label} className={`font-medium ${cls}`}>{label}</span>
@@ -776,7 +788,7 @@ export default function RosterPage() {
                 const isSelected = dateString === selectedDate;
                 const isDragTarget = dateString && dragTargetDate === dateString;
                 const holiday = dateString ? holidays.find((h) => h.date === dateString) : null;
-                const dayShifts = day ? shifts.filter((s) => s.shift_date === dateString) : [];
+                const dayShifts = day ? sortShifts(shifts.filter((s) => s.shift_date === dateString)) : [];
                 const isLastRow = i >= cells.length - 7;
                 const isLastCol = col === 6;
 
