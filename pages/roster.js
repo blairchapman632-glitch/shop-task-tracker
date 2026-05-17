@@ -112,6 +112,7 @@ export default function RosterPage() {
   const [savingMonthNote, setSavingMonthNote] = useState(false);
 
   // Settings panel
+  const [pharmacyId, setPharmacyId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState("holidays");
 
@@ -188,8 +189,12 @@ const selectedDayShifts = selectedDate
   const refreshShifts = useCallback(async () => {
     const { data, error } = await supabase
       .from("roster_shifts")
-      .select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, staff:staff_id(id, name)`);
-    if (!error) setShifts(data || []);
+      .select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, pharmacy_id, staff:staff_id(id, name)`);
+    if (!error) {
+      setShifts(data || []);
+      const foundPharmacyId = (data || []).find((s) => s.pharmacy_id)?.pharmacy_id || null;
+      if (foundPharmacyId) setPharmacyId(foundPharmacyId);
+    }
   }, []);
 
   useEffect(() => {
@@ -207,7 +212,7 @@ const selectedDayShifts = selectedDate
         { data: dayNoteData },
         { data: monthNoteData },
       ] = await Promise.all([
-        supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, staff:staff_id(id, name)`),
+        supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, pharmacy_id, staff:staff_id(id, name)`),
         supabase.from("staff").select("id,name,active").order("name"),
         supabase.from("shift_templates").select("*").order("name"),
         supabase.from("public_holidays").select("*"),
@@ -219,6 +224,10 @@ const selectedDayShifts = selectedDate
       setStaffOptions((staffData || []).filter((s) => s.active !== false));
       setTemplates(templateData || []);
       setHolidays(holidayData || []);
+
+      const foundPharmacyId = (shiftData || []).find((s) => s.pharmacy_id)?.pharmacy_id || null;
+      
+      if (foundPharmacyId) setPharmacyId(foundPharmacyId);
 
       const map = {};
       (dayNoteData || []).forEach((n) => { map[n.date] = n.note; });
@@ -249,7 +258,8 @@ const selectedDayShifts = selectedDate
     const monthDate = `${dateStr.slice(0, 7)}-01`;
     const { data: existing } = await supabase.from("roster_months").select("id").eq("month", monthDate).maybeSingle();
     if (existing?.id) return existing.id;
-    const { data: created } = await supabase.from("roster_months").insert([{ month: monthDate, status: "draft" }]).select("id").single();
+    const { data: created, error } = await supabase.from("roster_months").insert([{ month: monthDate, status: "draft", pharmacy_id: pharmacyId }]).select("id").single();
+    if (error) throw error;
     return created.id;
   };
 
@@ -421,6 +431,7 @@ const selectedDayShifts = selectedDate
   const handleCopyPreviousMonth = async () => {
     if (!window.confirm("This will replace all shifts in this month with a copy of last month. Continue?")) return;
     try {
+      
       const targetMonthDate = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`;
       const prevMonth = new Date(currentYear, currentMonth - 1, 1);
       const prevYear = prevMonth.getFullYear();
@@ -439,7 +450,8 @@ const selectedDayShifts = selectedDate
       if (existingMonth?.id) {
         targetMonthId = existingMonth.id;
       } else {
-        const { data: created } = await supabase.from("roster_months").insert([{ month: targetMonthDate, status: "draft" }]).select("id").single();
+        const { data: created, error: createError } = await supabase.from("roster_months").insert([{ month: targetMonthDate, status: "draft", pharmacy_id: pharmacyId }]).select("id").single();
+        if (createError) throw createError;
         targetMonthId = created.id;
       }
 
