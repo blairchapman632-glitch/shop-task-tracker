@@ -1,534 +1,552 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
-
 import { createPortal } from "react-dom";
-
 import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
-
 import supabase from "../lib/supabaseClient";
 
-export default function HomePage() {
-  const router = useRouter();
-   const [tasks, setTasks] = useState([]);
-  const [staff, setStaff] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [currentPharmacyId, setCurrentPharmacyId] = useState(null);
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-  // Selection + UX
-  const [selectedStaffId, setSelectedStaffId] = useState(null);
-  const [completedTaskIds, setCompletedTaskIds] = useState(new Set());
-  const [feed, setFeed] = useState([]);
-  const [showConfetti, setShowConfetti] = useState(false);
-  // Small popover for task info
-  const [infoOpenId, setInfoOpenId] = useState(null);
-    // Leaderboard state
-  const [leadersWeek, setLeadersWeek] = useState([]);
-  const [leadersMonth, setLeadersMonth] = useState([]);
-  const [leadersPeriod, setLeadersPeriod] = useState("week"); // "week" | "month"
-  const [showLeadersModal, setShowLeadersModal] = useState(false);
-  const [leadersRefreshKey, setLeadersRefreshKey] = useState(0);
-// Notes state
-const [notes, setNotes] = useState([]);
+const formatTime = (t) => {
+  if (!t) return null;
+  const [hh, mm] = String(t).split(":");
+  return `${hh}:${mm}`;
+};
 
-// Replies state (noteId -> array of replies)
-const [repliesByNote, setRepliesByNote] = useState({});
+const formatRosterTime = (time) => {
+  if (!time) return "";
+  const [hourStr, minuteStr] = String(time).split(":");
+  let hour = Number(hourStr);
+  const minute = Number(minuteStr);
+  const suffix = hour >= 12 ? "pm" : "am";
+  hour = hour % 12;
+  if (hour === 0) hour = 12;
+  if (minute === 0) return `${hour}${suffix}`;
+  return `${hour}.${String(minute).padStart(2, "0")}${suffix}`;
+};
 
-// Reply composer state (per-note)
-const [replyTextByNote, setReplyTextByNote] = useState({});
-const [replySavingNoteId, setReplySavingNoteId] = useState(null);
+const timeToMinutes = (t) => {
+  if (!t) return Number.POSITIVE_INFINITY;
+  const parts = String(t).split(":");
+  return parseInt(parts[0] || "0", 10) * 60 + parseInt(parts[1] || "0", 10);
+};
 
+const isTaskForToday = (task, now = new Date()) => {
+  const dow = now.getDay();
+  const todayISO = now.toISOString().slice(0, 10);
+  const freq = task.frequency || "daily";
+  switch (freq) {
+    case "daily": return true;
+    case "monthly_anytime": return true;
+    case "weekly": {
+      const arr = Array.isArray(task.days_of_week) ? task.days_of_week : [];
+      if (arr.length) return arr.includes(dow);
+      return typeof task.weekly_day === "number" ? task.weekly_day === dow : false;
+    }
+    case "monthly": return Number(task.day_of_month) === now.getDate();
+    case "specific_date": return typeof task.specific_date === "string" && task.specific_date.slice(0, 10) === todayISO;
+    default: return true;
+  }
+};
 
-// Notes UI: expand/collapse (one open at a time)
+const isOverdue = (task, completedTaskIds, now = new Date()) => {
+  if (task.frequency === "monthly_anytime") {
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return now.getDate() === lastDay && !completedTaskIds.has(task.id);
+  }
+  if (!task.due_time) return false;
+  if (completedTaskIds.has(task.id)) return false;
+  const minsNow = now.getHours() * 60 + now.getMinutes();
+  return timeToMinutes(task.due_time) < minsNow;
+};
 
-const [expandedNoteId, setExpandedNoteId] = useState(null);
-  // Notes filter: show/hide resolved notes
-const [showResolved, setShowResolved] = useState(false);
+const getTaskBadge = (task) => {
+  const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const freq = task.frequency || "daily";
+  if (freq === "daily") return { label: "Daily", cls: "bg-gray-100 text-gray-600" };
+  if (freq === "monthly_anytime") return { label: "Monthly", cls: "bg-orange-100 text-orange-700" };
+  if (freq === "monthly") return { label: `Day ${task.day_of_month}`, cls: "bg-orange-100 text-orange-700" };
+  if (freq === "specific_date") return { label: task.specific_date?.slice(0, 10) || "Date", cls: "bg-purple-100 text-purple-700" };
+  if (freq === "weekly") {
+    const arr = Array.isArray(task.days_of_week) ? task.days_of_week : [];
+    return { label: arr.map((d) => DOW_SHORT[d]).join("/"), cls: "bg-blue-100 text-blue-700" };
+  }
+  return { label: freq, cls: "bg-gray-100 text-gray-600" };
+};
 
+const holidayEmoji = {
+  newyear: "🎆", australia: "🦘", easter: "🐣", anzac: "🌺",
+  wa: "⚓", christmas: "🎅", default: "🏖️",
+};
 
-// Refs so we can scroll an expanded note into view inside the Notes panel
-const noteItemRefs = useRef({});
-// Small helper for note previews
+const roleColour = {
+  pharmacist: "text-purple-700",
+  locum: "text-blue-700",
+  DAA: "text-orange-600",
+  "pharmacy assistant": "text-teal-700",
+};
+
+const REACTIONS = ["👍", "❤️", "🙂"];
+
 const truncate = (text, max = 180) => {
   const s = String(text || "").trim();
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + "…";
 };
 
-// Reactions
-const REACTIONS = ["👍", "❤️", "🙂"];
-const [reactionsByNote, setReactionsByNote] = useState({});
+const getWeekStart = (d = new Date()) => {
+  const x = new Date(d);
+  const day = x.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  x.setDate(x.getDate() + diff);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
 
+const getMonthStart = (d = new Date()) => {
+  const x = new Date(d);
+  x.setDate(1);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
 
+// ─── Sidebar ─────────────────────────────────────────────────────────────────
 
-  // Keep pinned notes at top automatically whenever notes change
-useEffect(() => {
-  if (!notes.length) return;
-setNotes((prev) =>
-  [...prev].sort((a, b) => {
-    // 1) pinned first
-    const pinDiff = (b.pinned === true) - (a.pinned === true);
-    if (pinDiff) return pinDiff;
+function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardOpen, activityOpen, leadersWeek, leadersMonth, leadersPeriod, setLeadersPeriod, feed, onLogout }) {
+  return (
+    <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
+      <div className="text-sm font-bold text-gray-800 px-2 mb-3 leading-tight">
+        Byford Pharmacy
+      </div>
 
-    // 2) most recent activity first (fallback to created_at)
-    const aAct = new Date(a.last_activity_at || a.created_at).getTime();
-    const bAct = new Date(b.last_activity_at || b.created_at).getTime();
-    if (aAct !== bAct) return bAct - aAct;
+      {/* Nav links */}
+      <NavLink href="/" icon="🏠" label="Home" />
+      <NavLink href="/roster" icon="📅" label="Roster" />
+      <button
+        onClick={onViewRoster}
+        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+      >
+        <span>📋</span> View Roster
+      </button>
+      <NavLink href="/insights" icon="📊" label="Insights" />
+      <NavLink href="#" icon="💰" label="Wages" disabled />
+      <NavLink href="#" icon="🏖️" label="Leave" disabled />
+      <NavLink href="/admin" icon="⚙️" label="Admin" />
 
-    // 3) newest note first
-    return new Date(b.created_at) - new Date(a.created_at);
-  })
-);
+      <div className="border-t my-2" />
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [notes.length]);
+      {/* Leaderboard */}
+      <SidebarSection
+        label="🏆 Leaderboard"
+        open={leaderboardOpen}
+        onToggle={onViewLeaderboard}
+      >
+        <div className="flex gap-1 mb-2">
+          {["week", "month"].map((p) => (
+            <button
+              key={p}
+              onClick={() => setLeadersPeriod(p)}
+              className={`flex-1 text-[10px] rounded border px-1 py-0.5 ${leadersPeriod === p ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600"}`}
+            >
+              {p === "week" ? "Week" : "Month"}
+            </button>
+          ))}
+        </div>
+        {(leadersPeriod === "week" ? leadersWeek : leadersMonth).slice(0, 5).map((r, i) => (
+          <div key={r.staff_id} className="flex items-center justify-between text-xs py-0.5">
+            <span className="text-gray-500 mr-1">#{i + 1}</span>
+            <span className="flex-1 truncate font-medium text-gray-800">{r.name}</span>
+            <span className="tabular-nums text-gray-600">{r.points}pt</span>
+          </div>
+        ))}
+        {(leadersPeriod === "week" ? leadersWeek : leadersMonth).length === 0 && (
+          <div className="text-xs text-gray-400">No points yet.</div>
+        )}
+      </SidebarSection>
 
-const [noteText, setNoteText] = useState("");
-    const [authChecked, setAuthChecked] = useState(false);
+      {/* Activity */}
+      <SidebarSection
+        label="📋 Activity"
+        open={activityOpen}
+        onToggle={onViewActivity}
+      >
+        {feed.length === 0 ? (
+          <div className="text-xs text-gray-400">No activity yet.</div>
+        ) : (
+          feed.slice(0, 8).map((e) => (
+            <div key={e.id} className="text-[11px] text-gray-600 py-0.5 leading-tight">
+              <span className="font-medium text-gray-800">{e.staffName}</span> completed{" "}
+              <span className="font-medium">"{e.taskTitle}"</span> at {e.timeStr}
+            </div>
+          ))
+        )}
+      </SidebarSection>
+
+      <div className="flex-1" />
+
+      <button
+        onClick={onLogout}
+        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-red-600 hover:bg-red-50 w-full text-left mt-2"
+      >
+        <span>🚪</span> Logout
+      </button>
+    </aside>
+  );
+}
+
+function NavLink({ href, icon, label, disabled }) {
+  if (disabled) {
+    return (
+      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-400 cursor-not-allowed">
+        <span>{icon}</span> {label}
+        <span className="ml-auto text-[9px] text-gray-300">Soon</span>
+      </div>
+    );
+  }
+  return (
+    <Link href={href} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100">
+      <span>{icon}</span> {label}
+    </Link>
+  );
+}
+
+function SidebarSection({ label, open, onToggle, children }) {
+  return (
+    <div className="rounded-lg border border-gray-100 overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-2 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+      >
+        {label}
+        <svg className={`w-3 h-3 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && <div className="px-2 pb-2 pt-1 space-y-0.5 border-t border-gray-100">{children}</div>}
+    </div>
+  );
+}
+
+// ─── Roster Modal ─────────────────────────────────────────────────────────────
+
+function RosterModal({ onClose }) {
+  const [publishedMonths, setPublishedMonths] = useState([]);
+  const [monthIndex, setMonthIndex] = useState(0);
+  const [shifts, setShifts] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let mounted = true;
+    const load = async () => {
+      const [{ data: months }, { data: holidayData }] = await Promise.all([
+        supabase.from("roster_months").select("*").eq("status", "published").order("month", { ascending: true }),
+        supabase.from("public_holidays").select("*"),
+      ]);
+      const m = months || [];
+      setPublishedMonths(m);
+      setHolidays(holidayData || []);
 
+      const todayMonth = new Date().toISOString().slice(0, 7) + "-01";
+      const idx = m.findIndex((x) => x.month === todayMonth);
+      setMonthIndex(idx >= 0 ? idx : m.length - 1);
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    if (!publishedMonths[monthIndex]) return;
+    const m = publishedMonths[monthIndex];
+    const start = m.month;
+    const end = new Date(new Date(start).getFullYear(), new Date(start).getMonth() + 1, 1).toISOString().slice(0, 10);
+    supabase.from("roster_shifts")
+      .select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, staff:staff_id(id, name)`)
+      .gte("shift_date", start)
+      .lt("shift_date", end)
+      .then(({ data }) => setShifts(data || []));
+  }, [monthIndex, publishedMonths]);
+
+  if (loading) return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl p-8 text-sm text-gray-600">Loading roster...</div>
+    </div>
+  );
+
+  if (!publishedMonths.length) return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl p-8 text-center">
+        <div className="text-lg font-semibold text-gray-800 mb-2">Roster not yet available</div>
+        <div className="text-sm text-gray-500 mb-4">The roster hasn't been published yet.</div>
+        <button onClick={onClose} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm">Close</button>
+      </div>
+    </div>
+  );
+
+  const currentMonth = publishedMonths[monthIndex];
+  const monthDate = new Date(currentMonth.month);
+  const currentYear = monthDate.getFullYear();
+  const currentMonthIdx = monthDate.getMonth();
+  const monthLabel = monthDate.toLocaleString("en-AU", { month: "long", year: "numeric" });
+
+  const firstDay = new Date(currentYear, currentMonthIdx, 1);
+  const daysInMonth = new Date(currentYear, currentMonthIdx + 1, 0).getDate();
+  const startOffset = (firstDay.getDay() + 6) % 7;
+
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden">
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b shrink-0">
+          <button onClick={() => setMonthIndex((i) => Math.max(0, i - 1))} disabled={monthIndex === 0} className="px-2 py-1 rounded border text-sm disabled:opacity-30">←</button>
+          <h2 className="text-base font-semibold text-gray-800 flex-1 text-center">{monthLabel}</h2>
+          <button onClick={() => setMonthIndex((i) => Math.min(publishedMonths.length - 1, i + 1))} disabled={monthIndex === publishedMonths.length - 1} className="px-2 py-1 rounded border text-sm disabled:opacity-30">→</button>
+          <button onClick={onClose} className="ml-4 text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+        </div>
+
+        {/* Legend */}
+        <div className="flex items-center gap-4 px-4 py-2 border-b text-xs shrink-0">
+          {[
+            { label: "Pharmacist", cls: "text-purple-700" },
+            { label: "Locum", cls: "text-blue-700" },
+            { label: "DAA", cls: "text-orange-600" },
+            { label: "Pharmacy Assistant", cls: "text-teal-700" },
+          ].map(({ label, cls }) => (
+            <span key={label} className={`font-medium ${cls}`}>{label}</span>
+          ))}
+        </div>
+
+        {/* Calendar */}
+        <div className="flex-1 overflow-auto">
+          <div className="grid grid-cols-7 border-b text-xs">
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => (
+              <div key={d} className={`text-center font-semibold py-1.5 ${i >= 5 ? "text-purple-600" : "text-gray-600"} ${i < 6 ? "border-r" : ""}`}>{d}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7">
+            {cells.map((day, i) => {
+              const col = i % 7;
+              const isWeekend = col >= 5;
+              const isLastCol = col === 6;
+              const isLastRow = i >= cells.length - 7;
+              const dateString = day ? `${currentYear}-${String(currentMonthIdx + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}` : null;
+              const isToday = dateString === todayStr;
+              const holiday = dateString ? holidays.find((h) => h.date === dateString) : null;
+              const dayShifts = day ? shifts.filter((s) => s.shift_date === dateString) : [];
+
+              return (
+                <div
+                  key={i}
+                  className={`${isLastCol ? "" : "border-r"} ${isLastRow ? "" : "border-b"} min-h-[90px] p-1 text-xs
+                    ${isToday ? "bg-amber-50" : holiday ? "bg-red-50" : isWeekend ? "bg-purple-50" : "bg-white"}`}
+                >
+                  {day ? (
+                    <>
+                      <div className="flex items-start justify-between mb-0.5">
+                        <span className={`text-xs font-bold ${isToday ? "text-amber-600" : isWeekend ? "text-purple-600" : "text-gray-700"}`}>{day}</span>
+                        {holiday && <span title={holiday.name} className="text-sm">{holidayEmoji[holiday.image_key] || holidayEmoji.default}</span>}
+                      </div>
+                      {holiday && <div className="text-[9px] text-red-600 font-medium mb-0.5">{holiday.name}</div>}
+                      <div className="space-y-px">
+                        {dayShifts.map((s) => {
+                          const name = s.staff?.name || s.staff_name || "?";
+                          return (
+                            <div key={s.id} className={`text-[10px] leading-tight truncate ${roleColour[s.role] || "text-gray-700"}`}>
+                              {name} <span className="opacity-70">{formatRosterTime(s.start_time)}–{formatRosterTime(s.end_time)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export default function HomePage() {
+  const router = useRouter();
+
+  // ── Auth ──
+  const [authChecked, setAuthChecked] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [currentPharmacyId, setCurrentPharmacyId] = useState(null);
+
+  // ── Data ──
+  const [tasks, setTasks] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [onShiftStaff, setOnShiftStaff] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [completedTaskIds, setCompletedTaskIds] = useState(new Set());
+  const [feed, setFeed] = useState([]);
+
+  // ── Staff selection ──
+  const [selectedStaffId, setSelectedStaffId] = useState(null);
+
+  // ── Notes ──
+  const [notes, setNotes] = useState([]);
+  const [noteText, setNoteText] = useState("");
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [repliesByNote, setRepliesByNote] = useState({});
+  const [replyTextByNote, setReplyTextByNote] = useState({});
+  const [replySavingNoteId, setReplySavingNoteId] = useState(null);
+  const [expandedNoteId, setExpandedNoteId] = useState(null);
+  const [showResolved, setShowResolved] = useState(false);
+  const [reactionsByNote, setReactionsByNote] = useState({});
+  const noteItemRefs = useRef({});
+
+  // ── UI ──
+  const [infoOpenId, setInfoOpenId] = useState(null);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [showRosterModal, setShowRosterModal] = useState(false);
+  const [monthlyCompletions, setMonthlyCompletions] = useState({});
+
+  // ── Leaderboard ──
+  const [leadersWeek, setLeadersWeek] = useState([]);
+  const [leadersMonth, setLeadersMonth] = useState([]);
+  const [leadersPeriod, setLeadersPeriod] = useState("week");
+  const [leadersRefreshKey, setLeadersRefreshKey] = useState(0);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+
+  // ── Auth check ──
+  useEffect(() => {
+    let mounted = true;
     async function checkAuth() {
       const { data, error } = await supabase.auth.getUser();
-
       if (!mounted) return;
-
-      if (error || !data?.user) {
-        router.replace("/login");
-        return;
-      }
-
+      if (error || !data?.user) { router.replace("/login"); return; }
       setCurrentUser(data.user);
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("pharmacy_id")
-        .eq("id", data.user.id)
-        .single();
-
+      const { data: profile } = await supabase.from("profiles").select("pharmacy_id").eq("id", data.user.id).single();
       if (!mounted) return;
-
-      if (profileError) {
-        console.error("Profile load error:", profileError.message);
-        return;
-      }
-
-      if (!profile?.pharmacy_id) {
-        console.error("No pharmacy_id found for logged in user.");
-        return;
-      }
-
+      if (!profile?.pharmacy_id) return;
       setCurrentPharmacyId(profile.pharmacy_id);
       setAuthChecked(true);
     }
-
     checkAuth();
-
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [router]);
-const [notesSaving, setNotesSaving] = useState(false);
-  // Post a reply to a note
-  // Resolve / reopen a note (records who did it)
-const toggleResolved = async (note) => {
-  if (!selectedStaffId) {
-    alert("Tap your photo first to sign this action.");
-    return;
-  }
 
-  const nextResolved = !note.resolved;
-
-  try {
-    const patch = nextResolved
-      ? {
-          resolved: true,
-          resolved_at: new Date().toISOString(),
-          resolved_by_staff_id: Number(selectedStaffId),
-          last_activity_at: new Date().toISOString(),
-        }
-      : {
-          resolved: false,
-          resolved_at: null,
-          resolved_by_staff_id: null,
-          last_activity_at: new Date().toISOString(),
-        };
-
-    const { data, error } = await supabase
-      .from("kiosk_notes")
-      .update(patch)
-      .eq("id", Number(note.id))
-      .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id")
-      .single();
-
-    if (error) throw error;
-    // Keep this note expanded so the user sees the result immediately
-    setExpandedNoteId(Number(note.id));
-
-    // Update local list and re-sort
-    setNotes((prev) => {
-      const next = prev
-        .map((n) => (n.id === note.id ? { ...n, ...data } : n))
-        .filter((n) => (showResolved ? true : n.resolved !== true));
-
-      return [...next].sort((a, b) => {
-        const pinDiff = (b.pinned === true) - (a.pinned === true);
-        if (pinDiff) return pinDiff;
-
-        const resDiff = (a.resolved === true) - (b.resolved === true);
-        if (resDiff) return resDiff;
-
-        const aAct = new Date(a.last_activity_at || a.created_at).getTime();
-        const bAct = new Date(b.last_activity_at || b.created_at).getTime();
-        if (aAct !== bAct) return bAct - aAct;
-
-        return new Date(b.created_at) - new Date(a.created_at);
-      });
-    });
-  } catch (err) {
-    console.error(err);
-    alert("Couldn't update resolved status: " + (err?.message || String(err)));
-  }
-};
-
-const postReply = async (noteId) => {
-  const body = String(replyTextByNote[noteId] || "").trim();
-  if (!body) return;
-
-  if (!selectedStaffId) {
-    alert("Tap your photo first to sign your reply.");
-    return;
-  }
-
-  setReplySavingNoteId(noteId);
-  try {
-    const { data, error } = await supabase
-            .from("kiosk_note_replies")
-      .insert({
-        note_id: Number(noteId),
-        staff_id: Number(selectedStaffId),
-        body,
-        pharmacy_id: currentPharmacyId,
-      })
-      .select("id, note_id, staff_id, body, created_at")
-      .single();
-
-    if (error) throw error;
-
-    // Add to local state immediately (newest at bottom to match ascending order)
-    setRepliesByNote((prev) => {
-      const next = { ...prev };
-      const arr = next[noteId] ? [...next[noteId]] : [];
-      arr.push(data);
-      next[noteId] = arr;
-      return next;
-    });
-// Bump note activity locally so it jumps up immediately (DB trigger also does this)
-setNotes((prev) => {
-  const next = prev.map((n) =>
-    n.id === noteId ? { ...n, last_activity_at: new Date().toISOString() } : n
-  );
-  // Re-sort to reflect the bump right away
-  return [...next].sort((a, b) => {
-    const pinDiff = (b.pinned === true) - (a.pinned === true);
-    if (pinDiff) return pinDiff;
-        // Unresolved first (only matters when showResolved=true)
-    const resDiff = (a.resolved === true) - (b.resolved === true);
-    if (resDiff) return resDiff;
-
-    const aAct = new Date(a.last_activity_at || a.created_at).getTime();
-    const bAct = new Date(b.last_activity_at || b.created_at).getTime();
-    if (aAct !== bAct) return bAct - aAct;
-    return new Date(b.created_at) - new Date(a.created_at);
-  });
-});
-
-    // Clear input
-    setReplyTextByNote((prev) => ({ ...prev, [noteId]: "" }));
-  } catch (err) {
-    console.error(err);
-    alert("Couldn't post reply: " + (err?.message || String(err)));
-  } finally {
-    setReplySavingNoteId(null);
-  }
-};
-
-  // When a note expands, scroll it into view (helps a lot once replies exist)
-useEffect(() => {
-  if (!expandedNoteId) return;
-  const el = noteItemRefs.current?.[expandedNoteId];
-  if (!el) return;
-
-  // Let the DOM update first (so expanded content exists)
-  const t = setTimeout(() => {
-    try {
-      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    } catch {
-      // Fallback for older browsers
-      el.scrollIntoView();
-    }
-  }, 50);
-
-  return () => clearTimeout(t);
-}, [expandedNoteId]);
-
-// Toggle a reaction on a note (ONE reaction per staff per note)
-const toggleReaction = async (noteId, reaction) => {
-  if (!selectedStaffId) {
-    alert("Tap your photo first to react.");
-    return;
-  }
-
-  const mine = reactionsByNote[noteId]?.mine || null;
-
-  try {
-    if (mine === reaction) {
-      // Tap the same reaction again = remove it
-      const { error } = await supabase
-        .from("kiosk_note_reactions")
-        .delete()
-        .eq("note_id", Number(noteId))
-        .eq("staff_id", Number(selectedStaffId));
-
-      if (error) throw error;
-    } else {
-      // Set/replace reaction (one per staff per note)
-      const { error } = await supabase
-        .from("kiosk_note_reactions")
-        .upsert(
-          {
-            note_id: Number(noteId),
-            staff_id: Number(selectedStaffId),
-            reaction,
-          },
-          { onConflict: "note_id,staff_id" }
-        );
-
-      if (error) throw error;
-    }
-
-       // Instant UI update (no full refresh)
-    setReactionsByNote((prev) => {
-      const next = { ...prev };
-      const entry = next[noteId] || { counts: {}, mine: null };
-      const counts = { ...entry.counts };
-      const mineNow = entry.mine; // current mine (single emoji or null)
-
-      // If we removed our reaction
-      if (mine === reaction) {
-        counts[reaction] = Math.max(0, (counts[reaction] || 0) - 1);
-        next[noteId] = { counts, mine: null };
-        return next;
-      }
-
-      // Otherwise we set/replaced our reaction
-      if (mineNow && mineNow !== reaction) {
-        counts[mineNow] = Math.max(0, (counts[mineNow] || 0) - 1);
-      }
-      counts[reaction] = (counts[reaction] || 0) + 1;
-
-      next[noteId] = { counts, mine: reaction };
-      return next;
-    });
-
-    // Optional: keep this if you want other kiosk screens to sync via reloads
-    // setLeadersRefreshKey((k) => k + 1);
-
-  } catch (err) {
-    console.error(err);
-    alert("Couldn't update reaction: " + (err?.message || String(err)));
-  }
-};
-
-  // Date helpers: start of week (Mon) and start of month, in local time
-  const getWeekStart = (d = new Date()) => {
-    const x = new Date(d);
-    const day = x.getDay(); // 0=Sun..6=Sat
-    const diff = (day === 0 ? -6 : 1 - day); // shift so Monday is first day
-    x.setDate(x.getDate() + diff);
-    x.setHours(0, 0, 0, 0);
-    return x;
-  };
-  const getMonthStart = (d = new Date()) => {
-    const x = new Date(d);
-    x.setDate(1);
-    x.setHours(0, 0, 0, 0);
-    return x;
-  };
-
-  // Close on Esc
-useEffect(() => {
-  if (!infoOpenId) return;
-  const onKey = (e) => { if (e.key === "Escape") setInfoOpenId(null); };
-  window.addEventListener("keydown", onKey, { capture: true });
-  return () => window.removeEventListener("keydown", onKey, { capture: true });
-}, [infoOpenId]);
-
-
-
-  // Local “today” bounds (device time = Perth kiosk)
-  // ——— 3.3b helper: decide if a task should show today ———
-function isTaskForToday(task, now = new Date()) {
-  const dow = now.getDay(); // 0=Sun … 6=Sat
-  const todayISO = now.toISOString().slice(0, 10); // "YYYY-MM-DD"
-  const freq = task.frequency || "daily";
-
-  switch (freq) {
-    case "daily":
-      return true;
-
-    case "weekly": {
-      // New schema first: array of days; fallback to legacy weekly_day
-      const arr = Array.isArray(task.days_of_week) ? task.days_of_week : null;
-      if (arr && arr.length) return arr.includes(dow);
-      return typeof task.weekly_day === "number" ? task.weekly_day === dow : false;
-    }
-
-    case "few_days_per_week": {
-      // Back-compat alias of weekly using days_of_week
-      const arr = Array.isArray(task.days_of_week) ? task.days_of_week : [];
-      return arr.includes(dow);
-    }
-
-    case "monthly":
-      return Number(task.day_of_month) === now.getDate();
-
-    case "specific_date":
-      return typeof task.specific_date === "string" && task.specific_date.slice(0, 10) === todayISO;
-
-    default:
-      return true;
-  }
-}
-
-// ——— 3.3c helper: convert "HH:MM" or "HH:MM:SS" → minutes since midnight ———
-function timeToMinutes(t) {
-  if (!t) return Number.POSITIVE_INFINITY; // puts "no due time" last
-  const parts = String(t).split(":");
-  const hh = parseInt(parts[0] || "0", 10);
-  const mm = parseInt(parts[1] || "0", 10);
-  return (hh * 60) + mm;
-}
-function isOverdue(task, completedTaskIds, now = new Date()) {
-  if (!task.due_time) return false;
-  if (completedTaskIds.has(task.id)) return false;
-
-  const minsNow = now.getHours() * 60 + now.getMinutes();
-  return timeToMinutes(task.due_time) < minsNow;
-}
-
-  const getTodayBoundsISO = () => {
-    const start = new Date(); start.setHours(0,0,0,0);
-    const end = new Date();   end.setHours(23,59,59,999);
-    return { startISO: start.toISOString(), endISO: end.toISOString() };
-  };
-
-  // Load tasks + staff + today's completions
+  // ── Load data ──
   useEffect(() => {
     if (!authChecked || !currentPharmacyId) return;
-
     const load = async () => {
       setLoading(true);
-      const [{ data: t, error: te }, { data: s, error: se }] = await Promise.all([
-                supabase
-   .from("tasks")
-  .select("*")
-  .eq("pharmacy_id", currentPharmacyId)
 
-   .order("due_time", { ascending: true, nullsFirst: false })
-  .order("title", { ascending: true }),
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
 
-
-        supabase
-           .from("staff")
-  .select("*")
-  .eq("pharmacy_id", currentPharmacyId)
-  .order("name", { ascending: true }),
+      const [
+        { data: t },
+        { data: s },
+        { data: rosterShifts },
+        { data: monthlyComps },
+      ] = await Promise.all([
+        supabase.from("tasks").select("*").eq("pharmacy_id", currentPharmacyId).order("due_time", { ascending: true, nullsFirst: false }).order("title", { ascending: true }),
+        supabase.from("staff").select("*").eq("pharmacy_id", currentPharmacyId).order("name", { ascending: true }),
+        supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, staff_id, staff_name, staff:staff_id(id, name, photo_url)`).eq("shift_date", todayStr),
+        supabase.from("completions").select("task_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
       ]);
-      if (te) console.error("Tasks load error:", te.message);
-      if (se) console.error("Staff load error:", se.message);
 
-      const activeTasks = (t ?? []).filter((x) => x.active !== false);
+      const activeStaff = (s || []).filter((x) => x.active !== false);
+      setStaff(activeStaff);
 
-// NEW: keep only tasks relevant for today (based on frequency rules)
-const todayTasks = activeTasks.filter((task) => isTaskForToday(task));
-
-// K1 — Kiosk ordering: due_time ↑ (empty last), then title A→Z
-todayTasks.sort((a, b) => {
-  const tA = timeToMinutes(a.due_time); // Infinity if empty
-  const tB = timeToMinutes(b.due_time);
-  if (tA !== tB) return tA - tB;
-  return (a.title || "").localeCompare(b.title || "");
-});
-
-
-
-setTasks(todayTasks);
-
-const activeStaff = (s ?? []).filter((x) => x.active !== false);
-setStaff(activeStaff);
-
-
-      const { startISO, endISO } = getTodayBoundsISO();
-          const { data: comps, error: ce } = await supabase
-        .from("completions")
-        .select("task_id, staff_id, completed_at, pharmacy_id")
-        .eq("pharmacy_id", currentPharmacyId)
-        .gte("completed_at", startISO)
-        .lt("completed_at", endISO)
-        .order("completed_at", { ascending: false });
-
-      if (ce) {
-        console.error("Completions load error:", ce.message);
-      } else {
-        const doneIds = new Set((comps ?? []).map((c) => c.task_id));
-        setCompletedTaskIds(doneIds);
-
-        const tasksById = Object.fromEntries(activeTasks.map((t) => [t.id, t.title]));
-        const staffById = Object.fromEntries(activeStaff.map((st) => [st.id, st.name]));
-        const feedItems = (comps ?? []).map((c) => ({
-          id: `c_${c.task_id}_${c.staff_id}_${c.completed_at}`,
-          taskTitle: tasksById[c.task_id] ?? `Task #${c.task_id}`,
-          staffName: staffById[c.staff_id] ?? "Someone",
-          timeStr: new Date(c.completed_at).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }),
-        }));
-        setFeed(feedItems);
+      // Build monthly completions map: taskId -> { completedAt, staffName }
+      const staffById2 = Object.fromEntries((s || []).map((st) => [st.id, st]));
+      const monthlyCompMap = {};
+      for (const c of monthlyComps || []) {
+        if (!monthlyCompMap[c.task_id]) {
+          monthlyCompMap[c.task_id] = {
+            completedAt: c.completed_at,
+            staffName: staffById2[c.staff_id]?.name || "Someone",
+          };
+        }
       }
+      setMonthlyCompletions(monthlyCompMap);
+
+      // On shift staff
+      const onShift = (rosterShifts || []).map((sh) => ({
+        id: sh.staff?.id || sh.staff_id,
+        name: sh.staff?.name || sh.staff_name || "?",
+        photo_url: sh.staff?.photo_url || null,
+        start_time: sh.start_time,
+        end_time: sh.end_time,
+      })).filter((x) => x.id);
+
+      // Deduplicate by staff id
+      const seen = new Set();
+      const uniqueOnShift = onShift.filter((x) => {
+        if (seen.has(x.id)) return false;
+        seen.add(x.id);
+        return true;
+      });
+
+      setOnShiftStaff(uniqueOnShift.length > 0 ? uniqueOnShift : activeStaff);
+
+      const activeTasks = (t || []).filter((x) => x.active !== false);
+      const todayTasks = activeTasks.filter((task) => isTaskForToday(task, now));
+      todayTasks.sort((a, b) => {
+        const tA = timeToMinutes(a.due_time);
+        const tB = timeToMinutes(b.due_time);
+        if (tA !== tB) return tA - tB;
+        return (a.title || "").localeCompare(b.title || "");
+      });
+      setTasks(todayTasks);
+
+      const start = new Date(); start.setHours(0, 0, 0, 0);
+      const end = new Date(); end.setHours(23, 59, 59, 999);
+      const { data: comps } = await supabase.from("completions").select("task_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", start.toISOString()).lt("completed_at", end.toISOString()).order("completed_at", { ascending: false });
+
+      const doneIds = new Set((comps || []).map((c) => c.task_id));
+      setCompletedTaskIds(doneIds);
+
+      const tasksById = Object.fromEntries(activeTasks.map((t) => [t.id, t.title]));
+      const staffById = Object.fromEntries(activeStaff.map((st) => [st.id, st.name]));
+      setFeed((comps || []).map((c) => ({
+        id: `c_${c.task_id}_${c.staff_id}_${c.completed_at}`,
+        taskTitle: tasksById[c.task_id] ?? `Task #${c.task_id}`,
+        staffName: staffById[c.staff_id] ?? "Someone",
+        timeStr: new Date(c.completed_at).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }),
+      })));
+
       setLoading(false);
     };
     load();
   }, [authChecked, currentPharmacyId]);
-  // Load leaderboard data (current week + current month)
-  useEffect(() => {
-    // Only run once tasks & staff are available
-    if (!tasks.length || !staff.length) return;
 
+  // ── Leaderboard ──
+  useEffect(() => {
+    if (!tasks.length || !staff.length) return;
     const loadLeaders = async () => {
       try {
         const monthStart = getMonthStart();
-        const { data: comps, error } = await supabase
-          .from("completions")
-          .select("task_id,staff_id,completed_at")
-          .gte("completed_at", monthStart.toISOString())
-          .lte("completed_at", new Date().toISOString());
-        if (error) throw error;
-
-        // Build lookups
-        const tasksById = Object.fromEntries(tasks.map(t => [t.id, t]));
-        const staffById = Object.fromEntries(staff.map(s => [s.id, s]));
-
-        // Aggregate points per staff for month
-        const monthTotals = new Map(); // staffId -> points
+        const { data: comps } = await supabase.from("completions").select("task_id,staff_id,completed_at").gte("completed_at", monthStart.toISOString()).lte("completed_at", new Date().toISOString());
+        const tasksById = Object.fromEntries(tasks.map((t) => [t.id, t]));
+        const staffById = Object.fromEntries(staff.map((s) => [s.id, s]));
+        const monthTotals = new Map();
         for (const c of comps || []) {
           const t = tasksById[c.task_id];
           if (!t) continue;
           const pts = Number.isFinite(t.points) ? t.points : 1;
           monthTotals.set(c.staff_id, (monthTotals.get(c.staff_id) || 0) + pts);
         }
-
-        // Compute week subset (from local Monday 00:00)
         const weekStart = getWeekStart();
         const weekTotals = new Map();
         for (const c of comps || []) {
@@ -538,117 +556,56 @@ setStaff(activeStaff);
           const pts = Number.isFinite(t.points) ? t.points : 1;
           weekTotals.set(c.staff_id, (weekTotals.get(c.staff_id) || 0) + pts);
         }
-
-        // Convert to arrays with names, sort desc
-        const toRows = (totals) =>
-          Array.from(totals.entries())
-            .map(([staff_id, points]) => ({
-              staff_id,
-              name: staffById[staff_id]?.name || `#${staff_id}`,
-              points,
-            }))
-            .sort((a, b) => b.points - a.points);
-
+        const toRows = (totals) => Array.from(totals.entries()).map(([staff_id, points]) => ({ staff_id, name: staffById[staff_id]?.name || `#${staff_id}`, points })).sort((a, b) => b.points - a.points);
         setLeadersMonth(toRows(monthTotals));
         setLeadersWeek(toRows(weekTotals));
       } catch (err) {
         console.error("Leaderboard load failed:", err);
       }
     };
-
     loadLeaders();
   }, [tasks, staff, leadersRefreshKey]);
-// Load kiosk notes: last 7 days or pinned
-useEffect(() => {
-  if (!authChecked || !currentPharmacyId) return;
 
-  const loadNotes = async () => {
-    try {
-        let q = supabase
-  .from("kiosk_notes")
-  .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, pharmacy_id")
-  .eq("pharmacy_id", currentPharmacyId)
-  .or("deleted.is.null,deleted.eq.false") // show only non-deleted (treat null as false)
-  .order("pinned", { ascending: false })
-  .order("last_activity_at", { ascending: false, nullsFirst: false })
-  .order("created_at", { ascending: false })
-  .limit(200);
+  // ── Notes ──
+  useEffect(() => {
+    if (!authChecked || !currentPharmacyId) return;
+    const loadNotes = async () => {
+      try {
+        const { data, error } = await supabase.from("kiosk_notes").select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, pharmacy_id").eq("pharmacy_id", currentPharmacyId).or("deleted.is.null,deleted.eq.false").order("pinned", { ascending: false }).order("last_activity_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(200);
+        if (error) throw error;
+        setNotes(data || []);
 
-
-
-const { data, error } = await q;
-
-
-      if (error) throw error;
-      setNotes(data || []);
-            // Load replies for these notes (visible to everyone)
-      const noteIdsForReplies = (data || []).map((n) => n.id);
-
-      if (noteIdsForReplies.length) {
-                const { data: repData, error: repErr } = await supabase
-          .from("kiosk_note_replies")
-          .select("id, note_id, staff_id, body, created_at, pharmacy_id")
-          .eq("pharmacy_id", currentPharmacyId)
-          .in("note_id", noteIdsForReplies)
-          .order("created_at", { ascending: true });
-
-        if (repErr) throw repErr;
-
-        const grouped = {};
-        for (const r of repData || []) {
-          if (!grouped[r.note_id]) grouped[r.note_id] = [];
-          grouped[r.note_id].push(r);
+        const noteIds = (data || []).map((n) => n.id);
+        if (noteIds.length) {
+          const [{ data: repData }, { data: rdata }] = await Promise.all([
+            supabase.from("kiosk_note_replies").select("id, note_id, staff_id, body, created_at").eq("pharmacy_id", currentPharmacyId).in("note_id", noteIds).order("created_at", { ascending: true }),
+            supabase.from("kiosk_note_reactions").select("note_id, staff_id, reaction").eq("pharmacy_id", currentPharmacyId).in("note_id", noteIds),
+          ]);
+          const grouped = {};
+          for (const r of repData || []) {
+            if (!grouped[r.note_id]) grouped[r.note_id] = [];
+            grouped[r.note_id].push(r);
+          }
+          setRepliesByNote(grouped);
+          const by = {};
+          for (const row of rdata || []) {
+            if (!by[row.note_id]) by[row.note_id] = { counts: {}, mine: null };
+            by[row.note_id].counts[row.reaction] = (by[row.note_id].counts[row.reaction] || 0) + 1;
+            if (selectedStaffId && Number(row.staff_id) === Number(selectedStaffId)) by[row.note_id].mine = row.reaction;
+          }
+          setReactionsByNote(by);
         }
-        setRepliesByNote(grouped);
-      } else {
-        setRepliesByNote({});
+      } catch (err) {
+        console.error("Notes load failed:", err);
       }
+    };
+    loadNotes();
+  }, [authChecked, currentPharmacyId, selectedStaffId, showResolved, leadersRefreshKey]);
 
-   // Load reactions for these notes
-const noteIds = (data || []).map(n => n.id);
-
-if (noteIds.length) {
-   const { data: rdata, error: rerr } = await supabase
-    .from("kiosk_note_reactions")
-    .select("note_id, staff_id, reaction, pharmacy_id")
-    .eq("pharmacy_id", currentPharmacyId)
-    .in("note_id", noteIds);
-
-  if (rerr) throw rerr;
-
-  const by = {};
-  for (const row of rdata || []) {
-    if (!by[row.note_id]) {
-      by[row.note_id] = { counts: {}, mine: null };
-    }
-
-    by[row.note_id].counts[row.reaction] =
-      (by[row.note_id].counts[row.reaction] || 0) + 1;
-
-    // ONE reaction per staff per note → store as a single string
-    if (selectedStaffId && Number(row.staff_id) === Number(selectedStaffId)) {
-      by[row.note_id].mine = row.reaction;
-    }
-  }
-
-  setReactionsByNote(by);
-} else {
-  setReactionsByNote({});
-}
-
-    } catch (err) {
-      console.error("Notes load failed:", err);
-    }
-  };
-
-  loadNotes();
-}, [authChecked, currentPharmacyId, staff.length, leadersRefreshKey, selectedStaffId, showResolved]);
-
-
-
-
+  // ── Derived ──
   const selectedStaff = staff.find((s) => s.id === selectedStaffId) || null;
-  const selectedStaffName = selectedStaff ? selectedStaff.name : null;
+  const selectedStaffName = selectedStaff?.name || null;
+  const staffById = useMemo(() => Object.fromEntries(staff.map((s) => [s.id, s])), [staff]);
 
   const progress = useMemo(() => {
     const total = tasks.length;
@@ -656,1150 +613,534 @@ if (noteIds.length) {
     const pct = total ? Math.round((done / total) * 100) : 0;
     return { done, total, pct };
   }, [tasks, completedTaskIds]);
-// Lookup: staffId -> staff object (for note author info)
-const staffById = useMemo(
-  () => Object.fromEntries(staff.map(s => [s.id, s])),
-  [staff]
-);
 
-  const burstConfetti = () => {
-    setShowConfetti(true);
-    setTimeout(() => setShowConfetti(false), 900);
-  };
+  // ── Handlers ──
+  const burstConfetti = () => { setShowConfetti(true); setTimeout(() => setShowConfetti(false), 900); };
 
   const handleTaskTap = async (task) => {
     try {
-      // If an info popover is open, a tile tap only closes it — no completion.
-      if (infoOpenId) {
-        setInfoOpenId(null);
-        return;
-      }
-
-      // If already completed today: offer to undo
+      if (infoOpenId) { setInfoOpenId(null); return; }
       if (completedTaskIds.has(task.id)) {
-        const ok = typeof window !== "undefined" &&
-          window.confirm(`Undo completion for “${task.title}” today?`);
+        const ok = window.confirm(`Undo completion for "${task.title}" today?`);
         if (!ok) return;
-
-        // Delete today's completion row
-       undoCompletion(supabase, task.id, currentPharmacyId)
-
-        // Update local state
-        setCompletedTaskIds((prev) => {
-          const next = new Set(prev);
-          next.delete(task.id);
-          return next;
-        });
-
-        // Feed entry for undo
-        const timeStr = new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" });
-        const entry = {
-          id: (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()),
-          taskTitle: task.title,
-          staffName: selectedStaffName ?? "Someone",
-          timeStr,
-        };
-        setFeed((f) => [
-          { ...entry, taskTitle: `Undid: ${task.title}` },
-          ...f,
-        ].slice(0, 25));
-                setLeadersRefreshKey((k) => k + 1);
-
+        undoCompletion(supabase, task.id, currentPharmacyId);
+        setCompletedTaskIds((prev) => { const next = new Set(prev); next.delete(task.id); return next; });
+        setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: `Undid: ${task.title}`, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
+        setLeadersRefreshKey((k) => k + 1);
         return;
       }
-
-      // Otherwise: complete it
-      if (!selectedStaffId) {
-        alert("Tap your photo first (right side), then tap the task.");
-        return;
-      }
-     recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId)
-
-      setCompletedTaskIds((prev) => {
-        const next = new Set(prev);
-        next.add(task.id);
-        return next;
-      });
-
-      const timeStr = new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" });
-      const entry = {
-        id: (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random()),
-        taskTitle: task.title,
-        staffName: selectedStaffName ?? "Someone",
-        timeStr,
-      };
-      setFeed((f) => [entry, ...f].slice(0, 25));
+      if (!selectedStaffId) { alert("Tap your photo first, then tap the task."); return; }
+      recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId);
+      setCompletedTaskIds((prev) => { const next = new Set(prev); next.add(task.id); return next; });
+      setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: task.title, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
       setLeadersRefreshKey((k) => k + 1);
-
       burstConfetti();
     } catch (err) {
-      // Race-safe fallbacks:
       if (err?.message?.includes("completions_one_per_day")) {
-        // Another kiosk beat us to it; just mark as done locally
-        setCompletedTaskIds((prev) => {
-          const next = new Set(prev);
-          next.add(task.id);
-          return next;
-        });
+        setCompletedTaskIds((prev) => { const next = new Set(prev); next.add(task.id); return next; });
         return;
       }
       alert("Error: " + (err?.message ?? String(err)));
-      console.error(err);
     }
   };
 
-// Post a new note
-const postNote = async () => {
-  const body = noteText.trim();
-  if (!body) return;
-  if (!selectedStaffId) {
-    alert("Tap your photo first to sign your note.");
-    return;
-  }
-  setNotesSaving(true);
-  try {
-   const { data, error } = await supabase
-  .from("kiosk_notes")
-.insert({
-  body,
-  staff_id: Number(selectedStaffId),
-  deleted: false,
-  pharmacy_id: currentPharmacyId,
-})
- .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at")
-
-  .single();
-
-    if (error) throw error;
-
-    setNotes((prev) => [data, ...prev].slice(0, 100));
-    setNoteText("");
-  } catch (err) {
-    alert("Couldn't post note: " + (err?.message || String(err)));
-    console.error(err);
-  } finally {
-    setNotesSaving(false);
-  }
-};
-
-// Pin / unpin a note
-const togglePin = async (note) => {
-
- 
-
-
-
-  const nextPinned = !note.pinned;
-  try {
-    const { error } = await supabase
-      .from("kiosk_notes")
-      .update({ pinned: nextPinned })
-      .eq("id", note.id);
-    if (error) throw error;
-
-    setNotes((prev) =>
-      [...prev.map((n) => (n.id === note.id ? { ...n, pinned: nextPinned } : n))]
-        .sort(
-          (a, b) =>
-            (b.pinned === true) - (a.pinned === true) ||
-            new Date(b.created_at) - new Date(a.created_at)
-        )
-    );
-  } catch (err) {
-    alert("Couldn't update pin: " + (err?.message || String(err)));
-    console.error(err);
-  }
-};
-
-// Permanently delete a note (author-only from kiosk)
-async function deleteNote(note) {
-  const ok =
-    typeof window !== "undefined" &&
-    window.confirm("Delete this note? (It will be hidden, not permanently removed.)");
-  if (!ok) return;
-
-  try {
-    // Soft delete: mark deleted=true (keeps history and avoids accidental permanent loss)
-    const { data, error } = await supabase
-      .from("kiosk_notes")
-      .update({ deleted: true })
-      .eq("id", Number(note.id))
-      .select("id");
-
-
-    if (error) throw error;
-    if (!data || data.length === 0) {
-      alert("Delete didn't update any rows — check the id/permissions.");
-      return;
+  const postNote = async () => {
+    const body = noteText.trim();
+    if (!body) return;
+    if (!selectedStaffId) { alert("Tap your photo first to sign your note."); return; }
+    setNotesSaving(true);
+    try {
+      const { data, error } = await supabase.from("kiosk_notes").insert({ body, staff_id: Number(selectedStaffId), deleted: false, pharmacy_id: currentPharmacyId }).select("id, body, staff_id, created_at, pinned, deleted, last_activity_at").single();
+      if (error) throw error;
+      setNotes((prev) => [data, ...prev].slice(0, 100));
+      setNoteText("");
+    } catch (err) {
+      alert("Couldn't post note: " + (err?.message || String(err)));
+    } finally {
+      setNotesSaving(false);
     }
-
-    // Remove from local list immediately
-    setNotes((prev) => prev.filter((n) => n.id !== note.id));
-  } catch (err) {
-    console.error(err);
-    alert("Couldn't delete note: " + (err?.message || String(err)));
-  }
-}
-
-
-
-
-   
-
-
-  const formatTime = (t) => {
-    if (!t) return null;
-    const [hh, mm] = String(t).split(":");
-    return `${hh}:${mm}`;
   };
-    
+
+  const togglePin = async (note) => {
+    const nextPinned = !note.pinned;
+    try {
+      const { error } = await supabase.from("kiosk_notes").update({ pinned: nextPinned }).eq("id", note.id);
+      if (error) throw error;
+      setNotes((prev) => [...prev.map((n) => (n.id === note.id ? { ...n, pinned: nextPinned } : n))].sort((a, b) => (b.pinned === true) - (a.pinned === true) || new Date(b.created_at) - new Date(a.created_at)));
+    } catch (err) { alert("Couldn't update pin: " + (err?.message || String(err))); }
+  };
+
+  const deleteNote = async (note) => {
+    if (!window.confirm("Delete this note?")) return;
+    try {
+      const { error } = await supabase.from("kiosk_notes").update({ deleted: true }).eq("id", Number(note.id));
+      if (error) throw error;
+      setNotes((prev) => prev.filter((n) => n.id !== note.id));
+    } catch (err) { alert("Couldn't delete note: " + (err?.message || String(err))); }
+  };
+
+  const toggleResolved = async (note) => {
+    if (!selectedStaffId) { alert("Tap your photo first."); return; }
+    const nextResolved = !note.resolved;
+    try {
+      const patch = nextResolved
+        ? { resolved: true, resolved_at: new Date().toISOString(), resolved_by_staff_id: Number(selectedStaffId), last_activity_at: new Date().toISOString() }
+        : { resolved: false, resolved_at: null, resolved_by_staff_id: null, last_activity_at: new Date().toISOString() };
+      const { data, error } = await supabase.from("kiosk_notes").update(patch).eq("id", Number(note.id)).select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id").single();
+      if (error) throw error;
+      setExpandedNoteId(Number(note.id));
+      setNotes((prev) => [...prev.map((n) => (n.id === note.id ? { ...n, ...data } : n)).filter((n) => showResolved ? true : n.resolved !== true)].sort((a, b) => (b.pinned === true) - (a.pinned === true) || (a.resolved === true) - (b.resolved === true) || new Date(b.last_activity_at || b.created_at) - new Date(a.last_activity_at || a.created_at)));
+    } catch (err) { alert("Couldn't update resolved status: " + (err?.message || String(err))); }
+  };
+
+  const postReply = async (noteId) => {
+    const body = String(replyTextByNote[noteId] || "").trim();
+    if (!body) return;
+    if (!selectedStaffId) { alert("Tap your photo first."); return; }
+    setReplySavingNoteId(noteId);
+    try {
+      const { data, error } = await supabase.from("kiosk_note_replies").insert({ note_id: Number(noteId), staff_id: Number(selectedStaffId), body, pharmacy_id: currentPharmacyId }).select("id, note_id, staff_id, body, created_at").single();
+      if (error) throw error;
+      setRepliesByNote((prev) => { const next = { ...prev }; const arr = next[noteId] ? [...next[noteId]] : []; arr.push(data); next[noteId] = arr; return next; });
+      setReplyTextByNote((prev) => ({ ...prev, [noteId]: "" }));
+    } catch (err) { alert("Couldn't post reply: " + (err?.message || String(err))); } finally { setReplySavingNoteId(null); }
+  };
+
+  const toggleReaction = async (noteId, reaction) => {
+    if (!selectedStaffId) { alert("Tap your photo first."); return; }
+    const mine = reactionsByNote[noteId]?.mine || null;
+    try {
+      if (mine === reaction) {
+        await supabase.from("kiosk_note_reactions").delete().eq("note_id", Number(noteId)).eq("staff_id", Number(selectedStaffId));
+      } else {
+        await supabase.from("kiosk_note_reactions").upsert({ note_id: Number(noteId), staff_id: Number(selectedStaffId), reaction }, { onConflict: "note_id,staff_id" });
+      }
+      setReactionsByNote((prev) => {
+        const next = { ...prev };
+        const entry = next[noteId] || { counts: {}, mine: null };
+        const counts = { ...entry.counts };
+        const mineNow = entry.mine;
+        if (mine === reaction) { counts[reaction] = Math.max(0, (counts[reaction] || 0) - 1); next[noteId] = { counts, mine: null }; return next; }
+        if (mineNow && mineNow !== reaction) counts[mineNow] = Math.max(0, (counts[mineNow] || 0) - 1);
+        counts[reaction] = (counts[reaction] || 0) + 1;
+        next[noteId] = { counts, mine: reaction };
+        return next;
+      });
+    } catch (err) { alert("Couldn't update reaction: " + (err?.message || String(err))); }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
+
+  useEffect(() => {
+    if (!expandedNoteId) return;
+    const el = noteItemRefs.current?.[expandedNoteId];
+    if (!el) return;
+    const t = setTimeout(() => { try { el.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch { el.scrollIntoView(); } }, 50);
+    return () => clearTimeout(t);
+  }, [expandedNoteId]);
+
+  useEffect(() => {
+    if (!infoOpenId) return;
+    const onKey = (e) => { if (e.key === "Escape") setInfoOpenId(null); };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [infoOpenId]);
+
   if (!authChecked || !currentPharmacyId) {
-    return (
-      <main className="p-6">
-        <div className="text-sm text-gray-600">Loading pharmacy...</div>
-      </main>
-    );
+    return <main className="p-6 text-sm text-gray-600">Loading...</main>;
   }
+
+  // ── Render ──
   return (
-    <main className="p-4 md:p-6 max-w-7xl mx-auto relative overflow-visible">
-  
+    <div className="flex h-screen overflow-hidden bg-gray-100">
 
-      {/* App card on grey backdrop */}
-      <div className="card overflow-hidden">
-        {/* Confetti overlay */}
-        {showConfetti && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="text-5xl md:text-6xl">🎉</div>
-          </div>
-        )}
+      {/* Confetti */}
+      {showConfetti && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center">
+          <div className="text-6xl">🎉</div>
+        </div>
+      )}
 
-    {/* Header */}
-        <div className="px-4 md:px-6 pt-4 md:pt-6 pb-3 border-b-2 border-blue-500">
-<div className="flex items-center justify-between">
-  <h1 className="h1-tight">Byford Pharmacy Chalkboard</h1>
+      {/* Roster Modal */}
+      {showRosterModal && <RosterModal onClose={() => setShowRosterModal(false)} />}
 
-  <div className="ml-4 flex items-center gap-2">
-
-    <Link
-      href="/roster"
-      className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-    >
-      Roster
-    </Link>
-
-    <Link
-      href="/insights"
-      className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-    >
-      Insights
-    </Link>
-
-    <Link
-      href="/admin"
-      className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-    >
-      Admin
-    </Link>
-
-  </div>
-</div>
-
-</div>
-
-
-       
-        {/* Content grid */}
-        {loading ? (
-          <div className="p-6">Loading…</div>
-        ) : (
-          <div className="grid grid-cols-12 gap-4 p-4 md:p-6">
-            {/* LEFT: Tasks */}
-            <section className="col-span-12 md:col-span-4 divider-r md:pr-4">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="section-title">Today’s Tasks</h2>
-                <span className="progress-chip">
-                  {progress.done}/{progress.total} ({progress.pct}%)
-                </span>
-              </div>
-             {selectedStaffId ? (
-  <div className="mb-2">
-    <span className="text-xs md:text-sm bg-green-100 text-green-800 rounded-full px-2 py-0.5">
-      Selected: {selectedStaffName}
-    </span>
-  </div>
-) : (
-  <div className="mb-2">
-    <span className="text-xs md:text-sm bg-blue-50 text-blue-800 rounded-md px-2 py-1 border border-blue-200">
-      Tip: Tap your photo on the right, then tap a task here.
-    </span>
-  </div>
-)}
-
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[calc(100vh-220px)] overflow-y-auto overscroll-contain pr-1 nice-scroll">
-
-                {tasks.map((task) => {
-                  const isDone = completedTaskIds.has(task.id);
-                  return (
-                    <button
-  key={task.id}
-  className={`p-2 rounded-lg border text-left active:scale-[0.99] leading-snug h-16 flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
-    isDone ? "bg-green-50 border-green-300" : "bg-white"
-  } ${selectedStaffId ? "hover:ring-2 hover:ring-blue-300 hover:border-blue-300" : "opacity-100"}`}
-  onClick={() => {
-  // If an info popover is open, a tile tap only closes it — no completion.
-  if (infoOpenId) {
-    setInfoOpenId(null);
-    return;
-  }
-  handleTaskTap(task);
-}}
-
-
->
-
-                      <div className="flex flex-col flex-1">
-                        <div className="flex items-start gap-3">
-                          <div
-  className="font-medium text-[13px] leading-tight break-words overflow-hidden"
-  style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
->
-  {task.title}
-</div>
-
-                        </div>
-
-                                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-  {/* Left side: due or overdue */}
-  {task.due_time ? (
-    isOverdue(task, completedTaskIds) ? (
-      <span className="inline-flex px-1.5 py-0.5 rounded-md bg-red-100 text-red-600 border border-red-300">
-        Overdue
-      </span>
-    ) : (
-      <span>Due: {formatTime(task.due_time)}</span>
-    )
-  ) : (
-    <span>&nbsp;</span>
-  )}
-
-    {/* Right side: info button + completed checkmark */}
-    <span className="relative inline-flex items-center gap-2">
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          // Toggle this task’s popover
-          setInfoOpenId((prev) => (prev === task.id ? null : task.id));
-        }}
-        className="h-5 w-5 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50"
-        title="Task info"
-        aria-haspopup="dialog"
-        aria-expanded={infoOpenId === task.id}
-        aria-label="Task info"
-      >
-        i
-      </button>
-
-      {/* Info popover (portal, modal-style to avoid clipping) */}
-{infoOpenId === task.id &&
-  createPortal(
-    <>
-      {/* Backdrop (click to close) */}
-      <div
-        className="fixed inset-0 z-40 bg-black/30"
-        onClick={() => setInfoOpenId(null)}
-        aria-hidden="true"
+      {/* Sidebar */}
+      <Sidebar
+        onViewRoster={() => setShowRosterModal(true)}
+        onViewLeaderboard={() => setLeaderboardOpen((o) => !o)}
+        onViewActivity={() => setActivityOpen((o) => !o)}
+        leaderboardOpen={leaderboardOpen}
+        activityOpen={activityOpen}
+        leadersWeek={leadersWeek}
+        leadersMonth={leadersMonth}
+        leadersPeriod={leadersPeriod}
+        setLeadersPeriod={setLeadersPeriod}
+        feed={feed}
+        onLogout={handleLogout}
       />
 
-      {/* Centered container */}
-      <div
-  className="fixed inset-0 z-50 flex items-start justify-center p-4 md:p-6"
-  role="dialog"
-  aria-modal="true"
-  aria-label="Task notes"
-  onClick={() => setInfoOpenId(null)}
->
-  <div
-    className="mt-16 w-full max-w-xl max-h-[85vh] overflow-auto rounded-2xl border border-gray-200 bg-white shadow-xl"
-    onClick={(e) => e.stopPropagation()}
-  >
+      {/* Main content */}
+      <div className="flex flex-1 overflow-hidden">
 
-          {/* Accent bar */}
-          <div className="h-1 rounded-t-2xl bg-blue-500" />
+        {/* Tasks column */}
+        <div className="w-[52%] min-w-[380px] flex flex-col border-r bg-white overflow-hidden">
 
-          {/* Header with title + close */}
-          <div className="flex items-center justify-between px-4 py-3">
-            <div className="min-w-0 pr-3">
-              <div className="truncate font-medium text-gray-900">{task.title}</div>
-              {task.due_time && (
-                <div className="text-xs text-gray-500">
-                  Due {formatTime(task.due_time)}
+          {/* Date heading */}
+          <div className="px-4 pt-4 pb-3 border-b shrink-0">
+            <div className="text-xl font-bold text-gray-800">
+              {new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}
+            </div>
+          </div>
+
+          {/* Task grid */}
+          <div className="flex-1 overflow-y-auto px-3 pb-3 pt-2">
+            {loading ? (
+              <div className="text-sm text-gray-500 p-4">Loading tasks...</div>
+            ) : (() => {
+              const regularTasks = tasks.filter((t) => t.frequency !== "monthly_anytime");
+              const monthlyTasks = tasks.filter((t) => t.frequency === "monthly_anytime");
+
+              const dailyDone = regularTasks.filter((t) => completedTaskIds.has(t.id)).length;
+              const dailyTotal = regularTasks.length;
+              const dailyPct = dailyTotal ? Math.round((dailyDone / dailyTotal) * 100) : 0;
+
+              const monthlyDone = monthlyTasks.filter((t) => Boolean(monthlyCompletions[t.id])).length;
+              const monthlyTotal = monthlyTasks.length;
+              const monthlyPct = monthlyTotal ? Math.round((monthlyDone / monthlyTotal) * 100) : 0;
+
+              const renderTaskCard = (task, isMonthly = false) => {
+                const isDone = isMonthly
+                  ? Boolean(monthlyCompletions[task.id])
+                  : completedTaskIds.has(task.id);
+                const overdue = isOverdue(task, completedTaskIds);
+                const badge = getTaskBadge(task);
+                const monthlyComp = monthlyCompletions[task.id];
+                const borderColour = isDone
+                  ? "border-l-green-500"
+                  : overdue
+                  ? "border-l-red-500"
+                  : isMonthly
+                  ? "border-l-orange-400"
+                  : "border-l-blue-400";
+
+                return (
+                  <button
+                    key={task.id}
+                    onClick={() => { if (infoOpenId) { setInfoOpenId(null); return; } handleTaskTap(task); }}
+                    className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${borderColour} text-left bg-white shadow-sm hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <div className="font-medium text-[11px] leading-tight break-words line-clamp-2 flex-1 text-gray-800">{task.title}</div>
+                      {isDone && <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>}
+                    </div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-[10px] text-gray-400">
+                        {overdue ? (
+                          <span className="text-red-500 font-medium">Overdue</span>
+                        ) : isMonthly && monthlyComp ? (
+                          <span className="text-green-600">by {monthlyComp.staffName}</span>
+                        ) : task.due_time ? (
+                          `${formatTime(task.due_time)}`
+                        ) : ""}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className={`text-[9px] px-1 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setInfoOpenId((prev) => prev === task.id ? null : task.id); }}
+                          className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-[9px] text-gray-500"
+                        >i</button>
+                      </div>
+                    </div>
+                  </button>
+                );
+              };
+
+              return (
+                <div className="space-y-4">
+                  {/* Daily Tasks section */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Daily Tasks</div>
+                      <span className="text-[11px] font-semibold text-blue-700">{dailyDone}/{dailyTotal} ({dailyPct}%)</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-1 mb-2">
+                      <div className="bg-blue-500 h-1 rounded-full transition-all" style={{ width: `${dailyPct}%` }} />
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {regularTasks.map((task) => renderTaskCard(task, false))}
+                    </div>
+                  </div>
+
+                  {/* This Month section */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">This Month</div>
+                      <span className="text-[11px] font-semibold text-orange-600">{monthlyDone}/{monthlyTotal} ({monthlyPct}%)</span>
+                    </div>
+                    <div className="w-full bg-orange-50 rounded-full h-1 mb-2">
+                      <div className="bg-orange-400 h-1 rounded-full transition-all" style={{ width: `${monthlyPct}%` }} />
+                    </div>
+                    {monthlyTotal === 0 ? (
+                      <div className="text-xs text-gray-400 py-2">No monthly tasks added yet.</div>
+                    ) : (
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {monthlyTasks.map((task) => renderTaskCard(task, true))}
+                      </div>
+                    )}
+                  </div>
                 </div>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* Staff + Notes column */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-white">
+
+          {/* Staff section */}
+          <div className="border-b shrink-0 px-4 pt-3 pb-3 bg-white">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-gray-700">Today's Staff</h2>
+              
+            </div>
+
+            {/* Staff photos with times */}
+            <div className="flex flex-wrap gap-3">
+              {onShiftStaff.map((s) => {
+                const isSelected = s.id === selectedStaffId;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setSelectedStaffId(s.id)}
+                    className={`flex flex-col items-center p-1.5 rounded-xl border transition-all hover:shadow-md ${isSelected ? "ring-2 ring-green-500 border-green-300" : "border-gray-200"}`}
+                  >
+                    <img
+                      src={s.photo_url || "/placeholder.png"}
+                      alt={s.name}
+                      className="w-14 h-14 rounded-full object-cover"
+                      loading="lazy"
+                    />
+                    <span className="text-[11px] mt-1 text-center max-w-[72px] truncate text-gray-700 font-medium">{s.name}</span>
+                    {s.start_time && s.end_time && (
+                      <span className="text-[10px] text-gray-400 text-center">{formatRosterTime(s.start_time)}–{formatRosterTime(s.end_time)}</span>
+                    )}
+                  </button>
+                );
+              })}
+              {onShiftStaff.length === 0 && (
+                <div className="text-xs text-gray-400">No staff rostered today.</div>
               )}
             </div>
 
-            <button
-              type="button"
-              className="h-10 w-10 inline-flex items-center justify-center rounded-full hover:bg-gray-100"
-              aria-label="Close"
-              onClick={() => setInfoOpenId(null)}
-            >
-              ✕
-            </button>
+            {/* Staff tip */}
+            <div className="mt-2 text-xs text-gray-400">
+              {selectedStaffId
+                ? <span className="text-green-700 font-medium">✓ {selectedStaffName} selected</span>
+                : "Tap your photo, then tap each task you complete."}
+            </div>
           </div>
 
-          {/* Body */}
-          <div className="px-4 pb-4 text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">
-  {(() => {
-    const txt = String(task?.info ?? "").trim();
-    return txt ? txt : "No notes yet.";
-  })()}
-</div>
-
-        </div>
-      </div>
-    </>,
-    document.body
-  )
-}
-
-        {/* (old anchored popover removed — using portal modal above) */}
-
-
-      {isDone && (
-        <span
-          className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]"
-          title="Completed"
-        >
-          ✓
-        </span>
-      )}
-    </span>
-
-
-</div>
-
-
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* RIGHT: Staff + Activity */}
-           <section className="col-span-12 md:col-span-8 grid grid-cols-2 gap-4 overflow-visible min-h-[calc(100vh-220px)]">
-
-
-
-              {/* Staff list */}
-              <div className="divider-r md:pr-4">
-                <h2 className="section-title mb-3">Pharmily</h2>
-                <div className="grid grid-cols-2 gap-2 max-h-[calc(100vh-220px)] overflow-y-auto overscroll-contain pr-1 nice-scroll">
-
-                  {staff.map((s) => {
-                    const isSelected = s.id === selectedStaffId;
-                    return (
-                      <button
-                        key={s.id}
-                        className={`flex flex-col items-center p-1.5 rounded-xl border hover:bg-gray-50 ${
-                          isSelected ? "ring-2 ring-green-500" : ""
-                        }`}
-                        onClick={() => setSelectedStaffId(s.id)}
-                      >
-                        <img
-                          src={s.photo_url || "/placeholder.png"}
-                          alt={s.name}
-                          width={64}
-                          height={64}
-                          loading="lazy"
-                          decoding="async"
-                          className="w-14 h-14 rounded-full object-cover"
-                        />
-                        <span className="text-[11px] mt-1 text-center">{s.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="mt-2 text-[11px] text-gray-500">
-                  Tip: Tap your photo once, then tap each task you complete.
-                </div>
-              </div>
-
-              {/* Right stack: Activity / Leaderboard / Notes */}
-             <div className="grid grid-rows-[auto_auto_1fr] min-h-0 max-h-[calc(100vh-220px)] pr-1 gap-4">
-
-
-
-
-
-
-    {/* Leaderboard */}
-    <div className="border rounded-xl p-3 bg-white">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-medium">Leaderboard</h3>
-        <div className="inline-flex items-center gap-2">
-          <button
-            type="button"
-            className={`text-xs rounded-md border px-2 py-0.5 ${leadersPeriod === "week" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-gray-200"}`}
-            onClick={() => setLeadersPeriod("week")}
-          >
-            This week
-          </button>
-          <button
-            type="button"
-            className={`text-xs rounded-md border px-2 py-0.5 ${leadersPeriod === "month" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-gray-200"}`}
-            onClick={() => setLeadersPeriod("month")}
-          >
-            This month
-          </button>
-        </div>
-      </div>
-
-     {(() => {
-  const rows = leadersPeriod === "week" ? leadersWeek : leadersMonth;
-  // Take top 3, then pad with placeholders to always show 3 rows
-  const top = rows.slice(0, 3);
-  const padded = [...top];
-  for (let i = padded.length; i < 3; i++) {
-    padded.push({ staff_id: `pad-${i}`, name: "—", points: null });
-  }
-
-  return (
-    <>
-      <ol className="text-sm space-y-1">
-        {padded.map((r, i) => (
-          <li key={r.staff_id} className="flex items-center justify-between">
-            <span className="truncate">
-              <span className="mr-2 text-gray-500">#{i + 1}</span>
-              <span className="font-medium">{r.name}</span>
-            </span>
-            {r.points == null ? (
-              <span className="text-gray-300">—</span>
-            ) : (
-              <span className="tabular-nums">{r.points} pts</span>
-            )}
-          </li>
-        ))}
-      </ol>
-      {rows.length > 3 && (
-        <div className="mt-2">
-          <button
-            type="button"
-            className="text-xs rounded-md border border-gray-200 px-2 py-1 hover:bg-gray-50"
-            onClick={() => setShowLeadersModal(true)}
-          >
-            View all
-          </button>
-        </div>
-      )}
-    </>
-  );
-})()}
-
-    </div>
-
-{/* Notes (taller so expanded notes + replies have room) */}
-<div className="border rounded-xl p-3 bg-white min-h-[200px] max-h-[420px] overflow-y-auto nice-scroll">
-
-  <div className="flex items-center justify-between mb-2">
-  <h3 className="font-medium">Notes</h3>
-
-
-</div>
-
-
-    {/* Composer (textarea so handover notes + replies feel natural) */}
-  <div className="flex gap-2 mb-2 items-start">
-    <textarea
-      value={noteText}
-      onChange={(e) => setNoteText(e.target.value)}
-      maxLength={500}
-      rows={2}
-      placeholder={
-        selectedStaffName
-          ? `Note from ${selectedStaffName}…`
-          : "Tap your photo, then write a note…"
-      }
-      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none leading-snug"
-      onKeyDown={(e) => {
-        // Enter = post, Shift+Enter = new line (kiosk-friendly)
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          postNote();
-        }
-      }}
-    />
-
-    <button
-      type="button"
-      onClick={postNote}
-      disabled={!noteText.trim() || notesSaving || !selectedStaffId}
-      className="rounded-lg px-3 py-2 text-sm border border-blue-600 bg-blue-600 text-white disabled:opacity-50"
-    >
-      Post
-    </button>
-  </div>
-
-    {/* List */}
-  {notes.length === 0 ? (
-    <div className="text-xs text-gray-500">No notes yet.</div>
-  ) : (
-    (() => {
-      const openNotes = (notes || []).filter((n) => n.resolved !== true);
-
-      // Resolved notes (always compute so we can show the bottom button + count)
-      // Sorted by resolved_at (newest first).
-      const resolvedNotes = (notes || [])
-        .filter((n) => n.resolved === true)
-        .slice()
-        .sort((a, b) => {
-          const aT = new Date(a.resolved_at || a.created_at).getTime();
-          const bT = new Date(b.resolved_at || b.created_at).getTime();
-          return bT - aT;
-        });
-
-
-      const renderNote = (n) => {
-        const author = staffById[n.staff_id];
-        const when = new Date(n.created_at).toLocaleString("en-AU", {
-          month: "short",
-          day: "numeric",
-          weekday: "short",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-
-        const resolvedWho = n.resolved_by_staff_id != null
-          ? staffById[Number(n.resolved_by_staff_id)]
-          : null;
-
-        const resolvedWhen = n.resolved_at
-          ? new Date(n.resolved_at).toLocaleString("en-AU", {
-              month: "short",
-              day: "numeric",
-              weekday: "short",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : null;
-
-        return (
-          <li
-            key={n.id}
-            ref={(el) => {
-              if (el) noteItemRefs.current[n.id] = el;
-            }}
-                    className={`flex items-start gap-2 rounded-lg ${
-  n.resolved
-    ? "bg-gray-50 border border-gray-200 px-2 py-1.5 border-l-4 border-l-gray-300"
-    : ""
-}`}
-
-
-          >
-
-
-            <img
-              src={author?.photo_url || "/placeholder.png"}
-              alt={author?.name || "Staff"}
-              className={`rounded-full object-cover mt-0.5 ${n.resolved ? "w-7 h-7" : "w-8 h-8"}`}
-
-              loading="lazy"
-              decoding="async"
-            />
-            <div className="min-w-0 flex-1">
-
-
-
-              <div className="flex items-center gap-2 flex-wrap">
-
-                <span className="text-sm font-medium">
-  {author?.name ?? "Someone"}
-</span>
-<span className="text-[11px] text-gray-500">{when}</span>
-
-{n.resolved ? (
-  <span className="inline-flex items-center gap-1 text-[11px] rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
-    <span aria-hidden="true">✅</span>
-    Resolved
-  </span>
-) : null}
-
-
-{n.resolved && expandedNoteId === n.id ? (
-  <div className="mt-0.5 text-[11px] text-gray-600">
-    {(() => {
-      const who = n.resolved_by_staff_id != null ? staffById[Number(n.resolved_by_staff_id)] : null;
-      const whenRes = n.resolved_at
-        ? new Date(n.resolved_at).toLocaleString("en-AU", {
-            month: "short",
-            day: "numeric",
-            weekday: "short",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : null;
-
-      if (!who?.name && !whenRes) return null;
-
-      return (
-        <>
-          Resolved{who?.name ? ` by ${who.name}` : ""}{whenRes ? ` • ${whenRes}` : ""}
-        </>
-      );
-    })()}
-  </div>
-) : null}
-
-
-
-  
-                {/* pinned badge removed — icon now indicates state */}
-
-              </div>
-  <div
-  role="button"
-  tabIndex={0}
-  onClick={(e) => {
-  // If the user taps a control inside the note row (buttons, inputs, textarea),
-  // don't toggle expand/collapse.
-  if (e?.target?.closest?.("button, textarea, input, select, a, label")) return;
-  setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
-}}
-
-  onKeyDown={(e) => {
-  // If the keypress originated inside a control (eg typing in the reply box),
-  // do not toggle expand/collapse.
-  if (e?.target?.closest?.("textarea, input, select, button, a, label")) return;
-
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
-  }
-}}
-
-  className={`cursor-pointer ${
-    expandedNoteId === n.id
-      ? "mt-1 rounded-lg border border-gray-100 bg-gray-50 p-2"
-      : ""
-  }`}
-  title={expandedNoteId === n.id ? "Click to collapse" : "Click to expand"}
->
-  {/* Body: preview when collapsed, full when expanded */}
- <div className={`${n.resolved && expandedNoteId !== n.id ? "text-xs text-gray-500" : "text-sm text-gray-800"} whitespace-pre-wrap break-words`}>
-
-
-   {expandedNoteId === n.id
-  ? n.body
-  : truncate(n.body, n.resolved ? 110 : 160)}
-
-  </div>
-{expandedNoteId === n.id && n.resolved ? (
-  <div className="mt-2 text-xs text-gray-600">
-    Resolved
-    {resolvedWho?.name ? ` by ${resolvedWho.name}` : (n.resolved_by_staff_id != null ? ` by #${n.resolved_by_staff_id}` : "")}
-    {resolvedWhen ? ` • ${resolvedWhen}` : ""}.
-  </div>
-) : null}
-
-
-  {/* Expanded area (Replies will render here next) */}
- {expandedNoteId === n.id && (
-  <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
-    <div className="text-[11px] font-medium text-gray-600 mb-1">
-      Replies
-    </div>
-
-    {(() => {
-      const reps = repliesByNote[n.id] || [];
-      const draft = replyTextByNote[n.id] || "";
-      const saving = replySavingNoteId === n.id;
-
-      return (
-        <>
-          {/* Reply list */}
-          {!reps.length ? (
-            <div className="text-xs text-gray-500">No replies yet.</div>
-          ) : (
-            <div className="space-y-2">
-              {reps.map((r) => {
-                const who = staffById[r.staff_id];
-                const whenR = new Date(r.created_at).toLocaleString("en-AU", {
-                  month: "short",
-                  day: "numeric",
-                  weekday: "short",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
-                return (
-                  <div key={r.id} className="flex items-start gap-2">
-                    <img
-                      src={who?.photo_url || "/placeholder.png"}
-                      alt={who?.name || "Staff"}
-                      className="w-6 h-6 rounded-full object-cover mt-0.5"
-                      loading="lazy"
-                      decoding="async"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[12px] font-medium text-gray-900">
-                          {who?.name ?? "Someone"}
-                        </span>
-                        <span className="text-[11px] text-gray-500">{whenR}</span>
-                      </div>
-                      <div className="text-sm whitespace-pre-wrap break-words">
-                        {r.body}
+          {/* Notes section */}
+          <div className="flex-1 overflow-hidden flex flex-col px-4 py-3 min-h-0">
+            <div className="flex items-center justify-between mb-2 shrink-0">
+              <h2 className="text-sm font-semibold text-gray-700">Notes</h2>
+            </div>
+
+            {/* Note composer */}
+            <div className="flex gap-2 mb-3 shrink-0 items-end">
+              <textarea
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                maxLength={500}
+                rows={2}
+                placeholder={selectedStaffName ? `Note from ${selectedStaffName}…` : "Tap your photo, then write a note…"}
+                className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
+              />
+              <button
+                onClick={postNote}
+                disabled={!noteText.trim() || notesSaving || !selectedStaffId}
+                className="rounded-lg px-3 py-1.5 text-xs font-medium border border-blue-500 bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {notesSaving ? "..." : "Post"}
+              </button>
+            </div>
+
+            {/* Notes list */}
+            <div className="flex-1 overflow-y-auto space-y-2 nice-scroll">
+              {(() => {
+                const openNotes = notes.filter((n) => n.resolved !== true);
+                const resolvedNotes = notes.filter((n) => n.resolved === true).sort((a, b) => new Date(b.resolved_at || b.created_at) - new Date(a.resolved_at || a.created_at));
+
+                const renderNote = (n) => {
+                  const author = staffById[n.staff_id];
+                  const when = new Date(n.created_at).toLocaleString("en-AU", { month: "short", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" });
+
+                  return (
+                    <div
+                      key={n.id}
+                      ref={(el) => { if (el) noteItemRefs.current[n.id] = el; }}
+                      className={`flex items-start gap-2 rounded-lg ${n.resolved ? "bg-gray-50 border border-gray-200 px-2 py-1.5 border-l-4 border-l-gray-300" : ""}`}
+                    >
+                      <img src={author?.photo_url || "/placeholder.png"} alt={author?.name || "Staff"} className="w-8 h-8 rounded-full object-cover mt-0.5 shrink-0" loading="lazy" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium">{author?.name ?? "Someone"}</span>
+                          <span className="text-[11px] text-gray-500">{when}</span>
+                          {n.resolved && <span className="text-[11px] rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">✅ Resolved</span>}
+                        </div>
+
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => { if (e?.target?.closest?.("button, textarea, input")) return; setExpandedNoteId((prev) => prev === n.id ? null : n.id); }}
+                          onKeyDown={(e) => { if (e?.target?.closest?.("textarea, input, button")) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedNoteId((prev) => prev === n.id ? null : n.id); } }}
+                          className={`cursor-pointer ${expandedNoteId === n.id ? "mt-1 rounded-lg border border-gray-100 bg-gray-50 p-2" : ""}`}
+                        >
+                          <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">
+                            {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
+                          </div>
+
+                          {expandedNoteId === n.id && (
+                            <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
+                              <div className="text-[11px] font-medium text-gray-600 mb-1">Replies</div>
+                              {(() => {
+                                const reps = repliesByNote[n.id] || [];
+                                const draft = replyTextByNote[n.id] || "";
+                                const saving = replySavingNoteId === n.id;
+                                return (
+                                  <>
+                                    {!reps.length ? <div className="text-xs text-gray-500">No replies yet.</div> : (
+                                      <div className="space-y-2">
+                                        {reps.map((r) => {
+                                          const who = staffById[r.staff_id];
+                                          return (
+                                            <div key={r.id} className="flex items-start gap-2">
+                                              <img src={who?.photo_url || "/placeholder.png"} alt={who?.name || "Staff"} className="w-6 h-6 rounded-full object-cover mt-0.5" loading="lazy" />
+                                              <div className="min-w-0 flex-1">
+                                                <div className="flex items-center gap-2">
+                                                  <span className="text-[12px] font-medium">{who?.name ?? "Someone"}</span>
+                                                  <span className="text-[11px] text-gray-500">{new Date(r.created_at).toLocaleString("en-AU", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                                                </div>
+                                                <div className="text-sm whitespace-pre-wrap break-words">{r.body}</div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                    {n.resolved ? (
+                                      <div className="mt-3 border-t pt-2 text-xs text-gray-600">This note is resolved. Reopen to reply.</div>
+                                    ) : (
+                                      <div className="mt-3 border-t pt-2">
+                                        <textarea
+                                          value={draft}
+                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                                          onPointerDown={(e) => e.stopPropagation()}
+                                          onChange={(e) => setReplyTextByNote((prev) => ({ ...prev, [n.id]: e.target.value }))}
+                                          rows={2}
+                                          maxLength={500}
+                                          placeholder={selectedStaffName ? `Reply as ${selectedStaffName}…` : "Tap your photo, then reply…"}
+                                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none"
+                                          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postReply(n.id); } }}
+                                        />
+                                        <div className="mt-2 flex justify-end">
+                                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); postReply(n.id); }} disabled={!draft.trim() || saving || !selectedStaffId} className="rounded-lg px-3 py-2 text-sm border border-blue-600 bg-blue-600 text-white disabled:opacity-50">
+                                            {saving ? "Posting…" : "Reply"}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="mt-1 flex items-center gap-1 flex-wrap">
+                          <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpandedNoteId((prev) => prev === n.id ? null : n.id); }}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${expandedNoteId === n.id ? "border-blue-600 bg-blue-50 text-blue-700" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+                          >
+                            💬 <span>{repliesByNote[n.id]?.length || 0}</span>
+                          </button>
+                          {!n.resolved && REACTIONS.map((rx) => {
+                            const counts = reactionsByNote[n.id]?.counts || {};
+                            const mine = reactionsByNote[n.id]?.mine || null;
+                            const active = mine === rx;
+                            return (
+                              <button key={rx} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); toggleReaction(n.id, rx); }} className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"}`}>
+                                {rx} <span className="tabular-nums text-gray-600">{counts[rx] || 0}</span>
+                              </button>
+                            );
+                          })}
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleResolved(n); }} disabled={!selectedStaffId} className={`h-6 inline-flex items-center justify-center rounded-full border px-2 text-[11px] disabled:opacity-40 ${n.resolved ? "border-gray-200 bg-gray-50 text-gray-700" : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"}`}>
+                            {n.resolved ? "Reopen" : "Resolve"}
+                          </button>
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(n); }} disabled={!selectedStaffId} className={`h-6 w-6 inline-flex items-center justify-center rounded-full disabled:opacity-40 ${n.pinned ? "text-red-600 hover:bg-red-50" : "text-green-600 hover:bg-green-50"}`} title={n.pinned ? "Unpin" : "Pin"}>
+                            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" /></svg>
+                          </button>
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteNote(n); }} disabled={!selectedStaffId || selectedStaffId !== n.staff_id} className="h-6 w-6 inline-flex items-center justify-center rounded-full text-red-600 hover:bg-red-50 disabled:opacity-40" title="Delete">
+                            🗑️
+                          </button>
+                        </div>
                       </div>
                     </div>
+                  );
+                };
+
+                return (
+                  <div className="space-y-3">
+                    <ul className="space-y-2">{openNotes.map(renderNote)}</ul>
+                    {showResolved && (
+                      <div>
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowResolved(false); }} className="mb-2 w-full text-xs rounded-md border border-gray-200 px-3 py-2 text-gray-600 hover:bg-gray-50">Hide resolved</button>
+                        <ul className="space-y-2">{resolvedNotes.map(renderNote)}</ul>
+                      </div>
+                    )}
+                    {!showResolved && resolvedNotes.length > 0 && (
+                      <div className="pt-2 border-t border-gray-100">
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowResolved(true); }} className="w-full text-xs rounded-md border border-gray-200 px-3 py-2 text-gray-600 hover:bg-gray-50">
+                          Resolved ({resolvedNotes.length})
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
-              })}
+              })()}
             </div>
-          )}
-
-         {/* Reply composer (blocked while resolved) */}
-{n.resolved ? (
-  <div className="mt-3 border-t border-gray-100 pt-2 text-xs text-gray-600">
-    This note is resolved. Reopen it to reply.
-  </div>
-) : (
-  <div className="mt-3 border-t border-gray-100 pt-2">
-
-            <textarea
-  value={draft}
-  onClick={(e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }}
-  onPointerDown={(e) => {
-    e.stopPropagation();
-  }}
-
-              onChange={(e) =>
-                setReplyTextByNote((prev) => ({ ...prev, [n.id]: e.target.value }))
-              }
-              rows={2}
-              maxLength={500}
-              placeholder={
-                selectedStaffName
-                  ? `Reply as ${selectedStaffName}…`
-                  : "Tap your photo, then reply…"
-              }
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none leading-snug"
-              onKeyDown={(e) => {
-                // Enter = post, Shift+Enter = new line
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  postReply(n.id);
-                }
-              }}
-            />
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-[11px] text-gray-500">
-                Shift+Enter for a new line
-              </span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  postReply(n.id);
-                }}
-                disabled={!draft.trim() || saving || !selectedStaffId}
-                className="rounded-lg px-3 py-2 text-sm border border-blue-600 bg-blue-600 text-white disabled:opacity-50"
-              >
-                {saving ? "Posting…" : "Reply"}
-              </button>
-                   </div>
           </div>
-)}
-        </>
-      );
-
-    })()}
-  </div>
-)}
-
-
-
-</div>
-
-{/* Footer row: comments + reactions */}
-<div className="mt-1 flex items-center gap-1 flex-nowrap">
-
-
-  {/* Comments / expand toggle */}
-  <button
-    type="button"
-    className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
-      expandedNoteId === n.id
-        ? "border-blue-600 bg-blue-50 text-blue-700"
-        : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-    }`}
-    title={expandedNoteId === n.id ? "Hide replies" : "Show replies"}
-    aria-label={expandedNoteId === n.id ? "Hide replies" : "Show replies"}
-    onClick={(e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setExpandedNoteId((prev) => (prev === n.id ? null : n.id));
-    }}
-  >
-    <span aria-hidden="true">💬</span>
-    <span className="tabular-nums">{(repliesByNote[n.id]?.length || 0)}</span>
-  </button>
-
-  {/* Reactions (only when open/unresolved) */}
-  {!n.resolved &&
-    REACTIONS.map((rx) => {
-      const counts = reactionsByNote[n.id]?.counts || {};
-      const mine = reactionsByNote[n.id]?.mine || null;
-      const active = mine === rx;
-      const count = counts[rx] || 0;
-
-      return (
-        <button
-          key={rx}
-          type="button"
-          onPointerDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            toggleReaction(n.id, rx);
-          }}
-          className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${
-            active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"
-          }`}
-        >
-          <span>{rx}</span>
-          <span className="tabular-nums text-gray-600">{count}</span>
-        </button>
-      );
-    })}
-</div>
-
-
-            </div>
-{/* Resolve / Reopen */}
-<button
-  type="button"
-  className={`h-6 inline-flex items-center justify-center rounded-full border px-2 text-[11px] self-start disabled:opacity-40 ${
-    n.resolved
-      ? "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
-      : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
-  }`}
-  title={n.resolved ? "Reopen note" : "Mark resolved"}
-  aria-label={n.resolved ? "Reopen note" : "Mark note resolved"}
-  onClick={(e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleResolved(n);
-  }}
-  disabled={!selectedStaffId}
->
-  {n.resolved ? "Reopen" : "Resolve"}
-</button>
-
-      {/* Pin / Unpin (SVG icon: green = not pinned, red = pinned) */}
-<button
-  type="button"
-  className={`h-6 w-6 inline-flex items-center justify-center rounded-none self-start disabled:opacity-40 ${
-    n.pinned ? "text-red-600 hover:bg-red-50" : "text-green-600 hover:bg-green-50"
-  }`}
-  title={n.pinned ? "Unpin" : "Pin to top"}
-  aria-label={n.pinned ? "Unpin note" : "Pin note"}
-  onClick={(e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    togglePin(n);
-  }}
-  disabled={!selectedStaffId}
->
-
-  {/* Simple pushpin SVG using currentColor */}
- <svg
-  viewBox="0 0 24 24"
-  aria-hidden="true"
-  className="h-3.5 w-3.5"
-  fill="currentColor"
->
-  {/* Teardrop pin (clearly reads as a pin) */}
-  <path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/>
-</svg>
-
-</button>
-
-
-
-
-      <button
-  type="button"
-  className="h-6 w-6 inline-flex items-center justify-center rounded-none text-red-600 self-start hover:bg-red-50 ml-1 disabled:opacity-40"
-  title="Delete note"
-  aria-label="Delete note"
-  onClick={(e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    deleteNote(n);
-  }}
-  // Only allow the author (current selected staff) to delete from the kiosk
-  disabled={!selectedStaffId || selectedStaffId !== n.staff_id}
->
-
-  <span className="text-[13px] leading-none">🗑️</span>
-</button>
-
-
-
-
-              </li>
-        );
-      };
-
-      return (
-        <div className="space-y-3">
-          {/* Open */}
-          <div>
-            {showResolved && (
-              <div className="mb-2 text-[11px] font-medium text-gray-600">
-                Open
-              </div>
-            )}
-            <ul className="space-y-2">
-              {openNotes.map(renderNote)}
-            </ul>
-          </div>
-
-                        {/* Resolved */}
-          {showResolved && (
-            <div>
-              {/* Hide button sits directly above resolved notes */}
-              <button
-                type="button"
-                className="mb-2 w-full text-xs rounded-md border border-gray-200 px-3 py-2 text-gray-600 hover:bg-gray-50"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowResolved(false);
-                }}
-              >
-                Hide resolved
-              </button>
-
-              <ul className="space-y-2">
-                {resolvedNotes.map(renderNote)}
-              </ul>
-            </div>
-          )}
-
-          {/* Bottom button only when resolved are hidden */}
-          {!showResolved && resolvedNotes.length > 0 && (
-            <div className="pt-2 border-t border-gray-100">
-              <button
-                type="button"
-                className="w-full text-xs rounded-md border border-gray-200 px-3 py-2 text-gray-600 hover:bg-gray-50"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowResolved(true);
-                }}
-              >
-                {`Resolved (${resolvedNotes.length})`}
-              </button>
-            </div>
-          )}
-
-
-
         </div>
-      );
-    })()
-  )}
+      </div>
 
-</div>
-
-
-  {/* Activity (fills rest of column, scrolls) */}
- <div className="border rounded-xl p-3 bg-white h-[96px] overflow-y-auto nice-scroll">
-
-
-
-
-
-
-
-    <div className="flex items-center justify-between mb-2">
-      <h3 className="font-medium">Activity</h3>
-      <span className="text-xs text-gray-500">{feed.length} recent</span>
-    </div>
-    <div className="space-y-2">
-      {feed.length === 0 ? (
-        <div className="text-xs text-gray-500">No activity yet.</div>
-      ) : (
-        feed.map((e) => (
-          <div key={e.id} className="text-sm">
-            <span className="font-medium">{e.staffName}</span>{" "}
-            completed <span className="font-medium">“{e.taskTitle}”</span>{" "}
-            at <span className="text-gray-600">{e.timeStr}</span>.
+      {/* Info modal */}
+      {infoOpenId && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setInfoOpenId(null)} />
+          <div className="fixed inset-0 z-50 flex items-start justify-center p-4 md:p-6" onClick={() => setInfoOpenId(null)}>
+            <div className="mt-16 w-full max-w-xl max-h-[85vh] overflow-auto rounded-2xl border border-gray-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="h-1 rounded-t-2xl bg-blue-500" />
+              <div className="flex items-center justify-between px-4 py-3">
+                <div className="min-w-0 pr-3">
+                  <div className="truncate font-medium text-gray-900">{tasks.find((t) => t.id === infoOpenId)?.title}</div>
+                  {tasks.find((t) => t.id === infoOpenId)?.due_time && <div className="text-xs text-gray-500">Due {formatTime(tasks.find((t) => t.id === infoOpenId)?.due_time)}</div>}
+                </div>
+                <button onClick={() => setInfoOpenId(null)} className="h-10 w-10 inline-flex items-center justify-center rounded-full hover:bg-gray-100">✕</button>
+              </div>
+              <div className="px-4 pb-4 text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">
+                {String(tasks.find((t) => t.id === infoOpenId)?.info ?? "").trim() || "No notes yet."}
+              </div>
+            </div>
           </div>
-        ))
+        </>,
+        document.body
       )}
     </div>
-  </div>
-</div>
-
-            </section>
-          </div>
-        )}
-              {showLeadersModal && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-        {/* Backdrop */}
-        <div className="absolute inset-0 bg-black/40" onClick={() => setShowLeadersModal(false)} />
-        {/* Card */}
-        <div className="relative z-10 w-full max-w-md rounded-2xl bg-white p-4 shadow-xl max-h-[85vh] overflow-y-auto">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-base font-semibold">
-              Leaderboard — {leadersPeriod === "week" ? "This week" : "This month"}
-            </h3>
-            <button
-              type="button"
-              className="h-8 w-8 inline-flex items-center justify-center rounded-full hover:bg-gray-100"
-              aria-label="Close"
-              onClick={() => setShowLeadersModal(false)}
-            >
-              ×
-            </button>
-          </div>
-
-          {(() => {
-            const rows = leadersPeriod === "week" ? leadersWeek : leadersMonth;
-            if (!rows.length) return <div className="text-sm text-gray-500">No points yet.</div>;
-            return (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-gray-600">
-                    <th className="py-1 pr-2">#</th>
-                    <th className="py-1 pr-2">Name</th>
-                    <th className="py-1 text-right">Points</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={r.staff_id} className="border-t border-gray-100">
-                      <td className="py-1 pr-2 text-gray-500">{i + 1}</td>
-                      <td className="py-1 pr-2">{r.name}</td>
-                      <td className="py-1 text-right tabular-nums">{r.points}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            );
-          })()}
-        </div>
-      </div>
-    )}
-
-      </div>
-    </main>
   );
 }
