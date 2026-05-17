@@ -56,6 +56,20 @@ export default function RosterPage() {
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
 
+  const [pinEntered, setPinEntered] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState(false);
+
+  const handlePinSubmit = () => {
+    if (pinInput === "2105") {
+      setPinEntered(true);
+      setPinError(false);
+    } else {
+      setPinError(true);
+      setPinInput("");
+    }
+  };
+
   // ── State ──
   const [monthOffset, setMonthOffset] = useState(0);
   const [shifts, setShifts] = useState([]);
@@ -619,6 +633,36 @@ export default function RosterPage() {
     easter: "🐣🌷🐣",
   };
 
+  if (!pinEntered) {
+    return (
+      <main className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="bg-white rounded-xl border shadow-sm p-8 w-full max-w-xs text-center">
+          <div className="text-2xl mb-1">🔒</div>
+          <h1 className="text-lg font-semibold text-gray-800 mb-1">Roster</h1>
+          <p className="text-xs text-gray-500 mb-4">Enter PIN to continue</p>
+          <input
+            type="password"
+            inputMode="numeric"
+            maxLength={6}
+            value={pinInput}
+            onChange={(e) => { setPinInput(e.target.value); setPinError(false); }}
+            onKeyDown={(e) => { if (e.key === "Enter") handlePinSubmit(); }}
+            placeholder="••••"
+            className="w-full text-center rounded-lg border border-gray-300 px-3 py-2 text-lg tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            autoFocus
+          />
+          {pinError && <p className="text-xs text-red-500 mb-3">Incorrect PIN. Try again.</p>}
+          <button
+            onClick={handlePinSubmit}
+            className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
+          >
+            Enter
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <>
       {/* ── Print styles ── */}
@@ -626,22 +670,56 @@ export default function RosterPage() {
         @media print {
           .no-print { display: none !important; }
           .print-only { display: block !important; }
-          body { background: white; }
-          .print-container { box-shadow: none !important; border: none !important; }
-          @page { size: A4 landscape; margin: 10mm; }
+          body { background: white !important; margin: 0 !important; }
+          main { background: white !important; padding: 0 !important; }
+          @page { size: A4 landscape; margin: 6mm; }
+
+          .print-outer { max-width: 100% !important; margin: 0 !important; padding: 0 !important; }
+          .print-container { box-shadow: none !important; border: 1px solid #ccc !important; width: 100% !important; }
+          .hours-summary { display: none !important; }
+          .print-note-icon { display: none !important; }
+
+          .print-month-title { font-size: 36px !important; font-weight: 400 !important; letter-spacing: 3px !important; text-transform: uppercase !important; }
+          .print-legend { font-size: 9px !important; }
+          .print-day-header { font-size: 9px !important; padding: 3px 0 !important; font-weight: 600 !important; }
+
+          .print-calendar-cell { height: 115px !important; padding: 3px 4px !important; overflow: hidden !important; }
+          .print-day-number { font-size: 11px !important; font-weight: 700 !important; }
+          .print-shift-line { font-size: 10px !important; line-height: 1.5 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; display: block !important; }
+          .print-weekend-cell { 
+            background-color: #faf5ff !important; 
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+
+          .print-calendar-cell, .print-day-header {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
         }
         .print-only { display: none; }
       `}</style>
 
       <main className="min-h-screen bg-gray-100 p-2">
-        <div className="max-w-[1400px] mx-auto">
+        <div className="print-outer max-w-[1400px] mx-auto">
 
           {/* ── Print header (print only) ── */}
           <div className="print-only text-center mb-4">
-            {printImage !== "none" && (
-              <div className="text-4xl mb-1">{printImageEmoji[printImage]}</div>
-            )}
-            <div className="text-2xl font-bold">{monthLabel}</div>
+            <div className="flex items-center justify-between px-2">
+              {printImage !== "none" ? (
+                <div className="text-4xl">{printImageEmoji[printImage]}</div>
+              ) : <div />}
+              <div className="print-month-title text-xl font-black tracking-wide">{monthLabel}</div>
+              {printImage !== "none" ? (
+                <div className="text-4xl">{printImageEmoji[printImage]}</div>
+              ) : <div />}
+            </div>
+            <div className="print-legend mt-3 flex justify-center gap-6">
+              <span className="text-purple-700 font-semibold">● Pharmacist</span>
+              <span className="text-blue-700 font-semibold">● Locum</span>
+              <span className="text-green-700 font-semibold">● DAA</span>
+              <span className="text-teal-700 font-semibold">● Pharmacy Assistant</span>
+            </div>
           </div>
 
           {/* ── Top bar ── */}
@@ -684,7 +762,7 @@ export default function RosterPage() {
             {/* Day headers */}
             <div className="grid grid-cols-7 border-b">
               {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => (
-                <div key={d} className={`text-center text-xs font-semibold py-1.5 ${i >= 5 ? "text-purple-600" : "text-gray-600"} ${i < 6 ? "border-r" : ""}`}>{d}</div>
+                <div key={d} className={`print-day-header ${i >= 5 ? "print-weekend-cell" : ""} text-center text-xs font-semibold py-1.5 ${i >= 5 ? "text-purple-600" : "text-gray-600"} ${i < 6 ? "border-r" : ""}`}>{d}</div>
               ))}
             </div>
 
@@ -710,6 +788,8 @@ export default function RosterPage() {
                     onDragLeave={() => { if (!dateString) return; handleDragLeave(dateString); }}
                     onDrop={(e) => { if (!dateString) return; handleDrop(e, dateString); }}
                     className={`
+                      print-calendar-cell
+                      ${isWeekend ? "print-weekend-cell" : ""}
                       ${isLastCol ? "" : "border-r"} ${isLastRow ? "" : "border-b"}
                       min-h-[90px] p-1 text-xs cursor-pointer transition-colors
                       ${isDragTarget ? (dragCopyMode ? "bg-green-50 ring-2 ring-inset ring-green-400" : "bg-blue-50 ring-2 ring-inset ring-blue-400") :
@@ -717,19 +797,31 @@ export default function RosterPage() {
                         isToday ? "bg-amber-50" :
                         holiday ? "bg-red-50" :
                         day ? (isWeekend ? "bg-purple-50 hover:bg-purple-100" : "bg-white hover:bg-gray-50") :
-                        "bg-gray-50"}
+                        (isWeekend ? "bg-purple-50" : "bg-gray-50")}
                     `}
                   >
                     {day ? (
                       <>
                         <div className="flex items-start justify-between mb-0.5">
-                          <span className={`text-xs font-bold ${isToday ? "text-amber-600" : isWeekend ? "text-purple-600" : "text-gray-700"}`}>{day}</span>
-                          {holiday && <span title={holiday.name} className="text-sm leading-none">{holidayEmoji[holiday.image_key] || holidayEmoji.default}</span>}
-                          {isDragTarget && <span className={`text-[9px] px-1 rounded ${dragCopyMode ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>{dragCopyMode ? "Copy" : "Move"}</span>}
+                          <span className={`print-day-number text-xs font-bold ${isToday ? "text-amber-600" : isWeekend ? "text-purple-600" : "text-gray-700"}`}>{day}</span>
+                          <div className="flex items-center gap-1">
+                            {dayNotes[dateString] && <span title="Has notes" className="print-note-icon text-[10px] leading-none">📝</span>}
+                            {holiday && <span title={holiday.name} className="text-sm leading-none">{holidayEmoji[holiday.image_key] || holidayEmoji.default}</span>}
+                            {isDragTarget && <span className={`text-[9px] px-1 rounded ${dragCopyMode ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>{dragCopyMode ? "Copy" : "Move"}</span>}
+                          </div>
                         </div>
                         {holiday && <div className="text-[9px] text-red-600 font-medium mb-0.5 leading-tight">{holiday.name}</div>}
-                        <div className="space-y-px">
-                          {dayShifts.slice(0, 8).map((s) => {
+                        <div
+                            className="space-y-px"
+                            style={{
+                              fontSize: dayShifts.length > 6
+                                ? "8px"
+                                : dayShifts.length > 4
+                                ? "9px"
+                                : "10.5px"
+                            }}
+                          >
+                          {dayShifts.slice(0, 10).map((s) => {
                             const name = s.staff?.name || s.staff_name || "?";
                             const start = formatTime(s.start_time);
                             const end = formatTime(s.end_time);
@@ -741,14 +833,17 @@ export default function RosterPage() {
                                 onDragStart={(e) => handleDragStart(e, s)}
                                 onDragEnd={handleDragEnd}
                                 onClick={(e) => { e.stopPropagation(); setSelectedDate(dateString); }}
-                                className={`text-[10px] leading-tight truncate ${roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
+                                className={`print-shift-line text-[10px] leading-tight truncate ${roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
+                                style={{
+                                  fontSize: dayShifts.length > 7 ? "8px" : dayShifts.length > 5 ? "9px" : "10px"
+                                }}
                                 title={`${name} ${start}–${end} (${s.role})`}
                               >
                                 {name} <span className="opacity-70">{start}–{end}</span>
                               </div>
                             );
                           })}
-                          {dayShifts.length > 8 && <div className="text-[9px] text-gray-400">+{dayShifts.length - 8} more</div>}
+                          {dayShifts.length > 10 && <div className="text-[9px] text-gray-400">+{dayShifts.length - 10} more</div>}
                         </div>
                       </>
                     ) : null}
@@ -759,7 +854,7 @@ export default function RosterPage() {
           </div>
 
           {/* ── Hours summary ── */}
-          <div className="no-print mt-2 bg-white rounded-xl border p-3">
+          <div className="no-print hours-summary mt-2 bg-white rounded-xl border p-3">
             <div className="text-xs font-semibold text-gray-700 mb-2">Hours this month</div>
             <div className="flex flex-wrap gap-3">
               {monthHours().map(({ name, hours }) => (
