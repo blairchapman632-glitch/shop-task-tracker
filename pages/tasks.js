@@ -176,9 +176,19 @@ export default function TasksPage() {
   const [schedule, setSchedule] = useState([]);
   const [sectionsLoading, setSectionsLoading] = useState(false);
   const [editingSection, setEditingSection] = useState(null);
+  const [editSectionName, setEditSectionName] = useState("");
   const [editSectionStaffId, setEditSectionStaffId] = useState("");
+  const [editSectionNotes, setEditSectionNotes] = useState("");
+  const [editSectionPoints, setEditSectionPoints] = useState(3);
   const [savingSection, setSavingSection] = useState(false);
+  const [deletingSection, setDeletingSection] = useState(null);
   const [togglingCell, setTogglingCell] = useState(null);
+  const [showAddSection, setShowAddSection] = useState(false);
+  const [newSectionName, setNewSectionName] = useState("");
+  const [newSectionStaffId, setNewSectionStaffId] = useState("");
+  const [newSectionNotes, setNewSectionNotes] = useState("");
+  const [newSectionPoints, setNewSectionPoints] = useState(3);
+  const [savingNewSection, setSavingNewSection] = useState(false);
 
   const MONTHS = [
     { label: "Jan", value: "2026-01-01" },
@@ -247,19 +257,61 @@ export default function TasksPage() {
     }
   };
 
-  const handleUpdateSectionStaff = async () => {
+  const handleUpdateSection = async () => {
     if (!editingSection) return;
+    if (!editSectionName.trim()) { alert("Please enter a section name."); return; }
     try {
       setSavingSection(true);
       await supabase.from("sections").update({
+        name: editSectionName.trim(),
         assigned_staff_id: editSectionStaffId ? Number(editSectionStaffId) : null,
+        notes: editSectionNotes.trim() || null,
+        points: Number(editSectionPoints) || 3,
       }).eq("id", editingSection.id);
-      await loadSections();
+      await loadSections(currentPharmacyId);
       setEditingSection(null);
     } catch (err) {
       alert("Couldn't update section: " + (err?.message || String(err)));
     } finally {
       setSavingSection(false);
+    }
+  };
+
+  const handleDeleteSection = async (section) => {
+    if (!window.confirm(`Delete "${section.name}"? This will also remove it from all schedules.`)) return;
+    try {
+      setDeletingSection(section.id);
+      await supabase.from("section_clean_schedule").delete().eq("section_id", section.id);
+      await supabase.from("sections").delete().eq("id", section.id);
+      await loadSections(currentPharmacyId);
+    } catch (err) {
+      alert("Couldn't delete section: " + (err?.message || String(err)));
+    } finally {
+      setDeletingSection(null);
+    }
+  };
+
+  const handleAddSection = async () => {
+    if (!newSectionName.trim()) { alert("Please enter a section name."); return; }
+    try {
+      setSavingNewSection(true);
+      await supabase.from("sections").insert([{
+        name: newSectionName.trim(),
+        assigned_staff_id: newSectionStaffId ? Number(newSectionStaffId) : null,
+        notes: newSectionNotes.trim() || null,
+        points: Number(newSectionPoints) || 3,
+        pharmacy_id: currentPharmacyId,
+        active: true,
+      }]);
+      await loadSections(currentPharmacyId);
+      setNewSectionName("");
+      setNewSectionStaffId("");
+      setNewSectionNotes("");
+      setShowAddSection(false);
+    } catch (err) {
+      alert("Couldn't add section: " + (err?.message || String(err)));
+    } finally {
+      setSavingNewSection(false);
     }
   };
 
@@ -341,6 +393,7 @@ export default function TasksPage() {
     if (!window.confirm(`Delete "${task.title}"? This cannot be undone.`)) return;
     try {
       setDeletingId(task.id);
+      await supabase.from("completions").delete().eq("task_id", task.id);
       const { error } = await supabase.from("tasks").delete().eq("id", task.id);
       if (error) throw error;
       await refreshTasks();
@@ -486,10 +539,64 @@ export default function TasksPage() {
 
               {/* Year schedule grid */}
               <div className="bg-white rounded-xl border overflow-hidden">
-                <div className="px-4 py-3 border-b">
-                  <div className="text-sm font-semibold text-gray-700">2026 Schedule</div>
-                  <div className="text-xs text-gray-400 mt-0.5">Click a cell to add/remove a section from that month</div>
+                <div className="px-4 py-3 border-b flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-700">2026 Schedule</div>
+                    <div className="text-xs text-gray-400 mt-0.5">Click a cell to add/remove a section from that month</div>
+                  </div>
+                  <button
+                    onClick={() => { setShowAddSection((v) => !v); setNewSectionName(""); setNewSectionStaffId(""); setNewSectionNotes(""); }}
+                    className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700"
+                  >
+                    + Add Section
+                  </button>
                 </div>
+
+                {/* Add section form */}
+                {showAddSection && (
+                  <div className="px-4 py-3 border-b bg-green-50 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newSectionName}
+                        onChange={(e) => setNewSectionName(e.target.value)}
+                        placeholder="Section name"
+                        className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                      <select
+                        value={newSectionStaffId}
+                        onChange={(e) => setNewSectionStaffId(e.target.value)}
+                        className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      >
+                        <option value="">All staff</option>
+                        {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <textarea
+                      value={newSectionNotes}
+                      onChange={(e) => setNewSectionNotes(e.target.value)}
+                      placeholder="Notes (optional) — shown to staff when cleaning"
+                      rows={2}
+                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm resize-none"
+                    />
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-600 font-medium">Points:</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={newSectionPoints}
+                        onChange={(e) => setNewSectionPoints(e.target.value)}
+                        className="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <button onClick={() => setShowAddSection(false)} className="px-3 py-1.5 text-xs border rounded hover:bg-gray-50">Cancel</button>
+                      <button onClick={handleAddSection} disabled={savingNewSection} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">
+                        {savingNewSection ? "Saving..." : "Add Section"}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {sectionsLoading ? (
                   <div className="text-sm text-gray-400 py-8 text-center">Loading...</div>
                 ) : (
@@ -508,60 +615,119 @@ export default function TasksPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {sections.map((section) => (
-                          <tr key={section.id} className="border-t hover:bg-gray-50">
-                            <td className="px-3 py-1.5 font-medium text-gray-800">{section.name}</td>
-                            <td className="px-2 py-1.5 text-gray-500">{section.staff?.name || <span className="text-gray-300">All staff</span>}</td>
-                            {MONTHS.map((m) => {
-                              const scheduled = isScheduled(section.id, m.value);
-                              const completed = isCompleted(section.id, m.value);
-                              const key = `${section.id}-${m.value}`;
-                              const isToggling = togglingCell === key;
-                              return (
-                                <td key={m.value} className="px-1 py-1.5 text-center">
-                                  <button
-                                    onClick={() => handleToggleSchedule(section.id, m.value)}
-                                    disabled={isToggling}
-                                    className={`w-7 h-7 rounded text-[10px] font-medium transition-colors ${
-                                      completed ? "bg-green-500 text-white" :
-                                      scheduled ? "bg-blue-400 text-white" :
-                                      "bg-gray-100 text-gray-300 hover:bg-gray-200"
-                                    } ${m.value === thisMonth ? "ring-1 ring-blue-300" : ""}`}
-                                  >
-                                    {isToggling ? "..." : completed ? "✓" : scheduled ? "●" : ""}
-                                  </button>
+                        {sections.map((section) => {
+                          const isEditingThis = editingSection?.id === section.id;
+                          return (
+                            <React.Fragment key={section.id}>
+                              <tr className={`border-t ${isEditingThis ? "bg-blue-50" : "hover:bg-gray-50"}`}>
+                                <td className="px-3 py-1.5 font-medium text-gray-800">{section.name}</td>
+                                <td className="px-2 py-1.5 text-gray-500">{section.staff?.name || <span className="text-gray-300">All staff</span>}</td>
+                                {MONTHS.map((m) => {
+                                  const scheduled = isScheduled(section.id, m.value);
+                                  const completed = isCompleted(section.id, m.value);
+                                  const key = `${section.id}-${m.value}`;
+                                  const isToggling = togglingCell === key;
+                                  return (
+                                    <td key={m.value} className="px-1 py-1.5 text-center">
+                                      <button
+                                        onClick={() => handleToggleSchedule(section.id, m.value)}
+                                        disabled={isToggling}
+                                        className={`w-7 h-7 rounded text-[10px] font-medium transition-colors ${
+                                          completed ? "bg-green-500 text-white" :
+                                          scheduled ? "bg-blue-400 text-white" :
+                                          "bg-gray-100 text-gray-300 hover:bg-gray-200"
+                                        } ${m.value === thisMonth ? "ring-1 ring-blue-300" : ""}`}
+                                      >
+                                        {isToggling ? "..." : completed ? "✓" : scheduled ? "●" : ""}
+                                      </button>
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-3 py-1.5">
+                                  <div className="flex gap-1">
+                                    <button
+                                      onClick={() => {
+                                        if (isEditingThis) { setEditingSection(null); return; }
+                                        setEditingSection(section);
+                                        setEditSectionName(section.name);
+                                        setEditSectionStaffId(section.assigned_staff_id ? String(section.assigned_staff_id) : "");
+                                        setEditSectionNotes(section.notes || "");
+                                        setEditSectionPoints(section.points ?? 3);
+                                      }}
+                                      className={`text-[10px] font-medium ${isEditingThis ? "text-gray-500 hover:text-gray-700" : "text-blue-500 hover:text-blue-700"}`}
+                                    >
+                                      {isEditingThis ? "Cancel" : "Edit"}
+                                    </button>
+                                    {!isEditingThis && (
+                                      <button
+                                        onClick={() => handleDeleteSection(section)}
+                                        disabled={deletingSection === section.id}
+                                        className="text-[10px] text-red-400 hover:text-red-600 disabled:opacity-50"
+                                      >
+                                        {deletingSection === section.id ? "..." : "Del"}
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
-                              );
-                            })}
-                            <td className="px-3 py-1.5">
-                              {editingSection?.id === section.id ? (
-                                <div className="flex items-center gap-1">
-                                  <select
-                                    value={editSectionStaffId}
-                                    onChange={(e) => setEditSectionStaffId(e.target.value)}
-                                    className="rounded border border-gray-300 px-1 py-0.5 text-xs"
-                                  >
-                                    <option value="">All staff</option>
-                                    {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                  </select>
-                                  <button onClick={handleUpdateSectionStaff} disabled={savingSection} className="px-1.5 py-0.5 bg-blue-600 text-white rounded text-[10px] disabled:opacity-50">
-                                    {savingSection ? "..." : "Save"}
-                                  </button>
-                                  <button onClick={() => setEditingSection(null)} className="px-1.5 py-0.5 border rounded text-[10px]">✕</button>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => { setEditingSection(section); setEditSectionStaffId(section.assigned_staff_id ? String(section.assigned_staff_id) : ""); }}
-                                  className="text-[10px] text-blue-500 hover:text-blue-700"
-                                >
-                                  Edit
-                                </button>
+                              </tr>
+
+                              {/* Inline edit row */}
+                              {isEditingThis && (
+                                <tr className="bg-blue-50 border-t border-blue-100">
+                                  <td colSpan={15} className="px-4 py-3">
+                                    <div className="space-y-2">
+                                      <div className="flex gap-2">
+                                        <input
+                                          type="text"
+                                          value={editSectionName}
+                                          onChange={(e) => setEditSectionName(e.target.value)}
+                                          placeholder="Section name"
+                                          className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                                          autoFocus
+                                        />
+                                        <select
+                                          value={editSectionStaffId}
+                                          onChange={(e) => setEditSectionStaffId(e.target.value)}
+                                          className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+                                        >
+                                          <option value="">All staff</option>
+                                          {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                        </select>
+                                      </div>
+                                      <textarea
+                                        value={editSectionNotes}
+                                        onChange={(e) => setEditSectionNotes(e.target.value)}
+                                        placeholder="Notes (optional) — shown to staff when cleaning"
+                                        rows={2}
+                                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm resize-none"
+                                      />
+                                      <div className="flex items-center gap-2">
+                                        <label className="text-xs text-gray-600 font-medium">Points:</label>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          value={editSectionPoints}
+                                          onChange={(e) => setEditSectionPoints(e.target.value)}
+                                          className="w-20 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                                        />
+                                      </div>
+                                      <div className="flex gap-2 justify-end">
+                                        <button onClick={() => setEditingSection(null)} className="px-3 py-1.5 text-xs border rounded bg-white hover:bg-gray-50">Cancel</button>
+                                        <button onClick={handleUpdateSection} disabled={savingSection} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                                          {savingSection ? "Saving..." : "Save changes"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                          </tr>
-                        ))}
+                            </React.Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
+
+                    
                   </div>
                 )}
               </div>

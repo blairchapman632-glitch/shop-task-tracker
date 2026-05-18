@@ -136,6 +136,9 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
 
       <div className="border-t my-2" />
 
+      {/* Scrollable middle section */}
+      <div className="flex-1 overflow-y-auto min-h-0 space-y-1">
+
       {/* Leaderboard */}
       <SidebarSection
         label="🏆 Leaderboard"
@@ -183,7 +186,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
         )}
       </SidebarSection>
 
-      <div className="flex-1" />
+      </div>{/* end scrollable middle */}
 
       <button
         onClick={onLogout}
@@ -478,7 +481,14 @@ export default function HomePage() {
         supabase.from("staff").select("*").eq("pharmacy_id", currentPharmacyId).order("name", { ascending: true }),
         supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, staff_id, staff_name, staff:staff_id(id, name, photo_url)`).eq("shift_date", todayStr),
         supabase.from("completions").select("task_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
-        supabase.from("section_clean_schedule").select(`id, month, completed_at, completed_by_staff_id, section:section_id(id, name, assigned_staff_id, notes, staff:assigned_staff_id(id, name))`).eq("month", `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`),
+        (() => {
+          const months = [];
+          for (let i = 2; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`);
+          }
+          return supabase.from("section_clean_schedule").select(`id, month, completed_at, completed_by_staff_id, section:section_id(id, name, assigned_staff_id, notes, staff:assigned_staff_id(id, name))`).in("month", months);
+        })(),
       ]);
 
       const activeStaff = (s || []).filter((x) => x.active !== false);
@@ -496,7 +506,14 @@ export default function HomePage() {
         }
       }
       setMonthlyCompletions(monthlyCompMap);
-      setSectionCleans(sectionCleanData || []);
+      const thisMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      // Mark each record with whether it's current month or overdue
+      const enriched = (sectionCleanData || []).map((sc) => ({
+        ...sc,
+        isOverdue: sc.month !== thisMonthStr && !sc.completed_at,
+        isCurrentMonth: sc.month === thisMonthStr,
+      }));
+      setSectionCleans(enriched);
 
       // On shift staff
       const onShift = (rosterShifts || []).map((sh) => ({
@@ -564,24 +581,40 @@ export default function HomePage() {
     const loadLeaders = async () => {
       try {
         const monthStart = getMonthStart();
-        const { data: comps } = await supabase.from("completions").select("task_id,staff_id,completed_at").gte("completed_at", monthStart.toISOString()).lte("completed_at", new Date().toISOString());
+        const [{ data: comps }, { data: sectionData }, { data: scheduleData }] = await Promise.all([
+          supabase.from("completions").select("task_id, section_clean_id, staff_id, completed_at").gte("completed_at", monthStart.toISOString()).lte("completed_at", new Date().toISOString()),
+          supabase.from("sections").select("id, points"),
+          supabase.from("section_clean_schedule").select("id, section_id"),
+        ]);
         const tasksById = Object.fromEntries(tasks.map((t) => [t.id, t]));
+        const sectionsById = Object.fromEntries((sectionData || []).map((s) => [s.id, s]));
+        const scheduleById = Object.fromEntries((scheduleData || []).map((s) => [s.id, s]));
         const staffById = Object.fromEntries(staff.map((s) => [s.id, s]));
+
+        const getPoints = (c) => {
+          if (c.task_id) {
+            const t = tasksById[c.task_id];
+            return t ? (Number.isFinite(t.points) ? t.points : 1) : 0;
+          }
+          if (c.section_clean_id) {
+            const sc = scheduleById[c.section_clean_id];
+            const sec = sc ? sectionsById[sc.section_id] : null;
+            return sec ? (Number.isFinite(sec.points) ? sec.points : 3) : 3;
+          }
+          return 0;
+        };
+
         const monthTotals = new Map();
         for (const c of comps || []) {
-          const t = tasksById[c.task_id];
-          if (!t) continue;
-          const pts = Number.isFinite(t.points) ? t.points : 1;
-          monthTotals.set(c.staff_id, (monthTotals.get(c.staff_id) || 0) + pts);
+          const pts = getPoints(c);
+          if (pts > 0) monthTotals.set(c.staff_id, (monthTotals.get(c.staff_id) || 0) + pts);
         }
         const weekStart = getWeekStart();
         const weekTotals = new Map();
         for (const c of comps || []) {
           if (new Date(c.completed_at) < weekStart) continue;
-          const t = tasksById[c.task_id];
-          if (!t) continue;
-          const pts = Number.isFinite(t.points) ? t.points : 1;
-          weekTotals.set(c.staff_id, (weekTotals.get(c.staff_id) || 0) + pts);
+          const pts = getPoints(c);
+          if (pts > 0) weekTotals.set(c.staff_id, (weekTotals.get(c.staff_id) || 0) + pts);
         }
         const toRows = (totals) => Array.from(totals.entries()).map(([staff_id, points]) => ({ staff_id, name: staffById[staff_id]?.name || `#${staff_id}`, points })).sort((a, b) => b.points - a.points);
         setLeadersMonth(toRows(monthTotals));
@@ -903,6 +936,13 @@ export default function HomePage() {
                 return todayRosteredIds.has(assignedId);
               });
 
+              // Sort: overdue first, then current month
+              const myTodaySectionsSorted = [
+                ...myTodaySections.filter((sc) => sc.isOverdue),
+                ...myTodaySections.filter((sc) => !sc.isOverdue),
+              ];
+
+              const currentMonthStr = new Date().toISOString().slice(0, 7) + "-01";
               const sectionDone = sectionCleans.filter((sc) => sc.completed_at).length;
               const sectionTotal = sectionCleans.length;
 
@@ -914,7 +954,9 @@ export default function HomePage() {
                   try {
                     setCompletingSection(sc.id);
                     await supabase.from("section_clean_schedule").update({ completed_at: null, completed_by_staff_id: null }).eq("id", sc.id);
+                    await supabase.from("completions").delete().eq("section_clean_id", sc.id);
                     setSectionCleans((prev) => prev.map((s) => s.id === sc.id ? { ...s, completed_at: null, completed_by_staff_id: null } : s));
+                    setFeed((f) => f.filter((e) => e.sectionCleanId !== sc.id));
                   } catch (err) { alert("Error: " + err.message); }
                   finally { setCompletingSection(null); }
                   return;
@@ -923,7 +965,21 @@ export default function HomePage() {
                   setCompletingSection(sc.id);
                   const now2 = new Date().toISOString();
                   await supabase.from("section_clean_schedule").update({ completed_at: now2, completed_by_staff_id: Number(selectedStaffId) }).eq("id", sc.id);
+                  await supabase.from("completions").insert([{
+                    section_clean_id: sc.id,
+                    staff_id: Number(selectedStaffId),
+                    completed_at: now2,
+                    pharmacy_id: currentPharmacyId,
+                  }]);
                   setSectionCleans((prev) => prev.map((s) => s.id === sc.id ? { ...s, completed_at: now2, completed_by_staff_id: Number(selectedStaffId) } : s));
+                  setFeed((f) => [{
+                    id: crypto.randomUUID(),
+                    sectionCleanId: sc.id,
+                    taskTitle: `Section Clean: ${sc.section?.name}`,
+                    staffName: selectedStaffName ?? "Someone",
+                    timeStr: new Date(now2).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }),
+                  }, ...f].slice(0, 25));
+                  setLeadersRefreshKey((k) => k + 1);
                   burstConfetti();
                 } catch (err) { alert("Error: " + err.message); }
                 finally { setCompletingSection(null); }
@@ -969,17 +1025,23 @@ export default function HomePage() {
                       {/* Today's sections — rostered staff, incomplete */}
                       {myTodaySections.length > 0 && (
                         <div className="grid grid-cols-4 gap-1.5 mb-2">
-                          {myTodaySections.map((sc) => (
+                          {myTodaySectionsSorted.map((sc) => {
+                            const overdue = sc.isOverdue;
+                            const monthLabel = new Date(sc.month).toLocaleString("en-AU", { month: "long" });
+                            return (
                             <button
                               key={sc.id}
                               onClick={() => handleSectionComplete(sc)}
                               disabled={completingSection === sc.id}
-                              className="relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 border-l-blue-400 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
+                              className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${overdue ? "border-l-red-400 bg-red-50" : "border-l-blue-400 bg-white"} text-left shadow-sm hover:shadow-md transition-shadow`}
                             >
-                              <div className="font-medium text-[11px] leading-tight text-gray-800 line-clamp-2">{sc.section?.name}</div>
-                              <div className="text-[10px] text-blue-600 mt-0.5">{sc.section?.staff?.name || "All staff"}</div>
+                              <div className="font-medium text-[11px] leading-tight text-gray-800 line-clamp-2">{overdue && "⚠️ "}{sc.section?.name}</div>
+                              <div className={`text-[10px] mt-0.5 ${overdue ? "text-red-500" : "text-blue-600"}`}>{sc.section?.staff?.name || "All staff"}</div>
                               <div className="mt-1 flex items-center justify-between">
-                                <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">Section</span>
+                                {overdue
+                                  ? <span className="text-[9px] px-1 py-0.5 rounded-full bg-red-100 text-red-600">Overdue — {monthLabel}</span>
+                                  : <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">Section</span>
+                                }
                                 {sc.section?.notes && (
                                   <button
                                     type="button"
@@ -989,7 +1051,8 @@ export default function HomePage() {
                                 )}
                               </div>
                             </button>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
 
