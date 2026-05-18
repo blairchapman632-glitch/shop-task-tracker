@@ -425,6 +425,10 @@ export default function HomePage() {
   const [showConfetti, setShowConfetti] = useState(false);
   const [showRosterModal, setShowRosterModal] = useState(false);
   const [monthlyCompletions, setMonthlyCompletions] = useState({});
+  const [sectionCleans, setSectionCleans] = useState([]);
+  const [sectionCleansExpanded, setSectionCleansExpanded] = useState(false);
+  const [completingSection, setCompletingSection] = useState(null);
+  const [todayRosteredIds, setTodayRosteredIds] = useState(new Set());
 
   // ── Leaderboard ──
   const [leadersWeek, setLeadersWeek] = useState([]);
@@ -468,11 +472,13 @@ export default function HomePage() {
         { data: s },
         { data: rosterShifts },
         { data: monthlyComps },
+        { data: sectionCleanData },
       ] = await Promise.all([
         supabase.from("tasks").select("*").eq("pharmacy_id", currentPharmacyId).order("due_time", { ascending: true, nullsFirst: false }).order("title", { ascending: true }),
         supabase.from("staff").select("*").eq("pharmacy_id", currentPharmacyId).order("name", { ascending: true }),
         supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, staff_id, staff_name, staff:staff_id(id, name, photo_url)`).eq("shift_date", todayStr),
         supabase.from("completions").select("task_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
+        supabase.from("section_clean_schedule").select(`id, month, completed_at, completed_by_staff_id, section:section_id(id, name, assigned_staff_id, notes, staff:assigned_staff_id(id, name))`).eq("month", `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`),
       ]);
 
       const activeStaff = (s || []).filter((x) => x.active !== false);
@@ -490,6 +496,7 @@ export default function HomePage() {
         }
       }
       setMonthlyCompletions(monthlyCompMap);
+      setSectionCleans(sectionCleanData || []);
 
       // On shift staff
       const onShift = (rosterShifts || []).map((sh) => ({
@@ -509,6 +516,7 @@ export default function HomePage() {
       });
 
       setOnShiftStaff(uniqueOnShift.length > 0 ? uniqueOnShift : activeStaff);
+      setTodayRosteredIds(new Set(uniqueOnShift.map((s) => s.id)));
 
       const activeStaffIds = new Set(uniqueOnShift.map((s) => s.id));
 
@@ -887,6 +895,40 @@ export default function HomePage() {
                 );
               };
 
+              // Section cleans logic
+              const myTodaySections = sectionCleans.filter((sc) => {
+                if (sc.completed_at) return false;
+                const assignedId = sc.section?.assigned_staff_id;
+                if (!assignedId) return true; // OTC = all staff
+                return todayRosteredIds.has(assignedId);
+              });
+
+              const sectionDone = sectionCleans.filter((sc) => sc.completed_at).length;
+              const sectionTotal = sectionCleans.length;
+
+              const handleSectionComplete = async (sc) => {
+                if (!selectedStaffId) { alert("Tap your photo first."); return; }
+                if (sc.completed_at) {
+                  const ok = window.confirm(`Undo completion for "${sc.section?.name}"?`);
+                  if (!ok) return;
+                  try {
+                    setCompletingSection(sc.id);
+                    await supabase.from("section_clean_schedule").update({ completed_at: null, completed_by_staff_id: null }).eq("id", sc.id);
+                    setSectionCleans((prev) => prev.map((s) => s.id === sc.id ? { ...s, completed_at: null, completed_by_staff_id: null } : s));
+                  } catch (err) { alert("Error: " + err.message); }
+                  finally { setCompletingSection(null); }
+                  return;
+                }
+                try {
+                  setCompletingSection(sc.id);
+                  const now2 = new Date().toISOString();
+                  await supabase.from("section_clean_schedule").update({ completed_at: now2, completed_by_staff_id: Number(selectedStaffId) }).eq("id", sc.id);
+                  setSectionCleans((prev) => prev.map((s) => s.id === sc.id ? { ...s, completed_at: now2, completed_by_staff_id: Number(selectedStaffId) } : s));
+                  burstConfetti();
+                } catch (err) { alert("Error: " + err.message); }
+                finally { setCompletingSection(null); }
+              };
+
               return (
                 <div className="space-y-4">
                   {/* Daily Tasks section */}
@@ -920,6 +962,75 @@ export default function HomePage() {
                       </div>
                     )}
                   </div>
+
+                  {/* Section Cleans */}
+                  {sectionCleans.length > 0 && (
+                    <div>
+                      {/* Today's sections — rostered staff, incomplete */}
+                      {myTodaySections.length > 0 && (
+                        <div className="grid grid-cols-4 gap-1.5 mb-2">
+                          {myTodaySections.map((sc) => (
+                            <button
+                              key={sc.id}
+                              onClick={() => handleSectionComplete(sc)}
+                              disabled={completingSection === sc.id}
+                              className="relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 border-l-blue-400 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
+                            >
+                              <div className="font-medium text-[11px] leading-tight text-gray-800 line-clamp-2">{sc.section?.name}</div>
+                              <div className="text-[10px] text-blue-600 mt-0.5">{sc.section?.staff?.name || "All staff"}</div>
+                              <div className="mt-1 flex items-center justify-between">
+                                <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">Section</span>
+                                {sc.section?.notes && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setInfoOpenId(`section-${sc.id}`); }}
+                                    className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white text-[9px] text-gray-500"
+                                  >i</button>
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Collapsible all sections */}
+                      <button
+                        onClick={() => setSectionCleansExpanded((e) => !e)}
+                        className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-100"
+                      >
+                        <span>Section Cleans {sectionDone}/{sectionTotal}</span>
+                        <span>{sectionCleansExpanded ? "▲" : "▼"}</span>
+                      </button>
+
+                      {sectionCleansExpanded && (
+                        <div className="grid grid-cols-4 gap-1.5 mt-2">
+                          {[...sectionCleans]
+                            .sort((a, b) => (a.completed_at ? 1 : -1) - (b.completed_at ? 1 : -1))
+                            .map((sc) => {
+                              const isDone = Boolean(sc.completed_at);
+                              const completedBy = isDone ? staffById[sc.completed_by_staff_id]?.name : null;
+                              return (
+                                <button
+                                  key={sc.id}
+                                  onClick={() => handleSectionComplete(sc)}
+                                  disabled={completingSection === sc.id}
+                                  className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${isDone ? "border-l-green-500" : "border-l-blue-400"} text-left bg-white shadow-sm hover:shadow-md transition-shadow`}
+                                >
+                                  <div className="flex items-start justify-between gap-1">
+                                    <div className="font-medium text-[11px] leading-tight text-gray-800 line-clamp-2 flex-1">{sc.section?.name}</div>
+                                    {isDone && <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>}
+                                  </div>
+                                  <div className="text-[10px] text-blue-600 mt-0.5">{sc.section?.staff?.name || "All staff"}</div>
+                                  <div className="mt-1 text-[10px] text-gray-400">
+                                    {isDone ? <span className="text-green-600">by {completedBy || "staff"}</span> : <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">Section</span>}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -1147,8 +1258,30 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Section info modal */}
+      {infoOpenId && String(infoOpenId).startsWith("section-") && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setInfoOpenId(null)} />
+          <div className="fixed inset-0 z-50 flex items-start justify-center p-4" onClick={() => setInfoOpenId(null)}>
+            <div className="mt-16 w-full max-w-xl rounded-2xl border border-gray-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="h-1 rounded-t-2xl bg-blue-500" />
+              <div className="flex items-center justify-between px-4 py-3">
+                <div className="font-medium text-gray-900">
+                  {sectionCleans.find((sc) => `section-${sc.id}` === infoOpenId)?.section?.name}
+                </div>
+                <button onClick={() => setInfoOpenId(null)} className="h-10 w-10 inline-flex items-center justify-center rounded-full hover:bg-gray-100">✕</button>
+              </div>
+              <div className="px-4 pb-4 text-sm text-gray-700 whitespace-pre-wrap">
+                {sectionCleans.find((sc) => `section-${sc.id}` === infoOpenId)?.section?.notes || "No notes."}
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
       {/* Info modal */}
-      {infoOpenId && createPortal(
+      {infoOpenId && !String(infoOpenId).startsWith("section-") && createPortal(
         <>
           <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setInfoOpenId(null)} />
           <div className="fixed inset-0 z-50 flex items-start justify-center p-4 md:p-6" onClick={() => setInfoOpenId(null)}>

@@ -151,6 +151,13 @@ export default function TasksPage() {
     setTasks(data || []);
   };
 
+  // Pre-load sections when pharmacy is available
+  useEffect(() => {
+    if (currentPharmacyId) {
+      loadSections(currentPharmacyId);
+    }
+  }, [currentPharmacyId]);
+
   // ── Filtered tasks ──
   const generalTasks = useMemo(() => tasks.filter((t) =>
     !t.assigned_staff_id &&
@@ -163,6 +170,101 @@ export default function TasksPage() {
     !(t.frequency === "daily" || t.frequency === "weekly") &&
     (searchQ ? t.title.toLowerCase().includes(searchQ.toLowerCase()) : true)
   ), [tasks, searchQ]);
+
+  // ── Section cleans state ──
+  const [sections, setSections] = useState([]);
+  const [schedule, setSchedule] = useState([]);
+  const [sectionsLoading, setSectionsLoading] = useState(false);
+  const [editingSection, setEditingSection] = useState(null);
+  const [editSectionStaffId, setEditSectionStaffId] = useState("");
+  const [savingSection, setSavingSection] = useState(false);
+  const [togglingCell, setTogglingCell] = useState(null);
+
+  const MONTHS = [
+    { label: "Jan", value: "2026-01-01" },
+    { label: "Feb", value: "2026-02-01" },
+    { label: "Mar", value: "2026-03-01" },
+    { label: "Apr", value: "2026-04-01" },
+    { label: "May", value: "2026-05-01" },
+    { label: "Jun", value: "2026-06-01" },
+    { label: "Jul", value: "2026-07-01" },
+    { label: "Aug", value: "2026-08-01" },
+    { label: "Sep", value: "2026-09-01" },
+    { label: "Oct", value: "2026-10-01" },
+    { label: "Nov", value: "2026-11-01" },
+    { label: "Dec", value: "2026-12-01" },
+  ];
+
+  const loadSections = async (pharmId) => {
+    const pid = pharmId || currentPharmacyId;
+    if (!pid) return;
+    setSectionsLoading(true);
+    const [{ data: sectionData }, { data: scheduleData }] = await Promise.all([
+      supabase.from("sections").select("*, staff:assigned_staff_id(id, name)").eq("pharmacy_id", pid).order("name"),
+      supabase.from("section_clean_schedule").select("*").eq("pharmacy_id", pid),
+    ]);
+    
+    setSections(sectionData || []);
+    setSchedule(scheduleData || []);
+    setSectionsLoading(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === "sections" && currentPharmacyId) {
+      loadSections(currentPharmacyId);
+    }
+  }, [activeTab, currentPharmacyId]);
+
+  const isScheduled = (sectionId, month) =>
+    schedule.some((s) => s.section_id === sectionId && s.month === month);
+
+  const isCompleted = (sectionId, month) =>
+    schedule.some((s) => s.section_id === sectionId && s.month === month && s.completed_at);
+
+  const handleToggleSchedule = async (sectionId, month) => {
+    const key = `${sectionId}-${month}`;
+    setTogglingCell(key);
+    try {
+      const existing = schedule.find((s) => s.section_id === sectionId && s.month === month);
+      if (existing) {
+        if (existing.completed_at) {
+          if (!window.confirm("This section is already completed. Remove it from the schedule?")) return;
+        }
+        await supabase.from("section_clean_schedule").delete().eq("id", existing.id);
+        setSchedule((prev) => prev.filter((s) => s.id !== existing.id));
+      } else {
+        const { data } = await supabase.from("section_clean_schedule").insert([{
+          section_id: sectionId,
+          month,
+          pharmacy_id: currentPharmacyId,
+        }]).select().single();
+        setSchedule((prev) => [...prev, data]);
+      }
+    } catch (err) {
+      alert("Couldn't update schedule: " + (err?.message || String(err)));
+    } finally {
+      setTogglingCell(null);
+    }
+  };
+
+  const handleUpdateSectionStaff = async () => {
+    if (!editingSection) return;
+    try {
+      setSavingSection(true);
+      await supabase.from("sections").update({
+        assigned_staff_id: editSectionStaffId ? Number(editSectionStaffId) : null,
+      }).eq("id", editingSection.id);
+      await loadSections();
+      setEditingSection(null);
+    } catch (err) {
+      alert("Couldn't update section: " + (err?.message || String(err)));
+    } finally {
+      setSavingSection(false);
+    }
+  };
+
+  const thisMonth = new Date().toISOString().slice(0, 7) + "-01";
+  const thisMonthSections = schedule.filter((s) => s.month === thisMonth);
 
   // ── Open panel ──
   const openAdd = () => {
@@ -322,6 +424,7 @@ export default function TasksPage() {
             {[
               { key: "general", label: "General Tasks" },
               { key: "assigned", label: "Assigned & Monthly" },
+              { key: "sections", label: "Section Cleans" },
             ].map((tab) => (
               <button
                 key={tab.key}
@@ -350,8 +453,119 @@ export default function TasksPage() {
 
         {/* Table */}
         <div className="flex-1 overflow-auto px-6 py-4">
-          {loading ? (
+          {loading && activeTab !== "sections" ? (
             <div className="text-sm text-gray-400 py-8 text-center">Loading tasks...</div>
+          ) : activeTab === "sections" ? (
+            <div className="space-y-4">
+
+              {/* This month summary */}
+              <div className="bg-white rounded-xl border p-4">
+                <div className="text-sm font-semibold text-gray-700 mb-3">
+                  This Month — {new Date().toLocaleString("en-AU", { month: "long", year: "numeric" })}
+                  <span className="ml-2 text-xs font-normal text-gray-400">
+                    {thisMonthSections.filter((s) => s.completed_at).length}/{thisMonthSections.length} completed
+                  </span>
+                </div>
+                {thisMonthSections.length === 0 ? (
+                  <div className="text-sm text-gray-400">No sections scheduled this month.</div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {thisMonthSections.map((s) => {
+                      const section = sections.find((sec) => sec.id === s.section_id);
+                      if (!section) return null;
+                      return (
+                        <div key={s.id} className={`px-2 py-1 rounded-lg border text-xs ${s.completed_at ? "bg-green-50 border-green-200 text-green-700" : "bg-blue-50 border-blue-200 text-blue-700"}`}>
+                          {s.completed_at ? "✓ " : ""}{section.name}
+                          {section.staff?.name && <span className="text-[10px] ml-1 opacity-70">({section.staff.name})</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Year schedule grid */}
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <div className="px-4 py-3 border-b">
+                  <div className="text-sm font-semibold text-gray-700">2026 Schedule</div>
+                  <div className="text-xs text-gray-400 mt-0.5">Click a cell to add/remove a section from that month</div>
+                </div>
+                {sectionsLoading ? (
+                  <div className="text-sm text-gray-400 py-8 text-center">Loading...</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 border-b">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-semibold text-gray-600 w-48">Section</th>
+                          <th className="px-2 py-2 text-left font-semibold text-gray-500 w-24">Assigned To</th>
+                          {MONTHS.map((m) => (
+                            <th key={m.value} className={`px-1 py-2 text-center font-semibold w-10 ${m.value === thisMonth ? "text-blue-600" : "text-gray-500"}`}>
+                              {m.label}
+                            </th>
+                          ))}
+                          <th className="px-3 py-2 text-left font-semibold text-gray-500">Staff</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sections.map((section) => (
+                          <tr key={section.id} className="border-t hover:bg-gray-50">
+                            <td className="px-3 py-1.5 font-medium text-gray-800">{section.name}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{section.staff?.name || <span className="text-gray-300">All staff</span>}</td>
+                            {MONTHS.map((m) => {
+                              const scheduled = isScheduled(section.id, m.value);
+                              const completed = isCompleted(section.id, m.value);
+                              const key = `${section.id}-${m.value}`;
+                              const isToggling = togglingCell === key;
+                              return (
+                                <td key={m.value} className="px-1 py-1.5 text-center">
+                                  <button
+                                    onClick={() => handleToggleSchedule(section.id, m.value)}
+                                    disabled={isToggling}
+                                    className={`w-7 h-7 rounded text-[10px] font-medium transition-colors ${
+                                      completed ? "bg-green-500 text-white" :
+                                      scheduled ? "bg-blue-400 text-white" :
+                                      "bg-gray-100 text-gray-300 hover:bg-gray-200"
+                                    } ${m.value === thisMonth ? "ring-1 ring-blue-300" : ""}`}
+                                  >
+                                    {isToggling ? "..." : completed ? "✓" : scheduled ? "●" : ""}
+                                  </button>
+                                </td>
+                              );
+                            })}
+                            <td className="px-3 py-1.5">
+                              {editingSection?.id === section.id ? (
+                                <div className="flex items-center gap-1">
+                                  <select
+                                    value={editSectionStaffId}
+                                    onChange={(e) => setEditSectionStaffId(e.target.value)}
+                                    className="rounded border border-gray-300 px-1 py-0.5 text-xs"
+                                  >
+                                    <option value="">All staff</option>
+                                    {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                  </select>
+                                  <button onClick={handleUpdateSectionStaff} disabled={savingSection} className="px-1.5 py-0.5 bg-blue-600 text-white rounded text-[10px] disabled:opacity-50">
+                                    {savingSection ? "..." : "Save"}
+                                  </button>
+                                  <button onClick={() => setEditingSection(null)} className="px-1.5 py-0.5 border rounded text-[10px]">✕</button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => { setEditingSection(section); setEditSectionStaffId(section.assigned_staff_id ? String(section.assigned_staff_id) : ""); }}
+                                  className="text-[10px] text-blue-500 hover:text-blue-700"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
           ) : (
             <div className="bg-white rounded-xl border overflow-hidden">
               <table className="w-full text-sm">
