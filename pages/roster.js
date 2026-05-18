@@ -105,6 +105,10 @@ export default function RosterPage() {
   // Print image
   const [printImage, setPrintImage] = useState("none");
 
+  // Publish status
+  const [monthStatus, setMonthStatus] = useState("draft");
+  const [publishingMonth, setPublishingMonth] = useState(false);
+
   // Notes
   const [dayNotes, setDayNotes] = useState({});
   const [monthNote, setMonthNote] = useState("");
@@ -211,6 +215,7 @@ const selectedDayShifts = selectedDate
         { data: holidayData },
         { data: dayNoteData },
         { data: monthNoteData },
+        { data: rosterMonthData },
       ] = await Promise.all([
         supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, pharmacy_id, staff:staff_id(id, name)`),
         supabase.from("staff").select("id,name,active").order("name"),
@@ -218,15 +223,16 @@ const selectedDayShifts = selectedDate
         supabase.from("public_holidays").select("*"),
         supabase.from("roster_day_notes").select("*").gte("date", startDate).lt("date", endDate),
         supabase.from("roster_month_notes").select("*").eq("month", monthDate).maybeSingle(),
+        supabase.from("roster_months").select("id, status").eq("month", monthDate).maybeSingle(),
       ]);
 
       setShifts(shiftData || []);
       setStaffOptions((staffData || []).filter((s) => s.active !== false));
       setTemplates(templateData || []);
       setHolidays(holidayData || []);
+      setMonthStatus(rosterMonthData?.status || "draft");
 
       const foundPharmacyId = (shiftData || []).find((s) => s.pharmacy_id)?.pharmacy_id || null;
-      
       if (foundPharmacyId) setPharmacyId(foundPharmacyId);
 
       const map = {};
@@ -523,6 +529,30 @@ const selectedDayShifts = selectedDate
     }
   };
 
+  // ── Publish month ──
+  const handlePublishToggle = async () => {
+    const isPublished = monthStatus === "published";
+    if (!window.confirm(isPublished ? "Unpublish this month? Staff will no longer see it." : "Publish this month? Staff will be able to view it.")) return;
+    try {
+      setPublishingMonth(true);
+      const monthDate = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`;
+      const patch = isPublished
+        ? { status: "draft", published_at: null }
+        : { status: "published", published_at: new Date().toISOString() };
+      const { data: existing } = await supabase.from("roster_months").select("id").eq("month", monthDate).maybeSingle();
+      if (existing?.id) {
+        await supabase.from("roster_months").update(patch).eq("id", existing.id);
+      } else {
+        await supabase.from("roster_months").insert([{ month: monthDate, status: "published", published_at: new Date().toISOString(), pharmacy_id: pharmacyId }]);
+      }
+      setMonthStatus(isPublished ? "draft" : "published");
+    } catch (err) {
+      alert("Couldn't update roster status: " + (err?.message || String(err)));
+    } finally {
+      setPublishingMonth(false);
+    }
+  };
+
   // ── Print ──
   const handlePrint = () => window.print();
 
@@ -754,6 +784,18 @@ const selectedDayShifts = selectedDate
 
             <button onClick={handleCopyPreviousMonth} className="px-3 py-1.5 rounded-lg border bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">Copy last month</button>
 
+            <button
+              onClick={handlePublishToggle}
+              disabled={publishingMonth}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-medium disabled:opacity-50 ${
+                monthStatus === "published"
+                  ? "bg-green-50 text-green-700 border-green-300 hover:bg-green-100"
+                  : "bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100"
+              }`}
+            >
+              {publishingMonth ? "..." : monthStatus === "published" ? "✓ Published" : "Publish"}
+            </button>
+
             <select value={printImage} onChange={(e) => setPrintImage(e.target.value)} className="px-2 py-1.5 rounded-lg border bg-white text-xs">
               {printImageOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
@@ -763,7 +805,7 @@ const selectedDayShifts = selectedDate
             <div className="ml-auto flex items-center gap-2">
               <button onClick={() => setShowSettings(true)} className="px-3 py-1.5 rounded-lg border bg-white text-xs font-medium text-gray-700 hover:bg-gray-50">⚙️ Settings</button>
               <Link href="/" className="px-3 py-1.5 rounded-lg border bg-white text-xs font-medium text-gray-700 hover:bg-gray-50">Home</Link>
-              <Link href="/admin" className="px-3 py-1.5 rounded-lg border bg-white text-xs font-medium text-gray-700 hover:bg-gray-50">Admin</Link>
+              
             </div>
           </div>
 

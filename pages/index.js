@@ -131,7 +131,8 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       <NavLink href="/insights" icon="📊" label="Insights" />
       <NavLink href="#" icon="💰" label="Wages" disabled />
       <NavLink href="#" icon="🏖️" label="Leave" disabled />
-      <NavLink href="/admin" icon="⚙️" label="Admin" />
+      <NavLink href="/tasks" icon="✅" label="Tasks" />
+      <NavLink href="#" icon="⚙️" label="Admin" disabled />
 
       <div className="border-t my-2" />
 
@@ -242,13 +243,22 @@ function RosterModal({ onClose }) {
         supabase.from("roster_months").select("*").eq("status", "published").order("month", { ascending: true }),
         supabase.from("public_holidays").select("*"),
       ]);
-      const m = months || [];
-      setPublishedMonths(m);
+      const all = months || [];
       setHolidays(holidayData || []);
 
       const todayMonth = new Date().toISOString().slice(0, 7) + "-01";
-      const idx = m.findIndex((x) => x.month === todayMonth);
-      setMonthIndex(idx >= 0 ? idx : m.length - 1);
+      const currentIdx = all.findIndex((x) => x.month === todayMonth);
+
+      // Filter to current + 1 previous + 1 next only
+      const filtered = all.filter((_, i) => {
+        if (currentIdx === -1) return i >= all.length - 2;
+        return i >= currentIdx - 1 && i <= currentIdx + 1;
+      });
+
+      setPublishedMonths(filtered);
+
+      const newCurrentIdx = filtered.findIndex((x) => x.month === todayMonth);
+      setMonthIndex(newCurrentIdx >= 0 ? newCurrentIdx : filtered.length - 1);
       setLoading(false);
     };
     load();
@@ -500,8 +510,17 @@ export default function HomePage() {
 
       setOnShiftStaff(uniqueOnShift.length > 0 ? uniqueOnShift : activeStaff);
 
+      const activeStaffIds = new Set(uniqueOnShift.map((s) => s.id));
+
       const activeTasks = (t || []).filter((x) => x.active !== false);
-      const todayTasks = activeTasks.filter((task) => isTaskForToday(task, now));
+      const todayTasks = activeTasks.filter((task) => {
+        if (!isTaskForToday(task, now)) return false;
+        // If assigned to someone, only show if they are rostered today
+        if (task.assigned_staff_id) {
+          return activeStaffIds.has(task.assigned_staff_id);
+        }
+        return true;
+      });
       todayTasks.sort((a, b) => {
         const tA = timeToMinutes(a.due_time);
         const tB = timeToMinutes(b.due_time);
@@ -826,6 +845,10 @@ export default function HomePage() {
                   ? "border-l-orange-400"
                   : "border-l-blue-400";
 
+                const assignedStaff = task.assigned_staff_id
+                  ? staffById[task.assigned_staff_id]
+                  : null;
+
                 return (
                   <button
                     key={task.id}
@@ -836,6 +859,11 @@ export default function HomePage() {
                       <div className="font-medium text-[11px] leading-tight break-words line-clamp-2 flex-1 text-gray-800">{task.title}</div>
                       {isDone && <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>}
                     </div>
+                    {isMonthly && (
+                      <div className="text-[10px] text-blue-600 font-medium truncate">
+                        {assignedStaff ? assignedStaff.name : "All staff"}
+                      </div>
+                    )}
                     <div className="mt-1 flex items-center justify-between">
                       <span className="text-[10px] text-gray-400">
                         {overdue ? (
