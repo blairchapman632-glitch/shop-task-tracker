@@ -60,8 +60,15 @@ export default function RosterPage() {
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
 
-  const handlePinSubmit = () => {
-    if (pinInput === "2105") {
+  const handlePinSubmit = async () => {
+    const { data, error } = await supabase
+      .from("staff")
+      .select("id")
+      .eq("pharmacy_id", "81ab394f-d642-4246-b896-e71938b25671")
+      .eq("pin", pinInput)
+      .eq("can_access_roster", true)
+      .single();
+    if (data && !error) {
       setPinEntered(true);
       setPinError(false);
     } else {

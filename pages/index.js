@@ -109,10 +109,147 @@ const getMonthStart = (d = new Date()) => {
   x.setHours(0, 0, 0, 0);
   return x;
 };
+// ─── Change PIN Modal ─────────────────────────────────────────────────────────
+
+function ChangePINModal({ staff, onClose }) {
+  const [step, setStep] = useState(1); // 1 = select staff, 2 = verify + set new PIN
+  const [selectedStaff, setSelectedStaff] = useState(null);
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  const handleSelectStaff = (s) => {
+    setSelectedStaff(s);
+    setStep(2);
+    setError("");
+  };
+
+  const handleSave = async () => {
+    setError("");
+    if (newPin.length !== 4) { setError("New PIN must be 4 digits."); return; }
+    if (newPin !== confirmPin) { setError("New PINs don't match."); return; }
+    setSaving(true);
+    // Verify current PIN
+    const { data, error: verifyErr } = await supabase
+      .from("staff")
+      .select("id")
+      .eq("id", selectedStaff.id)
+      .eq("pin", currentPin)
+      .single();
+    if (verifyErr || !data) {
+      setSaving(false);
+      setError("Current PIN is incorrect.");
+      return;
+    }
+    // Save new PIN
+    const { error: saveErr } = await supabase
+      .from("staff")
+      .update({ pin: newPin })
+      .eq("id", selectedStaff.id);
+    setSaving(false);
+    if (saveErr) { setError("Failed to save: " + saveErr.message); return; }
+    setSuccess(true);
+    setTimeout(() => onClose(), 2000);
+  };
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <h2 className="font-semibold text-gray-800">🔑 Change PIN</h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+          </div>
+
+          {success ? (
+            <div className="px-5 py-8 text-center text-green-600 font-medium">
+              ✓ PIN updated successfully!
+            </div>
+          ) : step === 1 ? (
+            <div className="px-5 py-4">
+              <p className="text-sm text-gray-500 mb-3">Select your name:</p>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {staff.filter((s) => s.pin).map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => handleSelectStaff(s)}
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-left"
+                  >
+                    <img src={s.photo_url || "/placeholder.png"} alt={s.name} className="w-8 h-8 rounded-full object-cover" />
+                    <span className="text-sm font-medium text-gray-800">{s.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="px-5 py-4 space-y-3">
+              <div className="flex items-center gap-3 mb-2">
+                <img src={selectedStaff.photo_url || "/placeholder.png"} alt={selectedStaff.name} className="w-8 h-8 rounded-full object-cover" />
+                <span className="text-sm font-medium text-gray-800">{selectedStaff.name}</span>
+                <button onClick={() => { setStep(1); setError(""); setCurrentPin(""); setNewPin(""); setConfirmPin(""); }} className="ml-auto text-xs text-blue-600 hover:underline">Change</button>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Current PIN</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={currentPin}
+                  onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ""))}
+                  className="w-full border rounded-lg px-3 py-2 text-center text-xl tracking-widest focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  placeholder="••••"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">New PIN</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={newPin}
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+                  className="w-full border rounded-lg px-3 py-2 text-center text-xl tracking-widest focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  placeholder="••••"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Confirm New PIN</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={confirmPin}
+                  onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
+                  onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                  className="w-full border rounded-lg px-3 py-2 text-center text-xl tracking-widest focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  placeholder="••••"
+                />
+              </div>
+              {error && <p className="text-sm text-red-500">{error}</p>}
+              <button
+                onClick={handleSave}
+                disabled={saving || !currentPin || !newPin || !confirmPin}
+                className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40"
+              >
+                {saving ? "Saving…" : "Update PIN"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </>,
+    document.body
+  );
+}
+
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
-function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardOpen, activityOpen, leadersWeek, leadersMonth, leadersPeriod, setLeadersPeriod, feed, onLogout }) {
+function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardOpen, activityOpen, leadersWeek, leadersMonth, leadersPeriod, setLeadersPeriod, feed, onLogout, onChangePIN }) {
   return (
     <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
       <div className="text-sm font-bold text-gray-800 px-2 mb-3 leading-tight">
@@ -132,7 +269,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       <NavLink href="#" icon="💰" label="Wages" disabled />
       <NavLink href="#" icon="🏖️" label="Leave" disabled />
       <NavLink href="/tasks" icon="✅" label="Tasks" />
-      <NavLink href="#" icon="⚙️" label="Admin" disabled />
+      <NavLink href="/admin" icon="⚙️" label="Admin" />
 
       <div className="border-t my-2" />
 
@@ -188,6 +325,12 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
 
       </div>{/* end scrollable middle */}
 
+      <button
+        onClick={onChangePIN}
+        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+      >
+        <span>🔑</span> Change PIN
+      </button>
       <button
         onClick={onLogout}
         className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-red-600 hover:bg-red-50 w-full text-left mt-2"
@@ -427,6 +570,7 @@ export default function HomePage() {
   const [infoOpenId, setInfoOpenId] = useState(null);
   const [showConfetti, setShowConfetti] = useState(false);
   const [showRosterModal, setShowRosterModal] = useState(false);
+  const [showChangePIN, setShowChangePIN] = useState(false);
   const [monthlyCompletions, setMonthlyCompletions] = useState({});
   const [sectionCleans, setSectionCleans] = useState([]);
   const [sectionCleansExpanded, setSectionCleansExpanded] = useState(false);
@@ -827,6 +971,9 @@ export default function HomePage() {
       {/* Roster Modal */}
       {showRosterModal && <RosterModal onClose={() => setShowRosterModal(false)} />}
 
+      {/* Change PIN Modal */}
+      {showChangePIN && <ChangePINModal staff={staff} onClose={() => setShowChangePIN(false)} />}
+
       {/* Sidebar */}
       <Sidebar
         onViewRoster={() => setShowRosterModal(true)}
@@ -840,6 +987,7 @@ export default function HomePage() {
         setLeadersPeriod={setLeadersPeriod}
         feed={feed}
         onLogout={handleLogout}
+        onChangePIN={() => setShowChangePIN(true)}
       />
 
       {/* Main content */}
