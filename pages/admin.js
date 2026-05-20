@@ -14,7 +14,15 @@ const ROLES = [
 ];
 
 const EMPLOYMENT_TYPES = ["Permanent", "Salary", "Casual"];
-
+const WEEK_DAYS = [
+  { key: "hours_monday", label: "Monday" },
+  { key: "hours_tuesday", label: "Tuesday" },
+  { key: "hours_wednesday", label: "Wednesday" },
+  { key: "hours_thursday", label: "Thursday" },
+  { key: "hours_friday", label: "Friday" },
+  { key: "hours_saturday", label: "Saturday" },
+  { key: "hours_sunday", label: "Sunday" },
+];
 const DAYS = [
   { key: "mon", label: "Monday" },
   { key: "tue", label: "Tuesday" },
@@ -433,8 +441,208 @@ function StaffForm({ member, onSave, onCancel }) {
     </div>
   );
 }
+// ─── Settings Tab ─────────────────────────────────────────────────────────────
+
+function SettingsTab() {
+  const [form, setForm] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase
+        .from("pharmacy_settings")
+        .select("*")
+        .eq("pharmacy_id", PHARMACY_ID)
+        .single();
+      setForm(data || {
+        name: "",
+        phone: "",
+        address: "",
+        payroll_start_date: "",
+        hours_monday: "",
+        hours_tuesday: "",
+        hours_wednesday: "",
+        hours_thursday: "",
+        hours_friday: "",
+        hours_saturday: "",
+        hours_sunday: "",
+      });
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
+    const { error: err } = await supabase
+      .from("pharmacy_settings")
+      .update({
+        name: form.name,
+        phone: form.phone,
+        address: form.address,
+        payroll_start_date: form.payroll_start_date || null,
+        hours_monday: form.hours_monday,
+        hours_tuesday: form.hours_tuesday,
+        hours_wednesday: form.hours_wednesday,
+        hours_thursday: form.hours_thursday,
+        hours_friday: form.hours_friday,
+        hours_saturday: form.hours_saturday,
+        hours_sunday: form.hours_sunday,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("pharmacy_id", PHARMACY_ID);
+    setSaving(false);
+    if (err) { setError(err.message); return; }
+    setSuccess(true);
+    setTimeout(() => setSuccess(false), 3000);
+  };
+
+  // Calculate pay periods from start date
+  const getPayPeriods = () => {
+    if (!form?.payroll_start_date) return [];
+    const start = new Date(form.payroll_start_date);
+    const today = new Date();
+    const periods = [];
+    let current = new Date(start);
+    // Wind forward to find current/upcoming periods
+    while (current < today) {
+      current.setDate(current.getDate() + 14);
+    }
+    current.setDate(current.getDate() - 14);
+    for (let i = 0; i < 4; i++) {
+      const end = new Date(current);
+      end.setDate(end.getDate() + 13);
+      periods.push({
+        start: new Date(current),
+        end,
+        isCurrent: current <= today && today <= end,
+      });
+      current.setDate(current.getDate() + 14);
+    }
+    return periods;
+  };
+
+  const payPeriods = form ? getPayPeriods() : [];
+
+  if (loading) return <div className="p-6 text-sm text-gray-400">Loading…</div>;
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 max-w-2xl">
+
+        {/* Pharmacy details */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Pharmacy Details</h3>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Pharmacy Name</label>
+              <input
+                value={form.name || ""}
+                onChange={(e) => set("name", e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                placeholder="e.g. Byford Pharmacy"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
+              <input
+                value={form.phone || ""}
+                onChange={(e) => set("phone", e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                placeholder="e.g. 08 9999 0000"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Address</label>
+              <input
+                value={form.address || ""}
+                onChange={(e) => set("address", e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                placeholder="e.g. 1 Main Street, Byford WA 6122"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Opening hours */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Opening Hours</h3>
+          <p className="text-xs text-gray-400 mb-3">Enter hours as e.g. "8am–6:30pm" or leave blank if closed.</p>
+          <div className="space-y-2">
+            {WEEK_DAYS.map(({ key, label }) => (
+              <div key={key} className="flex items-center gap-3">
+                <span className="text-sm text-gray-600 w-28 shrink-0">{label}</span>
+                <input
+                  value={form[key] || ""}
+                  onChange={(e) => set(key, e.target.value)}
+                  className="flex-1 border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  placeholder="e.g. 8am–6:30pm or Closed"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Payroll */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Payroll</h3>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Fortnightly Start Date</label>
+            <p className="text-xs text-gray-400 mb-2">Set the Wednesday that starts your first pay period. All future periods are calculated automatically.</p>
+            <input
+              type="date"
+              value={form.payroll_start_date || ""}
+              onChange={(e) => set("payroll_start_date", e.target.value)}
+              className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+
+          {/* Pay periods */}
+          {payPeriods.length > 0 && (
+            <div className="mt-4">
+              <div className="text-xs font-medium text-gray-600 mb-2">Pay Periods</div>
+              <div className="space-y-1.5">
+                {payPeriods.map((p, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${p.isCurrent ? "bg-blue-50 border border-blue-200" : "bg-gray-50 border border-gray-100"}`}
+                  >
+                    <span className={p.isCurrent ? "text-blue-700 font-medium" : "text-gray-600"}>
+                      {p.start.toLocaleDateString("en-AU", { day: "numeric", month: "short" })} – {p.end.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
+                    </span>
+                    {p.isCurrent && <span className="ml-auto text-xs bg-blue-600 text-white px-2 py-0.5 rounded-full">Current</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {error && <p className="text-sm text-red-500">{error}</p>}
+        {success && <p className="text-sm text-green-600 font-medium">✓ Settings saved.</p>}
+      </div>
+
+      <div className="px-6 py-4 border-t shrink-0">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="bg-blue-600 text-white rounded-lg px-6 py-2.5 text-sm font-medium disabled:opacity-40"
+        >
+          {saving ? "Saving…" : "Save Settings"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
+
 
 export default function AdminPage() {
   const [unlocked, setUnlocked] = useState(false);
@@ -489,17 +697,9 @@ export default function AdminPage() {
       <div className="flex flex-1 overflow-hidden">
 
         {/* Left — staff list */}
-        <div className="w-[260px] min-w-[260px] bg-white border-r flex flex-col overflow-hidden">
+        {tab === "staff" && <div className="w-[260px] min-w-[260px] bg-white border-r flex flex-col overflow-hidden">
 
-          {/* Tabs */}
-          <div className="flex border-b shrink-0">
-            <button
-              onClick={() => setTab("staff")}
-              className={`flex-1 py-3 text-sm font-medium ${tab === "staff" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
-            >
-              👥 Staff
-            </button>
-          </div>
+          
 
           {tab === "staff" && (
             <>
@@ -554,12 +754,7 @@ export default function AdminPage() {
             </>
           )}
 
-          {tab === "settings" && (
-            <div className="flex-1 flex items-center justify-center p-6 text-sm text-gray-400 text-center">
-              Settings coming soon.
-            </div>
-          )}
-        </div>
+          </div>}
 
         {/* Right — edit panel */}
         <div className="flex-1 bg-white overflow-hidden flex flex-col">
@@ -584,12 +779,11 @@ export default function AdminPage() {
               </div>
             )}
             {tab === "settings" ? (
-              <div className="h-full flex items-center justify-center text-sm text-gray-400">
-                Settings coming soon.
-              </div>
+              <SettingsTab />
             ) : !selected ? (
               <div className="h-full flex items-center justify-center text-sm text-gray-400">
                 Select a staff member to edit, or add a new one.
+
               </div>
             ) : (
               <StaffForm
