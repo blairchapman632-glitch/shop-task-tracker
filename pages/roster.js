@@ -698,8 +698,8 @@ const selectedDayShifts = selectedDate
   // ── Inline edit state ──
   const [inlineEdit, setInlineEdit] = useState(null); // { shift, rect }
   const [inlineEditName, setInlineEditName] = useState("");
-  const [inlineEditStart, setInlineEditStart] = useState("");
-  const [inlineEditEnd, setInlineEditEnd] = useState("");
+  const inlineStartRef = React.useRef("");
+  const inlineEndRef = React.useRef("");
   const [inlineSuggestions, setInlineSuggestions] = useState([]);
   const [savingInline, setSavingInline] = useState(false);
 
@@ -805,7 +805,7 @@ const selectedDayShifts = selectedDate
     </aside>
   );
   // ── Inline Edit Popup ──
-  const InlineEditPopup = () => {
+  const InlineEditPopup = React.memo(() => {
     if (!inlineEdit) return null;
     const { shift, rect } = inlineEdit;
     const viewportHeight = window.innerHeight;
@@ -825,8 +825,8 @@ const selectedDayShifts = selectedDate
       await supabase.from("roster_shifts").update({
         staff_id: staffId || null,
         staff_name: staffName || null,
-        start_time: inlineEditStart,
-        end_time: inlineEditEnd,
+        start_time: inlineStartRef.current,
+        end_time: inlineEndRef.current,
         role,
       }).eq("id", shift.id);
       await refreshShifts();
@@ -853,7 +853,6 @@ const selectedDayShifts = selectedDate
           <div className="text-xs font-semibold text-gray-700 mb-2">Edit Shift</div>
           <div className="relative mb-2">
             <input
-              autoFocus
               value={inlineEditName}
               onChange={(e) => {
                 const val = e.target.value;
@@ -878,10 +877,20 @@ const selectedDayShifts = selectedDate
               </div>
             )}
           </div>
-          <div className="flex gap-1.5 mb-2">
-            <input type="time" value={inlineEditStart} onChange={(e) => setInlineEditStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs" />
-            <span className="text-gray-400 text-xs self-center">–</span>
-            <input type="time" value={inlineEditEnd} onChange={(e) => setInlineEditEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs" />
+          <div className="flex gap-1.5 mb-2 items-center">
+            <input
+              type="time"
+              defaultValue={inlineStartRef.current}
+              onChange={(e) => { inlineStartRef.current = e.target.value; }}
+              className="flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs"
+            />
+            <span className="text-gray-400 text-xs">–</span>
+            <input
+              type="time"
+              defaultValue={inlineEndRef.current}
+              onChange={(e) => { inlineEndRef.current = e.target.value; }}
+              className="flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs"
+            />
           </div>
           <div className="flex gap-1.5">
             <button onClick={handleDelete} className="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50">Delete</button>
@@ -894,7 +903,7 @@ const selectedDayShifts = selectedDate
       </>,
       document.body
     );
-  };
+  });
   if (!pinEntered) {
     return (
       <main className="min-h-screen bg-gray-100 flex items-center justify-center">
@@ -1071,8 +1080,8 @@ const selectedDayShifts = selectedDate
                                   const rect = e.currentTarget.getBoundingClientRect();
                                   setInlineEdit({ shift: s, rect });
                                   setInlineEditName(s.staff?.name || s.staff_name || "");
-                                  setInlineEditStart(s.start_time?.slice(0, 5) || "");
-                                  setInlineEditEnd(s.end_time?.slice(0, 5) || "");
+                                  inlineStartRef.current = s.start_time?.slice(0, 5) || "";
+                                  inlineEndRef.current = s.end_time?.slice(0, 5) || "";
                                   setInlineSuggestions([]);
                                 }}
                                 className={`print-shift-line text-[10px] leading-tight truncate ${isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
