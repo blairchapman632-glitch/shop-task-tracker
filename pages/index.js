@@ -81,9 +81,15 @@ const holidayEmoji = {
 
 const roleColour = {
   pharmacist: "text-purple-700",
+  Pharmacist: "text-purple-700",
   locum: "text-blue-700",
+  Locum: "text-blue-700",
   DAA: "text-orange-600",
+  "DAA Coordinator": "text-orange-600",
   "pharmacy assistant": "text-teal-700",
+  "Pharmacy Assistant": "text-teal-700",
+  "Intern Pharmacist": "text-purple-500",
+  Manager: "text-gray-700",
 };
 
 const REACTIONS = ["👍", "❤️", "🙂"];
@@ -495,7 +501,16 @@ function RosterModal({ onClose }) {
               const dateString = day ? `${currentYear}-${String(currentMonthIdx + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}` : null;
               const isToday = dateString === todayStr;
               const holiday = dateString ? holidays.find((h) => h.date === dateString) : null;
-              const dayShifts = day ? shifts.filter((s) => s.shift_date === dateString) : [];
+              const dayShifts = day ? [...shifts.filter((s) => s.shift_date === dateString)].sort((a, b) => {
+                const roleGroup = (role) => {
+                  const r = (role || "").toLowerCase();
+                  if (r === "pharmacy assistant" || r === "daa" || r === "daa coordinator") return 0;
+                  return 1;
+                };
+                const groupDiff = roleGroup(a.role) - roleGroup(b.role);
+                if (groupDiff !== 0) return groupDiff;
+                return (a.start_time || "").localeCompare(b.start_time || "");
+              }) : [];
 
               return (
                 <div
