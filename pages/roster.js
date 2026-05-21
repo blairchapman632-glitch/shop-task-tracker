@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 
@@ -18,16 +19,28 @@ const formatTime = (time) => {
 
 const roleColour = {
   pharmacist: "text-purple-700",
+  Pharmacist: "text-purple-700",
   locum: "text-blue-700",
+  Locum: "text-blue-700",
   DAA: "text-orange-600",
+  "DAA Coordinator": "text-orange-600",
   "pharmacy assistant": "text-teal-700",
+  "Pharmacy Assistant": "text-teal-700",
+  "Intern Pharmacist": "text-purple-500",
+  Manager: "text-gray-700",
 };
 
 const roleBorder = {
   pharmacist: "border-purple-400",
+  Pharmacist: "border-purple-400",
   locum: "border-blue-400",
+  Locum: "border-blue-400",
   DAA: "border-orange-400",
+  "DAA Coordinator": "border-orange-400",
   "pharmacy assistant": "border-teal-400",
+  "Pharmacy Assistant": "border-teal-400",
+  "Intern Pharmacist": "border-purple-300",
+  Manager: "border-gray-400",
 };
 
 const holidayEmoji = {
@@ -40,7 +53,7 @@ const holidayEmoji = {
   default: "🏖️",
 };
 
-const ROLES = ["pharmacist", "locum", "DAA", "pharmacy assistant"];
+const ROLES = ["Pharmacist", "Locum", "DAA Coordinator", "Pharmacy Assistant", "Intern Pharmacist", "Manager"];
 
 const toMinutes = (timeStr) => {
   if (!timeStr) return 0;
@@ -162,7 +175,8 @@ export default function RosterPage() {
 
   const sortShifts = (shiftsToSort) => {
     const roleGroup = (role) => {
-      if (role === "pharmacy assistant" || role === "DAA") return 0;
+      const r = (role || "").toLowerCase();
+      if (r === "pharmacy assistant" || r === "daa" || r === "daa coordinator") return 0;
       return 1;
     };
     return [...shiftsToSort].sort((a, b) => {
@@ -225,7 +239,7 @@ const selectedDayShifts = selectedDate
         { data: rosterMonthData },
       ] = await Promise.all([
         supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, pharmacy_id, staff:staff_id(id, name)`),
-        supabase.from("staff").select("id,name,active").order("name"),
+        supabase.from("staff").select("id,name,active,role").order("name"),
         supabase.from("shift_templates").select("*").order("name"),
         supabase.from("public_holidays").select("*"),
         supabase.from("roster_day_notes").select("*").gte("date", startDate).lt("date", endDate),
@@ -256,8 +270,13 @@ const selectedDayShifts = selectedDate
     const monthShifts = shifts.filter((s) => s.shift_date?.startsWith(monthStr));
     const map = {};
     monthShifts.forEach((s) => {
-      const name = s.staff?.name || s.staff_name || "Unknown";
-      const mins = toMinutes(s.end_time) - toMinutes(s.start_time);
+      const name = s.staff?.name || s.staff_name || null;
+      if (!name) return;
+      if (!s.start_time || !s.end_time) return;
+      const start = toMinutes(s.start_time);
+      const end = toMinutes(s.end_time);
+      const mins = end > start ? end - start : 0;
+      if (mins <= 0) return;
       if (!map[name]) map[name] = 0;
       map[name] += mins;
     });
@@ -279,9 +298,8 @@ const selectedDayShifts = selectedDate
   // ── Add shift ──
   const handleAddShift = async () => {
     if (!selectedDate) return;
-    const resolvedStaffId = newStaffId === "other" ? null : newStaffId ? Number(newStaffId) : null;
+    const resolvedStaffId = newStaffId === "other" || newStaffId === "" ? null : newStaffId ? Number(newStaffId) : null;
     const resolvedStaffName = newStaffId === "other" ? newStaffName.trim() : null;
-    if (!resolvedStaffId && !resolvedStaffName) { alert("Please choose or enter a staff member."); return; }
     if (!newStart || !newEnd) { alert("Please enter start and end times."); return; }
     try {
       setSavingShift(true);
@@ -672,6 +690,24 @@ const selectedDayShifts = selectedDate
     }
   };
 
+  // ── Sidebar modal state ──
+  const [showHolidays, setShowHolidays] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [showMonthNotes, setShowMonthNotes] = useState(false);
+
+  // ── Inline edit state ──
+  const [inlineEdit, setInlineEdit] = useState(null); // { shift, rect }
+  const [inlineEditName, setInlineEditName] = useState("");
+  const [inlineEditStart, setInlineEditStart] = useState("");
+  const [inlineEditEnd, setInlineEditEnd] = useState("");
+  const [inlineSuggestions, setInlineSuggestions] = useState([]);
+  const [savingInline, setSavingInline] = useState(false);
+
+  // ── Staff role lookup ──
+  const staffRoleMap = Object.fromEntries(
+    staffOptions.map((s) => [s.name.toLowerCase(), s.role || "pharmacy assistant"])
+  );
+
   // ── Render ──
   const monthLabel = displayMonth.toLocaleString("en-AU", { month: "long", year: "numeric" });
 
@@ -693,7 +729,172 @@ const selectedDayShifts = selectedDate
     christmas: "🎅🎄🎅",
     easter: "🐣🌷🐣",
   };
+// ── Sidebar component ──
+  const RosterSidebar = () => (
+    <aside className="no-print w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0 overflow-y-auto">
+      {/* Month navigation */}
+      <div className="text-sm font-bold text-gray-800 px-2 mb-1 leading-tight text-center">
+        {monthLabel}
+      </div>
+      <div className="flex gap-1 mb-2">
+        <button onClick={() => setMonthOffset((m) => m - 1)} className="flex-1 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-50">←</button>
+        <button onClick={() => setMonthOffset((m) => m + 1)} className="flex-1 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-50">→</button>
+      </div>
 
+      {/* Actions */}
+      <button onClick={handleCopyPreviousMonth} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-blue-700 hover:bg-blue-50 w-full text-left font-medium">
+        📋 Copy last month
+      </button>
+
+      <button
+        onClick={handlePublishToggle}
+        disabled={publishingMonth}
+        className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs w-full text-left font-medium ${
+          monthStatus === "published"
+            ? "text-green-700 hover:bg-green-50"
+            : "text-gray-600 hover:bg-gray-100"
+        }`}
+      >
+        {monthStatus === "published" ? "✓ Published" : "⬜ Publish"}
+      </button>
+
+      {/* Print */}
+      <div className="px-2 py-1.5">
+        <select value={printImage} onChange={(e) => setPrintImage(e.target.value)} className="w-full rounded border border-gray-200 px-1 py-1 text-xs mb-1">
+          {printImageOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <button onClick={handlePrint} className="w-full py-1 rounded-lg border bg-white text-xs font-medium hover:bg-gray-50">
+          🖨️ Print
+        </button>
+      </div>
+
+      <div className="border-t my-1" />
+
+      {/* New features — placeholders */}
+      <div className="px-2 py-1.5 rounded-lg text-xs text-gray-300 flex items-center gap-2 cursor-not-allowed" title="Coming soon">
+        👥 Availability
+        <span className="ml-auto text-[9px]">Soon</span>
+      </div>
+      <div className="px-2 py-1.5 rounded-lg text-xs text-gray-300 flex items-center gap-2 cursor-not-allowed" title="Coming soon">
+        ⚠️ Issues
+        <span className="ml-auto text-[9px]">Soon</span>
+      </div>
+
+      <div className="border-t my-1" />
+
+      {/* Roster tools */}
+      <button onClick={() => { setShowHolidays(true); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
+        📅 Holidays
+      </button>
+      <button onClick={() => { setShowTemplates(true); setShowHolidays(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
+        📝 Templates
+      </button>
+      <button onClick={() => { setShowMonthNotes(true); setShowHolidays(false); setShowTemplates(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
+        📓 Month Notes
+      </button>
+
+      <div className="border-t my-1" />
+
+      {/* Nav */}
+      <Link href="/" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100">
+        🏠 Home
+      </Link>
+      <Link href="/admin" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100">
+        ⚙️ Admin
+      </Link>
+    </aside>
+  );
+  // ── Inline Edit Popup ──
+  const InlineEditPopup = () => {
+    if (!inlineEdit) return null;
+    const { shift, rect } = inlineEdit;
+    const viewportHeight = window.innerHeight;
+    const spaceBelow = viewportHeight - rect.bottom;
+    const showAbove = spaceBelow < 220;
+    const top = showAbove ? rect.top - 8 : rect.bottom + 4;
+    const left = Math.min(Math.max(rect.left, 8), window.innerWidth - 240);
+
+    const handleSave = async () => {
+      setSavingInline(true);
+      const name = inlineEditName.trim();
+      const matched = staffOptions.find((s) => s.name.toLowerCase() === name.toLowerCase());
+      const staffId = matched ? matched.id : null;
+      const staffName = !matched && name ? name : null;
+      // Priority: matched staff role → existing shift role → fallback
+      const role = matched?.role || shift.role || "Pharmacy Assistant";
+      await supabase.from("roster_shifts").update({
+        staff_id: staffId || null,
+        staff_name: staffName || null,
+        start_time: inlineEditStart,
+        end_time: inlineEditEnd,
+        role,
+      }).eq("id", shift.id);
+      await refreshShifts();
+      setInlineEdit(null);
+      setInlineSuggestions([]);
+      setSavingInline(false);
+    };
+
+    const handleDelete = async () => {
+      if (!window.confirm(`Delete this shift?`)) return;
+      await supabase.from("roster_shifts").delete().eq("id", shift.id);
+      await refreshShifts();
+      setInlineEdit(null);
+    };
+
+    return createPortal(
+      <>
+        <div className="fixed inset-0 z-40" onClick={() => { setInlineEdit(null); setInlineSuggestions([]); }} />
+        <div
+          className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl p-3 w-[230px]"
+          style={{ top: showAbove ? undefined : top, bottom: showAbove ? viewportHeight - rect.top + 4 : undefined, left }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="text-xs font-semibold text-gray-700 mb-2">Edit Shift</div>
+          <div className="relative mb-2">
+            <input
+              autoFocus
+              value={inlineEditName}
+              onChange={(e) => {
+                const val = e.target.value;
+                setInlineEditName(val);
+                setInlineSuggestions(
+                  val.length > 0
+                    ? staffOptions.filter((s) => s.name.toLowerCase().startsWith(val.toLowerCase())).slice(0, 4)
+                    : []
+                );
+              }}
+              onKeyDown={(e) => { if (e.key === "Enter") { setInlineSuggestions([]); handleSave(); } if (e.key === "Escape") { setInlineEdit(null); setInlineSuggestions([]); } }}
+              placeholder="Name (blank = TBC)"
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
+            />
+            {inlineSuggestions.length > 0 && (
+              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded shadow text-xs mt-0.5">
+                {inlineSuggestions.map((s) => (
+                  <button key={s.id} onClick={() => { setInlineEditName(s.name); setInlineSuggestions([]); }} className="w-full text-left px-2 py-1.5 hover:bg-blue-50">
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-1.5 mb-2">
+            <input type="time" value={inlineEditStart} onChange={(e) => setInlineEditStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs" />
+            <span className="text-gray-400 text-xs self-center">–</span>
+            <input type="time" value={inlineEditEnd} onChange={(e) => setInlineEditEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs" />
+          </div>
+          <div className="flex gap-1.5">
+            <button onClick={handleDelete} className="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50">Delete</button>
+            <button onClick={() => { setInlineEdit(null); setInlineSuggestions([]); }} className="flex-1 px-2 py-1 text-xs border rounded hover:bg-gray-50">Cancel</button>
+            <button onClick={handleSave} disabled={savingInline} className="flex-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+              {savingInline ? "..." : "Save"}
+            </button>
+          </div>
+        </div>
+      </>,
+      document.body
+    );
+  };
   if (!pinEntered) {
     return (
       <main className="min-h-screen bg-gray-100 flex items-center justify-center">
@@ -761,8 +962,11 @@ const selectedDayShifts = selectedDate
         .print-only { display: none; }
       `}</style>
 
-      <main className="min-h-screen bg-gray-100 p-2">
-        <div className="print-outer max-w-[1400px] mx-auto">
+      <div className="flex h-screen overflow-hidden bg-gray-100">
+        <RosterSidebar />
+
+        <div className="flex-1 overflow-y-auto">
+        <div className="print-outer p-2">
 
           {/* ── Print header (print only) ── */}
           <div className="print-only text-center mb-4">
@@ -783,51 +987,7 @@ const selectedDayShifts = selectedDate
             </div>
           </div>
 
-          {/* ── Top bar ── */}
-          <div className="no-print flex items-center gap-2 mb-2 flex-wrap">
-            <button onClick={() => setMonthOffset((m) => m - 1)} className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-50">←</button>
-            <h1 className="text-base font-bold text-gray-800 min-w-[140px] text-center">{monthLabel}</h1>
-            <button onClick={() => setMonthOffset((m) => m + 1)} className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-50">→</button>
-
-            <button onClick={handleCopyPreviousMonth} className="px-3 py-1.5 rounded-lg border bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">Copy last month</button>
-
-            <button
-              onClick={handlePublishToggle}
-              disabled={publishingMonth}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-medium disabled:opacity-50 ${
-                monthStatus === "published"
-                  ? "bg-green-50 text-green-700 border-green-300 hover:bg-green-100"
-                  : "bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100"
-              }`}
-            >
-              {publishingMonth ? "..." : monthStatus === "published" ? "✓ Published" : "Publish"}
-            </button>
-
-            <select value={printImage} onChange={(e) => setPrintImage(e.target.value)} className="px-2 py-1.5 rounded-lg border bg-white text-xs">
-              {printImageOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-
-            <button onClick={handlePrint} className="px-3 py-1.5 rounded-lg border bg-white text-xs font-medium hover:bg-gray-50">🖨️ Print</button>
-
-            <div className="ml-auto flex items-center gap-2">
-              <button onClick={() => setShowSettings(true)} className="px-3 py-1.5 rounded-lg border bg-white text-xs font-medium text-gray-700 hover:bg-gray-50">⚙️ Settings</button>
-              <Link href="/" className="px-3 py-1.5 rounded-lg border bg-white text-xs font-medium text-gray-700 hover:bg-gray-50">Home</Link>
-              
-            </div>
-          </div>
-
-          {/* ── Role legend ── */}
-          <div className="no-print flex items-center gap-4 mb-2 text-xs text-gray-600 flex-wrap">
-            {[
-              { label: "Pharmacist", cls: "text-purple-700" },
-              { label: "Locum", cls: "text-blue-700" },
-              { label: "DAA", cls: "text-orange-600" },
-              { label: "Pharmacy Assistant", cls: "text-teal-700" },
-            ].map(({ label, cls }) => (
-              <span key={label} className={`font-medium ${cls}`}>{label}</span>
-            ))}
-            <span className="text-gray-400 ml-2">Drag to move · Alt+drag to copy</span>
-          </div>
+          
 
           {/* ── Calendar ── */}
           <div className="bg-white rounded-xl border print-container">
@@ -899,20 +1059,29 @@ const selectedDayShifts = selectedDate
                             const start = formatTime(s.start_time);
                             const end = formatTime(s.end_time);
                             const isDragging = draggedShiftId === s.id;
+                            const isTBC = !s.staff_id && !s.staff_name;
                             return (
                               <div
                                 key={s.id}
                                 draggable
                                 onDragStart={(e) => handleDragStart(e, s)}
                                 onDragEnd={handleDragEnd}
-                                onClick={(e) => { e.stopPropagation(); setSelectedDate(dateString); }}
-                                className={`print-shift-line text-[10px] leading-tight truncate ${roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setInlineEdit({ shift: s, rect });
+                                  setInlineEditName(s.staff?.name || s.staff_name || "");
+                                  setInlineEditStart(s.start_time?.slice(0, 5) || "");
+                                  setInlineEditEnd(s.end_time?.slice(0, 5) || "");
+                                  setInlineSuggestions([]);
+                                }}
+                                className={`print-shift-line text-[10px] leading-tight truncate ${isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
                                 style={{
                                   fontSize: dayShifts.length > 7 ? "8px" : dayShifts.length > 5 ? "9px" : "10px"
                                 }}
                                 title={`${name} ${start}–${end} (${s.role})`}
                               >
-                                {name} <span className="opacity-70">{start}–{end}</span>
+                                {isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
                               </div>
                             );
                           })}
@@ -940,7 +1109,8 @@ const selectedDayShifts = selectedDate
           </div>
 
         </div>
-      </main>
+        </div>
+      </div>
 
       {/* ── Side panel ── */}
       {selectedDate && (
@@ -986,8 +1156,19 @@ const selectedDayShifts = selectedDate
                         <div key={s.id} className={`rounded-lg border p-2 ${roleBorder[s.role] || "border-gray-200"} border-l-4`}>
                           {isEditing ? (
                             <div className="space-y-2">
-                              <select value={editStaffId} onChange={(e) => setEditStaffId(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1 text-xs">
-                                <option value="">Select staff</option>
+                              <select
+                                value={editStaffId}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setEditStaffId(val);
+                                  if (val && val !== "other") {
+                                    const found = staffOptions.find((st) => String(st.id) === val);
+                                    if (found?.role) setEditRole(found.role);
+                                  }
+                                }}
+                                className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+                              >
+                                <option value="">— TBC —</option>
                                 {staffOptions.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
                                 <option value="other">+ Other (type name)</option>
                               </select>
@@ -1044,8 +1225,19 @@ const selectedDayShifts = selectedDate
                 )}
 
                 <div className="space-y-2">
-                  <select value={newStaffId} onChange={(e) => setNewStaffId(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs">
-                    <option value="">Select staff member</option>
+                  <select
+                    value={newStaffId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setNewStaffId(val);
+                      if (val && val !== "other") {
+                        const found = staffOptions.find((st) => String(st.id) === val);
+                        if (found?.role) setNewRole(found.role);
+                      }
+                    }}
+                    className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
+                  >
+                    <option value="">— TBC (no staff yet) —</option>
                     {staffOptions.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
                     <option value="other">+ Other (type name)</option>
                   </select>
@@ -1061,6 +1253,19 @@ const selectedDayShifts = selectedDate
                   </div>
                 </div>
               </div>
+
+              {/* Save shift button */}
+              <div className="border-t pt-3">
+                <button
+                  onClick={handleAddShift}
+                  disabled={savingShift}
+                  className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {savingShift ? "Saving..." : "Save shift"}
+                </button>
+              </div>
+
+              
 
               {/* Day notes */}
               <div className="border-t pt-3">
@@ -1084,231 +1289,156 @@ const selectedDayShifts = selectedDate
             </div>
 
             {/* Panel footer */}
-            <div className="border-t px-4 py-3 shrink-0 flex justify-between gap-2">
-              <button onClick={() => { setSelectedDate(null); handleCancelEdit(); }} className="px-3 py-1.5 text-xs border rounded hover:bg-gray-50">Close</button>
-              <button onClick={handleAddShift} disabled={savingShift} className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-                {savingShift ? "Saving..." : "Save shift"}
-              </button>
+            <div className="border-t px-4 py-3 shrink-0">
+              <button onClick={() => { setSelectedDate(null); handleCancelEdit(); setInlineEdit(null); }} className="w-full px-3 py-1.5 text-xs border rounded hover:bg-gray-50">Close</button>
             </div>
           </div>
         </div>
       )}
-    {/* ── Settings panel ── */}
-      {showSettings && (
+      <InlineEditPopup />
+   {/* ── Holidays modal ── */}
+      {showHolidays && (
         <div className="no-print fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/20" onClick={() => setShowSettings(false)} />
+          <div className="flex-1 bg-black/20" onClick={() => setShowHolidays(false)} />
           <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
-
-            {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
-              <div className="font-semibold text-gray-900 text-sm">Roster Settings</div>
-              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+              <div className="font-semibold text-gray-900 text-sm">📅 Public Holidays</div>
+              <button onClick={() => setShowHolidays(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
             </div>
-
-            {/* Tabs */}
-            <div className="flex border-b shrink-0">
-              {[
-                { key: "holidays", label: "📅 Holidays" },
-                { key: "templates", label: "⏱️ Templates" },
-                { key: "monthnotes", label: "📝 Month Notes" },
-              ].map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setSettingsTab(tab.key)}
-                  className={`flex-1 py-2 text-xs font-medium border-b-2 transition-colors ${
-                    settingsTab === tab.key
-                      ? "border-blue-500 text-blue-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Body */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Add Public Holiday</div>
+              <div className="space-y-2">
+                <input type="date" value={newHolidayDate} onChange={(e) => setNewHolidayDate(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                <input type="text" value={newHolidayName} onChange={(e) => setNewHolidayName(e.target.value)} placeholder="Holiday name (e.g. Christmas Day)" className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                <select value={newHolidayKey} onChange={(e) => setNewHolidayKey(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs">
+                  <option value="default">🏖️ Generic</option>
+                  <option value="newyear">🎆 New Year</option>
+                  <option value="australia">🦘 Australia Day</option>
+                  <option value="easter">🐣 Easter</option>
+                  <option value="anzac">🌺 ANZAC Day</option>
+                  <option value="wa">⚓ WA Day</option>
+                  <option value="christmas">🎅 Christmas</option>
+                </select>
+                <button onClick={handleAddHoliday} disabled={savingHoliday} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                  {savingHoliday ? "Saving..." : "Add Holiday"}
+                </button>
+              </div>
+              <div className="border-t pt-3">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Existing Holidays</div>
+                <div className="space-y-1.5">
+                  {[...holidays].sort((a, b) => a.date.localeCompare(b.date)).map((h) => (
+                    <div key={h.id} className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 bg-gray-50">
+                      <div>
+                        <span className="mr-1">{holidayEmoji[h.image_key] || holidayEmoji.default}</span>
+                        <span className="text-xs font-medium text-gray-800">{h.name}</span>
+                        <span className="text-[10px] text-gray-400 ml-2">{h.date}</span>
+                      </div>
+                      <button onClick={() => handleDeleteHoliday(h.id)} className="text-[10px] text-red-500 hover:text-red-700 shrink-0">Delete</button>
+                    </div>
+                  ))}
+                  {holidays.length === 0 && <div className="text-xs text-gray-400">No holidays added yet.</div>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
-              {/* ── Holidays tab ── */}
-              {settingsTab === "holidays" && (
-                <>
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Add Public Holiday</div>
-                  <div className="space-y-2">
-                    <input
-                      type="date"
-                      value={newHolidayDate}
-                      onChange={(e) => setNewHolidayDate(e.target.value)}
-                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
-                    />
-                    <input
-                      type="text"
-                      value={newHolidayName}
-                      onChange={(e) => setNewHolidayName(e.target.value)}
-                      placeholder="Holiday name (e.g. Christmas Day)"
-                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
-                    />
-                    <select
-                      value={newHolidayKey}
-                      onChange={(e) => setNewHolidayKey(e.target.value)}
-                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
-                    >
-                      <option value="default">🏖️ Generic</option>
-                      <option value="newyear">🎆 New Year</option>
-                      <option value="australia">🦘 Australia Day</option>
-                      <option value="easter">🐣 Easter</option>
-                      <option value="anzac">🌺 ANZAC Day</option>
-                      <option value="wa">⚓ WA Day</option>
-                      <option value="christmas">🎅 Christmas</option>
-                    </select>
-                    <button
-                      onClick={handleAddHoliday}
-                      disabled={savingHoliday}
-                      className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {savingHoliday ? "Saving..." : "Add Holiday"}
-                    </button>
-                  </div>
-
-                  <div className="border-t pt-3">
-                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Existing Holidays</div>
-                    <div className="space-y-1.5">
-                      {[...holidays].sort((a, b) => a.date.localeCompare(b.date)).map((h) => (
-                        <div key={h.id} className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 bg-gray-50">
-                          <div>
-                            <span className="mr-1">{holidayEmoji[h.image_key] || holidayEmoji.default}</span>
-                            <span className="text-xs font-medium text-gray-800">{h.name}</span>
-                            <span className="text-[10px] text-gray-400 ml-2">{h.date}</span>
+    {/* ── Templates modal ── */}
+      {showTemplates && (
+        <div className="no-print fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/20" onClick={() => setShowTemplates(false)} />
+          <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+              <div className="font-semibold text-gray-900 text-sm">📝 Shift Templates</div>
+              <button onClick={() => setShowTemplates(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Add Shift Template</div>
+              <div className="space-y-2">
+                <input type="text" value={newTemplateName} onChange={(e) => setNewTemplateName(e.target.value)} placeholder="Template name (e.g. Early shift)" className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                <select value={newTemplateRole} onChange={(e) => setNewTemplateRole(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs">
+                  {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <div className="flex gap-2">
+                  <input type="time" value={newTemplateStart} onChange={(e) => setNewTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                  <input type="time" value={newTemplateEnd} onChange={(e) => setNewTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                </div>
+                <button onClick={handleAddTemplate} disabled={savingTemplate} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                  {savingTemplate ? "Saving..." : "Add Template"}
+                </button>
+              </div>
+              <div className="border-t pt-3">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Existing Templates</div>
+                <div className="space-y-1.5">
+                  {templates.map((t) => (
+                    <div key={t.id} className="rounded border px-2 py-1.5 bg-gray-50">
+                      {editingTemplateId === t.id ? (
+                        <div className="space-y-2">
+                          <input type="text" value={editTemplateName} onChange={(e) => setEditTemplateName(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1 text-xs" />
+                          <select value={editTemplateRole} onChange={(e) => setEditTemplateRole(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1 text-xs">
+                            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                          <div className="flex gap-2">
+                            <input type="time" value={editTemplateStart} onChange={(e) => setEditTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                            <input type="time" value={editTemplateEnd} onChange={(e) => setEditTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
                           </div>
-                          <button
-                            onClick={() => handleDeleteHoliday(h.id)}
-                            className="text-[10px] text-red-500 hover:text-red-700 shrink-0"
-                          >
-                            Delete
-                          </button>
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={handleCancelEditTemplate} className="px-2 py-1 text-xs border rounded hover:bg-gray-100">Cancel</button>
+                            <button onClick={handleUpdateTemplate} disabled={savingTemplateEdit} className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                              {savingTemplateEdit ? "Saving..." : "Save"}
+                            </button>
+                          </div>
                         </div>
-                      ))}
-                      {holidays.length === 0 && <div className="text-xs text-gray-400">No holidays added yet.</div>}
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* ── Month notes tab ── */}
-              {settingsTab === "monthnotes" && (
-                <>
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                    Notes for {monthLabel}
-                  </div>
-                  <textarea
-                    value={monthNote}
-                    onChange={(e) => setMonthNote(e.target.value)}
-                    placeholder="General notes for this month (manager only)..."
-                    rows={6}
-                    className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs resize-none"
-                  />
-                  <button
-                    onClick={handleSaveMonthNote}
-                    disabled={savingMonthNote}
-                    className="w-full py-1.5 text-xs bg-gray-700 text-white rounded hover:bg-gray-800 disabled:opacity-50"
-                  >
-                    {savingMonthNote ? "Saving..." : "Save month notes"}
-                  </button>
-                </>
-              )}
-
-              {/* ── Templates tab ── */}
-              {settingsTab === "templates" && (
-                <>
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Add Shift Template</div>
-                  <div className="space-y-2">
-                    <input
-                      type="text"
-                      value={newTemplateName}
-                      onChange={(e) => setNewTemplateName(e.target.value)}
-                      placeholder="Template name (e.g. Early shift)"
-                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
-                    />
-                    <select
-                      value={newTemplateRole}
-                      onChange={(e) => setNewTemplateRole(e.target.value)}
-                      className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
-                    >
-                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                    <div className="flex gap-2">
-                      <input
-                        type="time"
-                        value={newTemplateStart}
-                        onChange={(e) => setNewTemplateStart(e.target.value)}
-                        className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs"
-                      />
-                      <input
-                        type="time"
-                        value={newTemplateEnd}
-                        onChange={(e) => setNewTemplateEnd(e.target.value)}
-                        className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs"
-                      />
-                    </div>
-                    <button
-                      onClick={handleAddTemplate}
-                      disabled={savingTemplate}
-                      className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {savingTemplate ? "Saving..." : "Add Template"}
-                    </button>
-                  </div>
-
-                  <div className="border-t pt-3">
-                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Existing Templates</div>
-                    <div className="space-y-1.5">
-                      {templates.map((t) => (
-                        <div key={t.id} className="rounded border px-2 py-1.5 bg-gray-50">
-                          {editingTemplateId === t.id ? (
-                            <div className="space-y-2">
-                              <input
-                                type="text"
-                                value={editTemplateName}
-                                onChange={(e) => setEditTemplateName(e.target.value)}
-                                className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
-                              />
-                              <select
-                                value={editTemplateRole}
-                                onChange={(e) => setEditTemplateRole(e.target.value)}
-                                className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
-                              >
-                                {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                              </select>
-                              <div className="flex gap-2">
-                                <input type="time" value={editTemplateStart} onChange={(e) => setEditTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
-                                <input type="time" value={editTemplateEnd} onChange={(e) => setEditTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
-                              </div>
-                              <div className="flex gap-2 justify-end">
-                                <button onClick={handleCancelEditTemplate} className="px-2 py-1 text-xs border rounded hover:bg-gray-100">Cancel</button>
-                                <button onClick={handleUpdateTemplate} disabled={savingTemplateEdit} className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-                                  {savingTemplateEdit ? "Saving..." : "Save"}
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between gap-2">
-                              <div>
-                                <span className={`text-xs font-medium ${roleColour[t.role] || "text-gray-800"}`}>{t.name}</span>
-                                <span className="text-[10px] text-gray-400 ml-2">{formatTime(t.start_time)}–{formatTime(t.end_time)} · {t.role}</span>
-                              </div>
-                              <div className="flex gap-1 shrink-0">
-                                <button onClick={() => handleStartEditTemplate(t)} className="text-[10px] text-blue-500 hover:text-blue-700">Edit</button>
-                                <button onClick={() => handleDeleteTemplate(t.id)} className="text-[10px] text-red-500 hover:text-red-700">Delete</button>
-                              </div>
-                            </div>
-                          )}
+                      ) : (
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <span className={`text-xs font-medium ${roleColour[t.role] || "text-gray-800"}`}>{t.name}</span>
+                            <span className="text-[10px] text-gray-400 ml-2">{formatTime(t.start_time)}–{formatTime(t.end_time)} · {t.role}</span>
+                          </div>
+                          <div className="flex gap-1 shrink-0">
+                            <button onClick={() => handleStartEditTemplate(t)} className="text-[10px] text-blue-500 hover:text-blue-700">Edit</button>
+                            <button onClick={() => handleDeleteTemplate(t.id)} className="text-[10px] text-red-500 hover:text-red-700">Delete</button>
+                          </div>
                         </div>
-                      ))}
-                      {templates.length === 0 && <div className="text-xs text-gray-400">No templates added yet.</div>}
+                      )}
                     </div>
-                  </div>
-                </>
-              )}
+                  ))}
+                  {templates.length === 0 && <div className="text-xs text-gray-400">No templates added yet.</div>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
+    {/* ── Month Notes modal ── */}
+      {showMonthNotes && (
+        <div className="no-print fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/20" onClick={() => setShowMonthNotes(false)} />
+          <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+              <div className="font-semibold text-gray-900 text-sm">📓 Month Notes</div>
+              <button onClick={() => setShowMonthNotes(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Notes for {monthLabel}
+              </div>
+              <textarea
+                value={monthNote}
+                onChange={(e) => setMonthNote(e.target.value)}
+                placeholder="General notes for this month (manager only)..."
+                rows={6}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs resize-none"
+              />
+              <button
+                onClick={handleSaveMonthNote}
+                disabled={savingMonthNote}
+                className="w-full py-1.5 text-xs bg-gray-700 text-white rounded hover:bg-gray-800 disabled:opacity-50"
+              >
+                {savingMonthNote ? "Saving..." : "Save month notes"}
+              </button>
             </div>
           </div>
         </div>
