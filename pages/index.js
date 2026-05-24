@@ -264,7 +264,12 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
 
       {/* Nav links */}
       <NavLink href="/" icon="🏠" label="Home" />
-      <NavLink href="/roster" icon="📅" label="Roster" />
+      <button
+        onClick={onAddToList}
+        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+      >
+        <span>📝</span> Leave a Job
+      </button>
       <button
         onClick={onViewRoster}
         className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
@@ -272,14 +277,10 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
         <span>📋</span> View Roster
       </button>
       <NavLink href="/insights" icon="📊" label="Insights" />
-      <button
-        onClick={onAddToList}
-        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
-      >
-        <span>➕</span> Add to List
-      </button>
       <NavLink href="#" icon="💰" label="Wages" disabled />
       <NavLink href="#" icon="🏖️" label="Leave" disabled />
+      <div className="border-t my-1" />
+      <NavLink href="/roster" icon="📅" label="Roster" />
       <NavLink href="/tasks" icon="✅" label="Tasks" />
       <NavLink href="/admin" icon="⚙️" label="Admin" />
 
@@ -1234,7 +1235,11 @@ export default function HomePage() {
                           const isDone = Boolean(monthlyCompletions[task.id]);
                           const monthlyComp = monthlyCompletions[task.id];
                           const assignedStaff = task.assigned_staff_id ? staffById[task.assigned_staff_id] : null;
-                          const borderColour = isDone ? "border-l-green-500" : "border-l-orange-400";
+                          const isOnListOverdue = !isDone && (
+                            (task.end_date && new Date(task.end_date) < new Date()) ||
+                            (task.specific_date && new Date(task.specific_date) < new Date())
+                          );
+                          const borderColour = isDone ? "border-l-green-500" : isOnListOverdue ? "border-l-red-500" : "border-l-orange-400";
                           return (
                             <button
                               key={task.id}
@@ -1242,8 +1247,9 @@ export default function HomePage() {
                               className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${borderColour} text-left bg-white shadow-sm hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
                             >
                               <div className="flex items-start justify-between gap-2 mb-1">
-                                <div className="font-semibold text-sm leading-tight text-gray-800 flex-1">{task.title}</div>
+                                <div className={`font-semibold text-sm leading-tight flex-1 ${isOnListOverdue ? "text-red-700" : "text-gray-800"}`}>{task.title}</div>
                                 {isDone && <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]">✓</span>}
+                                {isOnListOverdue && !isDone && <span className="shrink-0 text-red-500 text-sm">⚠️</span>}
                               </div>
                               {task.assigned_role && (
                                 <div className="text-xs text-blue-600 font-medium mb-1">
@@ -1269,9 +1275,9 @@ export default function HomePage() {
                                   {isDone && monthlyComp ? (
                                     <span className="text-green-600">✓ Done by {monthlyComp.staffName}</span>
                                   ) : task.end_date ? (
-                                    <span>Due {new Date(task.end_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}</span>
+                                    <span className={isOnListOverdue ? "text-red-500 font-medium" : ""}>Due {new Date(task.end_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}</span>
                                   ) : task.specific_date ? (
-                                    <span>Due {new Date(task.specific_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}</span>
+                                    <span className={isOnListOverdue ? "text-red-500 font-medium" : ""}>Due {new Date(task.specific_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}</span>
                                   ) : null}
                                 </div>
                                 {task.info && (
@@ -1291,9 +1297,15 @@ export default function HomePage() {
 
                   {/* Section Cleans */}
                   {sectionCleans.length > 0 && (
-                    <div>
+                    <div className="border-t pt-4">
                       {/* Today's sections — rostered staff, incomplete */}
-                      <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">This Month</div>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">This Month</div>
+                        <span className="text-[11px] font-semibold text-gray-500">{sectionDone}/{sectionTotal} ({sectionTotal ? Math.round((sectionDone / sectionTotal) * 100) : 0}%)</span>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-1 mb-2">
+                        <div className="bg-gray-400 h-1 rounded-full transition-all" style={{ width: `${sectionTotal ? Math.round((sectionDone / sectionTotal) * 100) : 0}%` }} />
+                      </div>
                       {myTodaySections.length > 0 && (
                         <div className="grid grid-cols-4 gap-1.5 mb-2">
                           {myTodaySectionsSorted.map((sc) => {
@@ -1620,7 +1632,7 @@ export default function HomePage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
-                <h2 className="font-semibold text-gray-800">➕ Add to List</h2>
+                <h2 className="font-semibold text-gray-800">📝 Leave a Job</h2>
                 <button onClick={() => setShowAddToList(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
               </div>
               <div className="px-5 py-4 space-y-3 overflow-y-auto">
