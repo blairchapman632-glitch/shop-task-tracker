@@ -15,6 +15,13 @@ const FREQUENCIES = [
   { value: "specific_date", label: "One-off date" },
 ];
 
+const ON_LIST_FREQUENCIES = [
+  { value: "monthly_anytime", label: "Monthly" },
+  { value: "weekly", label: "Weekly" },
+  { value: "specific_date", label: "One-off date" },
+  { value: "next_shift", label: "Next shift — show when staff member is next rostered" },
+];
+
 const freqLabel = (task) => {
   const f = task.frequency;
   if (f === "daily") return "Daily";
@@ -81,6 +88,9 @@ export default function TasksPage() {
   // ── Auth ──
   const [authChecked, setAuthChecked] = useState(false);
   const [currentPharmacyId, setCurrentPharmacyId] = useState(null);
+  const [pinEntered, setPinEntered] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState(false);
 
   // ── Data ──
   const [tasks, setTasks] = useState([]);
@@ -110,6 +120,11 @@ export default function TasksPage() {
     active: true,
     rollover: false,
     assigned_staff_id: "",
+    assigned_role: "",
+    assigned_staff_ids: [],
+    assign_type: "anyone",
+    show_next_shift: false,
+    created_by_staff_id: "",
   };
   const [form, setForm] = useState(emptyForm);
 
@@ -129,7 +144,22 @@ export default function TasksPage() {
     checkAuth();
     return () => { mounted = false; };
   }, [router]);
-
+const handlePinSubmit = async () => {
+    const { data, error } = await supabase
+      .from("staff")
+      .select("id")
+      .eq("pharmacy_id", "81ab394f-d642-4246-b896-e71938b25671")
+      .eq("pin", pinInput)
+      .eq("can_access_tasks", true)
+      .single();
+    if (data && !error) {
+      setPinEntered(true);
+      setPinError(false);
+    } else {
+      setPinError(true);
+      setPinInput("");
+    }
+  };
   // ── Load data ──
   useEffect(() => {
     if (!authChecked || !currentPharmacyId) return;
@@ -160,14 +190,12 @@ export default function TasksPage() {
 
   // ── Filtered tasks ──
   const generalTasks = useMemo(() => tasks.filter((t) =>
-    !t.assigned_staff_id &&
-    (t.frequency === "daily" || t.frequency === "weekly") &&
+    t.task_type !== "on_the_list" &&
     (searchQ ? t.title.toLowerCase().includes(searchQ.toLowerCase()) : true)
   ), [tasks, searchQ]);
 
   const assignedTasks = useMemo(() => tasks.filter((t) =>
-    (t.assigned_staff_id || t.frequency === "monthly_anytime" || t.frequency === "specific_date" || t.start_date) &&
-    !(t.frequency === "daily" || t.frequency === "weekly") &&
+    t.task_type === "on_the_list" &&
     (searchQ ? t.title.toLowerCase().includes(searchQ.toLowerCase()) : true)
   ), [tasks, searchQ]);
 
@@ -321,7 +349,8 @@ export default function TasksPage() {
   // ── Open panel ──
   const openAdd = () => {
     setEditingTask(null);
-    setForm({ ...emptyForm, frequency: activeTab === "general" ? "daily" : "monthly_anytime" });
+    const freq = activeTab === "general" ? "daily" : "monthly_anytime";
+    setForm({ ...emptyForm, frequency: freq });
     setShowPanel(true);
   };
 
@@ -341,6 +370,11 @@ export default function TasksPage() {
       active: task.active !== false,
       rollover: task.rollover || false,
       assigned_staff_id: task.assigned_staff_id ? String(task.assigned_staff_id) : "",
+      show_next_shift: task.show_next_shift || false,
+      created_by_staff_id: task.created_by_staff_id ? String(task.created_by_staff_id) : "",
+      assigned_role: task.assigned_role || "",
+      assigned_staff_ids: task.assigned_staff_ids || [],
+      assign_type: task.assigned_role ? "role" : (task.assigned_staff_ids?.length > 0 ? "multiple" : task.assigned_staff_id ? "person" : "anyone"),
     });
     setShowPanel(true);
   };
@@ -369,7 +403,12 @@ export default function TasksPage() {
         info: form.info.trim() || null,
         active: form.active,
         rollover: form.rollover,
-        assigned_staff_id: form.assigned_staff_id ? Number(form.assigned_staff_id) : null,
+        assigned_staff_id: form.assign_type === "person" && form.assigned_staff_id ? Number(form.assigned_staff_id) : null,
+        assigned_role: form.assign_type === "role" ? form.assigned_role || null : null,
+        assigned_staff_ids: form.assign_type === "multiple" ? form.assigned_staff_ids : [],
+        show_next_shift: form.show_next_shift || false,
+        created_by_staff_id: form.created_by_staff_id ? Number(form.created_by_staff_id) : null,
+        task_type: activeTab === "assigned" ? "on_the_list" : "daily",
       };
 
       if (editingTask) {
@@ -418,6 +457,36 @@ export default function TasksPage() {
     return <div className="p-6 text-sm text-gray-500">Loading...</div>;
   }
 
+  if (!pinEntered) {
+    return (
+      <main className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="bg-white rounded-xl border shadow-sm p-8 w-full max-w-xs text-center">
+          <div className="text-2xl mb-1">🔒</div>
+          <h1 className="text-lg font-semibold text-gray-800 mb-1">Tasks</h1>
+          <p className="text-xs text-gray-500 mb-4">Enter PIN to continue</p>
+          <input
+            type="password"
+            inputMode="numeric"
+            maxLength={6}
+            value={pinInput}
+            onChange={(e) => { setPinInput(e.target.value); setPinError(false); }}
+            onKeyDown={(e) => { if (e.key === "Enter") handlePinSubmit(); }}
+            placeholder="••••"
+            className="w-full text-center rounded-lg border border-gray-300 px-3 py-2 text-lg tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            autoFocus
+          />
+          {pinError && <p className="text-xs text-red-500 mb-3">Incorrect PIN. Try again.</p>}
+          <button
+            onClick={handlePinSubmit}
+            className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
+          >
+            Enter
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   const staffById = Object.fromEntries(staffOptions.map((s) => [s.id, s]));
 
   // ── Task row ──
@@ -438,10 +507,11 @@ export default function TasksPage() {
       <td className="px-3 py-2 text-sm text-gray-600">{timePretty(task.due_time)}</td>
       <td className="px-3 py-2 text-sm text-gray-600">{task.points ?? 1}</td>
       {activeTab === "assigned" && (
-        <td className="px-3 py-2 text-xs">
-          {task.rollover ? <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full">Rollover</span> : "—"}
+        <td className="px-3 py-2 text-xs text-gray-500">
+          {task.created_by_staff_id ? staffById[task.created_by_staff_id]?.name || "—" : "—"}
         </td>
       )}
+      
       <td className="px-3 py-2">
         <button
           onClick={() => handleToggleActive(task)}
@@ -475,9 +545,9 @@ export default function TasksPage() {
           {/* Tabs + actions */}
           <div className="flex items-center gap-1">
             {[
-              { key: "general", label: "General Tasks" },
-              { key: "assigned", label: "Assigned & Monthly" },
-              { key: "sections", label: "Section Cleans" },
+              { key: "general", label: "Daily Tasks" },
+              { key: "assigned", label: "On the List" },
+              { key: "sections", label: "This Month" },
             ].map((tab) => (
               <button
                 key={tab.key}
@@ -488,9 +558,16 @@ export default function TasksPage() {
               </button>
             ))}
 
-            <button onClick={openAdd} className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700">
-              + New Task
-            </button>
+            {activeTab === "general" && (
+              <button onClick={openAdd} className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700">
+                + Daily Task
+              </button>
+            )}
+            {activeTab === "assigned" && (
+              <button onClick={openAdd} className="px-4 py-1.5 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600">
+                + Add to List
+              </button>
+            )}
 
             <div className="ml-auto">
               <input
@@ -742,7 +819,7 @@ export default function TasksPage() {
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Frequency</th>
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Due Time</th>
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Points</th>
-                    {activeTab === "assigned" && <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Rollover</th>}
+                    {activeTab === "assigned" && <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Added By</th>}
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
                   </tr>
@@ -792,33 +869,122 @@ export default function TasksPage() {
                 />
               </div>
 
-              {/* Assign to staff */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Assign to staff (optional)</label>
-                <select
-                  value={form.assigned_staff_id}
-                  onChange={(e) => setForm((f) => ({ ...f, assigned_staff_id: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                >
-                  <option value="">Anyone (unassigned)</option>
-                  {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
+              {/* Assignment — On the List only */}
+              {activeTab === "assigned" && (
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Assign to</label>
+                    <select
+                      value={form.assign_type || "anyone"}
+                      onChange={(e) => setForm((f) => ({ ...f, assign_type: e.target.value, assigned_staff_id: "", assigned_role: "", assigned_staff_ids: [] }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    >
+                      <option value="anyone">Anyone</option>
+                      <option value="person">Specific person</option>
+                      <option value="role">Role</option>
+                      <option value="multiple">Multiple people</option>
+                    </select>
+                  </div>
+                  {form.assign_type === "person" && (
+                    <select
+                      value={form.assigned_staff_id}
+                      onChange={(e) => setForm((f) => ({ ...f, assigned_staff_id: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    >
+                      <option value="">Select staff member</option>
+                      {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  )}
+                  {form.assign_type === "role" && (
+                    <select
+                      value={form.assigned_role || ""}
+                      onChange={(e) => setForm((f) => ({ ...f, assigned_role: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    >
+                      <option value="">Select role</option>
+                      <option value="Pharmacist">Pharmacist</option>
+                      <option value="Pharmacy Assistant">Pharmacy Assistant</option>
+                      <option value="DAA Coordinator">DAA Coordinator</option>
+                      <option value="Locum">Locum</option>
+                      <option value="Manager">Manager</option>
+                    </select>
+                  )}
+                  {form.assign_type === "multiple" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto border rounded-lg p-2">
+                      {staffOptions.map((s) => {
+                        const selected = (form.assigned_staff_ids || []).includes(s.id);
+                        return (
+                          <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => setForm((f) => ({
+                                ...f,
+                                assigned_staff_ids: selected
+                                  ? (f.assigned_staff_ids || []).filter((id) => id !== s.id)
+                                  : [...(f.assigned_staff_ids || []), s.id],
+                              }))}
+                              className="h-3.5 w-3.5 rounded border-gray-300"
+                            />
+                            {s.name}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Assign to staff — Daily Tasks only */}
+              {activeTab === "general" && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Assign to staff (optional)</label>
+                  <select
+                    value={form.assigned_staff_id}
+                    onChange={(e) => setForm((f) => ({ ...f, assigned_staff_id: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">Anyone (unassigned)</option>
+                    {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              )}
 
               {/* Frequency */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Frequency</label>
-                <select
-                  value={form.frequency}
-                  onChange={(e) => setForm((f) => ({ ...f, frequency: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                >
-                  {FREQUENCIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
-                </select>
-              </div>
+              {activeTab === "general" && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Frequency</label>
+                  <select
+                    value={form.frequency}
+                    onChange={(e) => setForm((f) => ({ ...f, frequency: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    {FREQUENCIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+                </div>
+              )}
+              {activeTab === "assigned" && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Type</label>
+                  <select
+                    value={form.show_next_shift ? "next_shift" : form.frequency}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "next_shift") {
+                        setForm((f) => ({ ...f, frequency: "specific_date", show_next_shift: true }));
+                      } else {
+                        setForm((f) => ({ ...f, frequency: val, show_next_shift: false }));
+                      }
+                    }}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    {ON_LIST_FREQUENCIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+                </div>
+              )}
 
               {/* Weekly days */}
-              {form.frequency === "weekly" && (
+              {form.frequency === "weekly" && activeTab === "general" && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Days of week</label>
                   <div className="grid grid-cols-7 gap-1">
@@ -844,8 +1010,97 @@ export default function TasksPage() {
                 </div>
               )}
 
-              {/* Monthly specific day */}
-              {form.frequency === "monthly" && (
+              {/* On the List — Weekly days */}
+              {form.frequency === "weekly" && activeTab === "assigned" && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Days of week</label>
+                  <div className="grid grid-cols-7 gap-1">
+                    {DOW.map((d, idx) => {
+                      const selected = form.days_of_week.includes(idx);
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setForm((f) => ({
+                            ...f,
+                            days_of_week: selected
+                              ? f.days_of_week.filter((x) => x !== idx)
+                              : [...f.days_of_week, idx],
+                          }))}
+                          className={`rounded-lg border py-1 text-xs ${selected ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600"}`}
+                        >
+                          {d.slice(0, 2)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Start from (optional)</label>
+                      <input type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Ends on (optional)</label>
+                      <input type="date" value={form.end_date} onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Due time (optional)</label>
+                    <input type="time" value={form.due_time} onChange={(e) => setForm((f) => ({ ...f, due_time: e.target.value }))} className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                  </div>
+                </div>
+              )}
+
+              {/* On the List — Monthly */}
+              {form.frequency === "monthly_anytime" && activeTab === "assigned" && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Day of month (optional)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={form.day_of_month}
+                      onChange={(e) => setForm((f) => ({ ...f, day_of_month: e.target.value }))}
+                      placeholder="e.g. 1 for 1st of month"
+                      className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Start from (optional)</label>
+                      <input type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Ends on (optional)</label>
+                      <input type="date" value={form.end_date} onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* On the List — One-off date */}
+              {form.frequency === "specific_date" && !form.show_next_shift && activeTab === "assigned" && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={form.specific_date}
+                    onChange={(e) => setForm((f) => ({ ...f, specific_date: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
+
+              {/* On the List — Next shift — no date needed */}
+              {form.show_next_shift && activeTab === "assigned" && (
+                <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                  This task will appear on the home screen on the day this staff member is next rostered.
+                </div>
+              )}
+
+              {/* General — Monthly specific day */}
+              {form.frequency === "monthly" && activeTab === "general" && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Day of month (1–31)</label>
                   <input
@@ -859,8 +1114,8 @@ export default function TasksPage() {
                 </div>
               )}
 
-              {/* Specific date */}
-              {form.frequency === "specific_date" && (
+              {/* General — Specific date */}
+              {form.frequency === "specific_date" && activeTab === "general" && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
                   <input
@@ -872,38 +1127,25 @@ export default function TasksPage() {
                 </div>
               )}
 
-              {/* Start + End date */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Start date (optional)</label>
-                  <input
-                    type="date"
-                    value={form.start_date}
-                    onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">End/due date (optional)</label>
-                  <input
-                    type="date"
-                    value={form.end_date}
-                    onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* Due time */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Due time (optional)</label>
-                <input
-                  type="time"
-                  value={form.due_time}
-                  onChange={(e) => setForm((f) => ({ ...f, due_time: e.target.value }))}
-                  className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                />
-              </div>
+              {/* General — Start + End date + Due time */}
+              {activeTab === "general" && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Start date (optional)</label>
+                      <input type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">End/due date (optional)</label>
+                      <input type="date" value={form.end_date} onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Due time (optional)</label>
+                    <input type="time" value={form.due_time} onChange={(e) => setForm((f) => ({ ...f, due_time: e.target.value }))} className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                  </div>
+                </>
+              )}
 
               {/* Points */}
               <div>
@@ -928,19 +1170,34 @@ export default function TasksPage() {
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none"
                 />
               </div>
-
-              {/* Rollover */}
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.rollover}
-                    onChange={(e) => setForm((f) => ({ ...f, rollover: e.target.checked }))}
-                    className="h-4 w-4 rounded border-gray-300"
-                  />
-                  <span className="text-gray-700">Roll over if not completed</span>
-                </label>
-              </div>
+{/* Added by — On the List only */}
+              {activeTab === "assigned" && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Added by</label>
+                  <select
+                    value={form.created_by_staff_id}
+                    onChange={(e) => setForm((f) => ({ ...f, created_by_staff_id: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">Select name</option>
+                    {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              )}
+              {/* Rollover — daily tasks only */}
+              {activeTab === "general" && (
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.rollover}
+                      onChange={(e) => setForm((f) => ({ ...f, rollover: e.target.checked }))}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <span className="text-gray-700">Roll over if not completed</span>
+                  </label>
+                </div>
+              )}
 
               {/* Active */}
               <div className="flex items-center gap-3">

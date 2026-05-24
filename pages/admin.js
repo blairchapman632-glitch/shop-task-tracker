@@ -180,6 +180,7 @@ function StaffForm({ member, onSave, onCancel }) {
     contracted_hours: member?.contracted_hours || "",
     active: member?.active ?? true,
     can_access_roster: member?.can_access_roster ?? false,
+    can_access_tasks: member?.can_access_tasks ?? false,
     can_access_admin: member?.can_access_admin ?? false,
     pin: member?.pin || "",
     photo_url: member?.photo_url || "",
@@ -233,6 +234,7 @@ function StaffForm({ member, onSave, onCancel }) {
       week_ab_schedule: showSchedule && form.schedule_type === "alternating" ? form.week_ab_schedule : null,
       active: form.active,
       can_access_roster: form.can_access_roster,
+      can_access_tasks: form.can_access_tasks,
       can_access_admin: form.can_access_admin,
       pin: form.pin || null,
       photo_url: form.photo_url || null,
@@ -410,6 +412,7 @@ function StaffForm({ member, onSave, onCancel }) {
           {[
             { field: "active", label: "Active", desc: "Appears on roster and home screen" },
             { field: "can_access_roster", label: "Can access roster", desc: "PIN unlocks the roster page" },
+            { field: "can_access_tasks", label: "Can access tasks", desc: "PIN unlocks the tasks page" },
             { field: "can_access_admin", label: "Can access admin", desc: "PIN unlocks this admin page" },
           ].map(({ field, label, desc }) => (
             <div key={field} className="flex items-center justify-between">

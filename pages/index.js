@@ -255,7 +255,7 @@ function ChangePINModal({ staff, onClose }) {
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
-function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardOpen, activityOpen, leadersWeek, leadersMonth, leadersPeriod, setLeadersPeriod, feed, onLogout, onChangePIN }) {
+function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardOpen, activityOpen, leadersWeek, leadersMonth, leadersPeriod, setLeadersPeriod, feed, onLogout, onChangePIN, onAddToList }) {
   return (
     <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
       <div className="text-sm font-bold text-gray-800 px-2 mb-3 leading-tight">
@@ -272,6 +272,12 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
         <span>📋</span> View Roster
       </button>
       <NavLink href="/insights" icon="📊" label="Insights" />
+      <button
+        onClick={onAddToList}
+        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+      >
+        <span>➕</span> Add to List
+      </button>
       <NavLink href="#" icon="💰" label="Wages" disabled />
       <NavLink href="#" icon="🏖️" label="Leave" disabled />
       <NavLink href="/tasks" icon="✅" label="Tasks" />
@@ -586,6 +592,9 @@ export default function HomePage() {
   const [showConfetti, setShowConfetti] = useState(false);
   const [showRosterModal, setShowRosterModal] = useState(false);
   const [showChangePIN, setShowChangePIN] = useState(false);
+  const [showAddToList, setShowAddToList] = useState(false);
+  const [addToListForm, setAddToListForm] = useState({ title: "", assign_type: "anyone", assigned_staff_id: "", assigned_role: "", assigned_staff_ids: [], frequency: "monthly_anytime", show_next_shift: false, specific_date: "", days_of_week: [], day_of_month: "", info: "", created_by_staff_id: "" });
+  const [savingAddToList, setSavingAddToList] = useState(false);
   const [monthlyCompletions, setMonthlyCompletions] = useState({});
   const [sectionCleans, setSectionCleans] = useState([]);
   const [sectionCleansExpanded, setSectionCleansExpanded] = useState(false);
@@ -629,12 +638,16 @@ export default function HomePage() {
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
 
+      // Look ahead 60 days for next shift lookup
+      const lookAheadEnd = new Date(now.getFullYear(), now.getMonth() + 2, 1).toISOString().slice(0, 10);
+
       const [
         { data: t },
         { data: s },
         { data: rosterShifts },
         { data: monthlyComps },
         { data: sectionCleanData },
+        { data: upcomingShifts },
       ] = await Promise.all([
         supabase.from("tasks").select("*").eq("pharmacy_id", currentPharmacyId).order("due_time", { ascending: true, nullsFirst: false }).order("title", { ascending: true }),
         supabase.from("staff").select("*").eq("pharmacy_id", currentPharmacyId).order("name", { ascending: true }),
@@ -648,6 +661,7 @@ export default function HomePage() {
           }
           return supabase.from("section_clean_schedule").select(`id, month, completed_at, completed_by_staff_id, section:section_id(id, name, assigned_staff_id, notes, staff:assigned_staff_id(id, name))`).in("month", months);
         })(),
+        supabase.from("roster_shifts").select("staff_id, shift_date").gte("shift_date", todayStr).lte("shift_date", lookAheadEnd).order("shift_date", { ascending: true }),
       ]);
 
       const activeStaff = (s || []).filter((x) => x.active !== false);
@@ -696,10 +710,42 @@ export default function HomePage() {
 
       const activeStaffIds = new Set(uniqueOnShift.map((s) => s.id));
 
-      const activeTasks = (t || []).filter((x) => x.active !== false);
+      // Build next shift date map: staffId -> earliest upcoming shift date
+      const nextShiftMap = {};
+      for (const sh of upcomingShifts || []) {
+        const sid = Number(sh.staff_id);
+        if (sid && !nextShiftMap[sid]) {
+          nextShiftMap[sid] = sh.shift_date;
+        }
+      }
+
+      const activeTasks = (t || []).filter((x) => x.active !== false && !(x.task_type === "on_the_list" && x.completed_at));
+      const staffRoleMap = Object.fromEntries((s || []).map((st) => [st.id, st.role]));
       const todayTasks = activeTasks.filter((task) => {
+        // Next shift tasks — show only on the day that staff member is next rostered
+        if (task.show_next_shift) {
+          if (!task.assigned_staff_id) return false;
+          const nextShift = nextShiftMap[Number(task.assigned_staff_id)];
+          return nextShift === todayStr;
+        }
+        // On the List tasks — show based on assignment type
+        if (task.task_type === "on_the_list") {
+          // Role-based — show if anyone in that role is rostered today
+          if (task.assigned_role) {
+            return uniqueOnShift.some((sh) => staffRoleMap[sh.id] === task.assigned_role);
+          }
+          // Multiple staff — show if any of the selected staff are rostered today
+          if (task.assigned_staff_ids?.length > 0) {
+            return task.assigned_staff_ids.some((id) => activeStaffIds.has(Number(id)));
+          }
+          // Single person
+          if (task.assigned_staff_id) {
+            return activeStaffIds.has(Number(task.assigned_staff_id));
+          }
+          return true;
+        }
+        // Daily tasks — filter by frequency and roster
         if (!isTaskForToday(task, now)) return false;
-        // If assigned to someone, only show if they are rostered today
         if (task.assigned_staff_id) {
           return activeStaffIds.has(task.assigned_staff_id);
         }
@@ -850,6 +896,14 @@ export default function HomePage() {
       }
       if (!selectedStaffId) { alert("Tap your photo first, then tap the task."); return; }
       recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId);
+      // For On the List tasks, mark the task itself as completed
+      if (task.task_type === "on_the_list") {
+        await supabase.from("tasks").update({
+          completed_at: new Date().toISOString(),
+          completed_by_staff_id: selectedStaff.id,
+        }).eq("id", task.id);
+        setTasks((prev) => prev.filter((t) => t.id !== task.id));
+      }
       setCompletedTaskIds((prev) => { const next = new Set(prev); next.add(task.id); return next; });
       setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: task.title, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
       setLeadersRefreshKey((k) => k + 1);
@@ -1003,6 +1057,7 @@ export default function HomePage() {
         feed={feed}
         onLogout={handleLogout}
         onChangePIN={() => setShowChangePIN(true)}
+        onAddToList={() => setShowAddToList(true)}
       />
 
       {/* Main content */}
@@ -1023,8 +1078,8 @@ export default function HomePage() {
             {loading ? (
               <div className="text-sm text-gray-500 p-4">Loading tasks...</div>
             ) : (() => {
-              const regularTasks = tasks.filter((t) => t.frequency !== "monthly_anytime");
-              const monthlyTasks = tasks.filter((t) => t.frequency === "monthly_anytime");
+              const regularTasks = tasks.filter((t) => t.task_type !== "on_the_list");
+              const monthlyTasks = tasks.filter((t) => t.task_type === "on_the_list");
 
               const dailyDone = regularTasks.filter((t) => completedTaskIds.has(t.id)).length;
               const dailyTotal = regularTasks.length;
@@ -1164,28 +1219,81 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  {/* This Month section */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">This Month</div>
-                      <span className="text-[11px] font-semibold text-orange-600">{monthlyDone}/{monthlyTotal} ({monthlyPct}%)</span>
-                    </div>
-                    <div className="w-full bg-orange-50 rounded-full h-1 mb-2">
-                      <div className="bg-orange-400 h-1 rounded-full transition-all" style={{ width: `${monthlyPct}%` }} />
-                    </div>
-                    {monthlyTotal === 0 ? (
-                      <div className="text-xs text-gray-400 py-2">No monthly tasks added yet.</div>
-                    ) : (
-                      <div className="grid grid-cols-4 gap-1.5">
-                        {monthlyTasks.map((task) => renderTaskCard(task, true))}
+                  {/* On the List section */}
+                  {monthlyTotal > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">On the List</div>
+                        <span className="text-[11px] font-semibold text-orange-600">{monthlyDone}/{monthlyTotal} ({monthlyPct}%)</span>
                       </div>
-                    )}
-                  </div>
+                      <div className="w-full bg-orange-50 rounded-full h-1 mb-2">
+                        <div className="bg-orange-400 h-1 rounded-full transition-all" style={{ width: `${monthlyPct}%` }} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {monthlyTasks.map((task) => {
+                          const isDone = Boolean(monthlyCompletions[task.id]);
+                          const monthlyComp = monthlyCompletions[task.id];
+                          const assignedStaff = task.assigned_staff_id ? staffById[task.assigned_staff_id] : null;
+                          const borderColour = isDone ? "border-l-green-500" : "border-l-orange-400";
+                          return (
+                            <button
+                              key={task.id}
+                              onClick={() => handleTaskTap(task)}
+                              className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${borderColour} text-left bg-white shadow-sm hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
+                            >
+                              <div className="flex items-start justify-between gap-2 mb-1">
+                                <div className="font-semibold text-sm leading-tight text-gray-800 flex-1">{task.title}</div>
+                                {isDone && <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]">✓</span>}
+                              </div>
+                              {task.assigned_role && (
+                                <div className="text-xs text-blue-600 font-medium mb-1">
+                                  👥 {task.assigned_role} — {onShiftStaff.filter((sh) => staffById[sh.id]?.role === task.assigned_role).map((sh) => sh.name).join(", ") || "None rostered"}
+                                </div>
+                              )}
+                              {task.assigned_staff_ids?.length > 0 && !task.assigned_role && (
+                                <div className="text-xs text-blue-600 font-medium mb-1">
+                                  👥 {task.assigned_staff_ids.map((id) => staffById[id]?.name).filter(Boolean).join(", ")}
+                                </div>
+                              )}
+                              {assignedStaff && !task.assigned_role && !(task.assigned_staff_ids?.length > 0) && (
+                                <div className="text-xs text-blue-600 font-medium mb-1">👤 {assignedStaff.name}</div>
+                              )}
+                              {task.info && (
+                                <div className="text-xs text-gray-500 leading-snug mb-1 truncate">{task.info}</div>
+                              )}
+                              {task.created_by_staff_id && staffById[task.created_by_staff_id] && (
+                                <div className="text-[10px] text-gray-400 mb-1">Added by {staffById[task.created_by_staff_id].name}</div>
+                              )}
+                              <div className="flex items-center justify-between mt-1">
+                                <div className="text-[10px] text-gray-400">
+                                  {isDone && monthlyComp ? (
+                                    <span className="text-green-600">✓ Done by {monthlyComp.staffName}</span>
+                                  ) : task.end_date ? (
+                                    <span>Due {new Date(task.end_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}</span>
+                                  ) : task.specific_date ? (
+                                    <span>Due {new Date(task.specific_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}</span>
+                                  ) : null}
+                                </div>
+                                {task.info && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setInfoOpenId((prev) => prev === task.id ? null : task.id); }}
+                                    className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-[9px] text-gray-500"
+                                  >i</button>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Section Cleans */}
                   {sectionCleans.length > 0 && (
                     <div>
                       {/* Today's sections — rostered staff, incomplete */}
+                      <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">This Month</div>
                       {myTodaySections.length > 0 && (
                         <div className="grid grid-cols-4 gap-1.5 mb-2">
                           {myTodaySectionsSorted.map((sc) => {
@@ -1505,7 +1613,259 @@ export default function HomePage() {
         </>,
         document.body
       )}
+{/* Add to List modal */}
+      {showAddToList && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setShowAddToList(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+                <h2 className="font-semibold text-gray-800">➕ Add to List</h2>
+                <button onClick={() => setShowAddToList(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="px-5 py-4 space-y-3 overflow-y-auto">
 
+                {/* Title */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Task title</label>
+                  <input
+                    type="text"
+                    value={addToListForm.title}
+                    onChange={(e) => setAddToListForm((f) => ({ ...f, title: e.target.value }))}
+                    placeholder="What needs to be done?"
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    autoFocus
+                  />
+                </div>
+
+                {/* Assignment type */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Assign to</label>
+                  <select
+                    value={addToListForm.assign_type || "anyone"}
+                    onChange={(e) => setAddToListForm((f) => ({ ...f, assign_type: e.target.value, assigned_staff_id: "", assigned_role: "", assigned_staff_ids: [], show_next_shift: false }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="anyone">Anyone</option>
+                    <option value="person">Specific person</option>
+                    <option value="role">Role</option>
+                    <option value="multiple">Multiple people</option>
+                  </select>
+                </div>
+
+                {/* Specific person */}
+                {addToListForm.assign_type === "person" && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Who is it for?</label>
+                    <select
+                      value={addToListForm.assigned_staff_id}
+                      onChange={(e) => setAddToListForm((f) => ({ ...f, assigned_staff_id: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm"
+                    >
+                      <option value="">Select staff member</option>
+                      {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {/* Role */}
+                {addToListForm.assign_type === "role" && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Which role?</label>
+                    <select
+                      value={addToListForm.assigned_role || ""}
+                      onChange={(e) => setAddToListForm((f) => ({ ...f, assigned_role: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm"
+                    >
+                      <option value="">Select role</option>
+                      <option value="Pharmacist">Pharmacist</option>
+                      <option value="Pharmacy Assistant">Pharmacy Assistant</option>
+                      <option value="DAA Coordinator">DAA Coordinator</option>
+                      <option value="Locum">Locum</option>
+                      <option value="Manager">Manager</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Multiple people */}
+                {addToListForm.assign_type === "multiple" && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Who is it for?</label>
+                    <div className="space-y-1 max-h-40 overflow-y-auto border rounded-lg p-2">
+                      {staff.map((s) => {
+                        const selected = (addToListForm.assigned_staff_ids || []).includes(s.id);
+                        return (
+                          <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => setAddToListForm((f) => ({
+                                ...f,
+                                assigned_staff_ids: selected
+                                  ? (f.assigned_staff_ids || []).filter((id) => id !== s.id)
+                                  : [...(f.assigned_staff_ids || []), s.id],
+                              }))}
+                              className="h-3.5 w-3.5 rounded border-gray-300"
+                            />
+                            {s.name}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Type */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Type</label>
+                  <select
+                    value={addToListForm.show_next_shift ? "next_shift" : addToListForm.frequency}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "next_shift") {
+                        setAddToListForm((f) => ({ ...f, frequency: "specific_date", show_next_shift: true }));
+                      } else {
+                        setAddToListForm((f) => ({ ...f, frequency: val, show_next_shift: false }));
+                      }
+                    }}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="monthly_anytime">Monthly</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="specific_date">One-off date</option>
+                    <option value="next_shift">Next shift</option>
+                  </select>
+                </div>
+
+                {/* Monthly — day of month */}
+                {addToListForm.frequency === "monthly_anytime" && !addToListForm.show_next_shift && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Day of month (optional)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={addToListForm.day_of_month || ""}
+                      onChange={(e) => setAddToListForm((f) => ({ ...f, day_of_month: e.target.value }))}
+                      placeholder="e.g. 1 for 1st of month"
+                      className="w-40 border rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                )}
+                {/* One-off date */}
+                {addToListForm.frequency === "specific_date" && !addToListForm.show_next_shift && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={addToListForm.specific_date}
+                      onChange={(e) => setAddToListForm((f) => ({ ...f, specific_date: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                )}
+
+                {/* Weekly days */}
+                {addToListForm.frequency === "weekly" && !addToListForm.show_next_shift && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Days of week</label>
+                    <div className="grid grid-cols-7 gap-1">
+                      {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d, idx) => {
+                        const selected = addToListForm.days_of_week.includes(idx);
+                        return (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => setAddToListForm((f) => ({
+                              ...f,
+                              days_of_week: selected ? f.days_of_week.filter((x) => x !== idx) : [...f.days_of_week, idx],
+                            }))}
+                            className={`rounded-lg border py-1 text-xs ${selected ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600"}`}
+                          >
+                            {d.slice(0, 2)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Next shift info */}
+                {addToListForm.show_next_shift && (
+                  <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                    This task will appear on the day this staff member is next rostered.
+                  </div>
+                )}
+
+                {/* Notes */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Notes (optional)</label>
+                  <textarea
+                    value={addToListForm.info}
+                    onChange={(e) => setAddToListForm((f) => ({ ...f, info: e.target.value }))}
+                    rows={2}
+                    placeholder="Any extra details..."
+                    className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
+                  />
+                </div>
+
+                {/* Created by */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Added by</label>
+                  <select
+                    value={addToListForm.created_by_staff_id}
+                    onChange={(e) => setAddToListForm((f) => ({ ...f, created_by_staff_id: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                  >
+                    <option value="">Select your name</option>
+                    {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+
+                {/* Save */}
+                <button
+                  onClick={async () => {
+                    if (!addToListForm.title.trim()) { alert("Please enter a title."); return; }
+                    setSavingAddToList(true);
+                    try {
+                      await supabase.from("tasks").insert([{
+                        title: addToListForm.title.trim(),
+                        frequency: addToListForm.frequency,
+                        show_next_shift: addToListForm.show_next_shift,
+                        assigned_staff_id: addToListForm.assign_type === "person" && addToListForm.assigned_staff_id ? Number(addToListForm.assigned_staff_id) : null,
+                        assigned_role: addToListForm.assign_type === "role" ? addToListForm.assigned_role || null : null,
+                        assigned_staff_ids: addToListForm.assign_type === "multiple" ? addToListForm.assigned_staff_ids : [],
+                        specific_date: addToListForm.frequency === "specific_date" && !addToListForm.show_next_shift ? addToListForm.specific_date : null,
+                        days_of_week: addToListForm.frequency === "weekly" ? addToListForm.days_of_week : [],
+                        info: addToListForm.info.trim() || null,
+                        day_of_month: addToListForm.day_of_month ? Number(addToListForm.day_of_month) : null,
+                        created_by_staff_id: addToListForm.created_by_staff_id ? Number(addToListForm.created_by_staff_id) : null,
+                        active: true,
+                        points: 1,
+                        task_type: "on_the_list",
+                        pharmacy_id: currentPharmacyId,
+                      }]);
+                      setAddToListForm({ title: "", assign_type: "anyone", assigned_staff_id: "", assigned_role: "", assigned_staff_ids: [], frequency: "monthly_anytime", show_next_shift: false, specific_date: "", days_of_week: [], day_of_month: "", info: "", created_by_staff_id: "" });
+                      setShowAddToList(false);
+                      // Reload tasks
+                      window.location.reload();
+                    } catch (err) {
+                      alert("Couldn't save: " + (err?.message || String(err)));
+                    } finally {
+                      setSavingAddToList(false);
+                    }
+                  }}
+                  disabled={savingAddToList}
+                  className="w-full bg-orange-500 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40"
+                >
+                  {savingAddToList ? "Saving…" : "Add to List"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
       {/* Info modal */}
       {infoOpenId && !String(infoOpenId).startsWith("section-") && createPortal(
         <>

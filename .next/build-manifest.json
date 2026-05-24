@@ -27,10 +27,10 @@
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/roster": [
+    "/tasks": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/roster.js"
+      "static/chunks/pages/tasks.js"
     ]
   },
   "ampFirstPages": []
