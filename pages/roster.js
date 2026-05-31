@@ -129,6 +129,9 @@ export default function RosterPage() {
   const [monthStatus, setMonthStatus] = useState("draft");
   const [publishingMonth, setPublishingMonth] = useState(false);
 
+  // Sick days
+  const [sickByShift, setSickByShift] = useState({});
+
   // Notes
   const [dayNotes, setDayNotes] = useState({});
   const [monthNote, setMonthNote] = useState("");
@@ -211,6 +214,13 @@ const selectedDayShifts = selectedDate
     setMonthNote(data?.note || "");
   }, [currentYear, currentMonth]);
 
+  const refreshSick = useCallback(async () => {
+    const { data } = await supabase.from("sick_days").select("*");
+    const map = {};
+    (data || []).forEach((s) => { map[s.roster_shift_id] = s; });
+    setSickByShift(map);
+  }, []);
+
   const refreshShifts = useCallback(async () => {
     const { data, error } = await supabase
       .from("roster_shifts")
@@ -220,7 +230,8 @@ const selectedDayShifts = selectedDate
       const foundPharmacyId = (data || []).find((s) => s.pharmacy_id)?.pharmacy_id || null;
       if (foundPharmacyId) setPharmacyId(foundPharmacyId);
     }
-  }, []);
+    await refreshSick();
+  }, [refreshSick]);
 
   useEffect(() => {
     const load = async () => {
@@ -248,6 +259,7 @@ const selectedDayShifts = selectedDate
       ]);
 
       setShifts(shiftData || []);
+      refreshSick();
       setStaffOptions((staffData || []).filter((s) => s.active !== false));
       setTemplates(templateData || []);
       setHolidays(holidayData || []);
@@ -367,6 +379,34 @@ const selectedDayShifts = selectedDate
       alert("Couldn't update shift: " + (err?.message || String(err)));
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleMarkSick = async (shift, name) => {
+    const reason = window.prompt(`Mark ${name}'s shift as sick?\n\nOptional reason (shown only in their staff file):`, "");
+    if (reason === null) return; // cancelled
+    try {
+      const { error } = await supabase.from("sick_days").upsert({
+        roster_shift_id: shift.id,
+        staff_id: shift.staff_id || null,
+        sick_date: shift.shift_date,
+        reason: reason.trim() || null,
+        pharmacy_id: pharmacyId,
+      }, { onConflict: "roster_shift_id" });
+      if (error) throw error;
+      await refreshSick();
+    } catch (err) {
+      alert("Couldn't mark sick: " + (err?.message || String(err)));
+    }
+  };
+
+  const handleUnmarkSick = async (shift) => {
+    try {
+      const { error } = await supabase.from("sick_days").delete().eq("roster_shift_id", shift.id);
+      if (error) throw error;
+      await refreshSick();
+    } catch (err) {
+      alert("Couldn't unmark sick: " + (err?.message || String(err)));
     }
   };
 
@@ -1084,13 +1124,13 @@ const selectedDayShifts = selectedDate
                                   inlineEndRef.current = s.end_time?.slice(0, 5) || "";
                                   setInlineSuggestions([]);
                                 }}
-                                className={`print-shift-line text-[10px] leading-tight truncate ${isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
+                                className={`print-shift-line text-[10px] leading-tight truncate ${sickByShift[s.id] ? "text-red-400 line-through" : isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
                                 style={{
                                   fontSize: dayShifts.length > 7 ? "8px" : dayShifts.length > 5 ? "9px" : "10px"
                                 }}
-                                title={`${name} ${start}–${end} (${s.role})`}
+                                title={`${name} ${start}–${end} (${s.role})${sickByShift[s.id] ? " — Sick" : ""}`}
                               >
-                                {isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
+                                {sickByShift[s.id] && "🤒 "}{isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
                               </div>
                             );
                           })}
@@ -1199,10 +1239,18 @@ const selectedDayShifts = selectedDate
                           ) : (
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
-                                <div className={`text-xs font-medium truncate ${roleColour[s.role] || "text-gray-800"}`}>{name}</div>
+                                <div className={`text-xs font-medium truncate ${roleColour[s.role] || "text-gray-800"}`}>
+                                  {name}
+                                  {sickByShift[s.id] && <span className="ml-1 text-[10px] px-1 py-0.5 rounded-full bg-red-100 text-red-600">🤒 Sick</span>}
+                                </div>
                                 <div className="text-[10px] text-gray-500">{start}–{end} · {s.role}</div>
                               </div>
                               <div className="flex gap-1 shrink-0">
+                                {sickByShift[s.id] ? (
+                                  <button onClick={() => handleUnmarkSick(s)} className="px-1.5 py-0.5 text-[10px] border border-amber-200 text-amber-600 rounded hover:bg-amber-50">Unsick</button>
+                                ) : (
+                                  <button onClick={() => handleMarkSick(s, name)} className="px-1.5 py-0.5 text-[10px] border border-amber-200 text-amber-600 rounded hover:bg-amber-50">Sick</button>
+                                )}
                                 <button onClick={() => handleStartEdit(s)} className="px-1.5 py-0.5 text-[10px] border border-blue-200 text-blue-600 rounded hover:bg-blue-50">Edit</button>
                                 <button onClick={() => handleDeleteShift(s.id, name)} className="px-1.5 py-0.5 text-[10px] border border-red-200 text-red-600 rounded hover:bg-red-50">Del</button>
                               </div>

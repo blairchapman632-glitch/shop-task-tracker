@@ -343,9 +343,14 @@ export default function WagesPage() {
       // Load edits for these shifts
       const shiftIds = (shifts || []).map((s) => s.id);
       let editsByShift = {};
+      let sickByShift = {};
       if (shiftIds.length) {
-        const { data: editData } = await supabase.from("shift_edits").select("*").in("roster_shift_id", shiftIds);
+        const [{ data: editData }, { data: sickData }] = await Promise.all([
+          supabase.from("shift_edits").select("*").in("roster_shift_id", shiftIds),
+          supabase.from("sick_days").select("roster_shift_id").in("roster_shift_id", shiftIds),
+        ]);
         editsByShift = Object.fromEntries((editData || []).map((e) => [e.roster_shift_id, e]));
+        sickByShift = Object.fromEntries((sickData || []).map((s) => [s.roster_shift_id, true]));
       }
 
       setStaff(staffData || []);
@@ -364,6 +369,8 @@ export default function WagesPage() {
           grouped[key] = { key, staffId: sh.staff_id || null, name, role, weekday: 0, sat: 0, sun: 0, ph: 0, shifts: [] };
         }
         const edit = editsByShift[sh.id] || null;
+        const isSick = !!sickByShift[sh.id];
+        const isPermanent = sh.staff_id ? (staffById[sh.staff_id]?.employment_type === "Permanent") : false;
         const staffNoLunch = sh.staff_id ? (staffById[sh.staff_id]?.no_lunch_deduction === true) : false;
         const rosteredHrs = shiftHours(sh.start_time, sh.end_time);
         const adjustMins = edit?.adjust_minutes || 0;
@@ -372,19 +379,26 @@ export default function WagesPage() {
         const breakApplies = hrs > 5 && !(edit?.no_lunch) && !staffNoLunch;
         if (breakApplies) hrs -= 0.5;
         const cat = dayCategory(sh.shift_date, holidaySet);
-        grouped[key][cat] += hrs;
-        grouped[key].shifts.push({
-          id: sh.id,
-          date: sh.shift_date,
-          start: sh.start_time,
-          end: sh.end_time,
-          cat,
-          rosteredHrs,
-          adjustMins,
-          paidHrs: hrs,
-          breakDeducted: breakApplies,
-          edit,
-        });
+
+        if (isSick) {
+          // Permanent → hours go to Sick column. Casual → unpaid (zero). Either way not in worked categories.
+          if (isPermanent) {
+            grouped[key].sick = (grouped[key].sick || 0) + hrs;
+          }
+          grouped[key].shifts.push({
+            id: sh.id, date: sh.shift_date, start: sh.start_time, end: sh.end_time,
+            cat: "sick", rosteredHrs, adjustMins,
+            paidHrs: isPermanent ? hrs : 0,
+            breakDeducted: breakApplies, edit, isSick, paidSick: isPermanent,
+          });
+        } else {
+          grouped[key][cat] += hrs;
+          grouped[key].shifts.push({
+            id: sh.id, date: sh.shift_date, start: sh.start_time, end: sh.end_time,
+            cat, rosteredHrs, adjustMins, paidHrs: hrs,
+            breakDeducted: breakApplies, edit,
+          });
+        }
       }
 
       // Public holiday pay for permanent staff (closed days have no shifts, so pull from schedule)
@@ -428,15 +442,18 @@ export default function WagesPage() {
           const salaryHrs = Number(st?.contracted_hours) || 0;
           return { ...g, weekday: 0, sat: 0, sun: 0, ph: 0, ot: 0, sick: 0, annual: 0, total: salaryHrs, isSalary: true };
         }
-        const total = g.weekday + g.sat + g.sun + g.ph;
-        let ot = Math.max(0, total - FORTNIGHT_THRESHOLD);
+        const sick = g.sick || 0;
+        // OT threshold based on worked hours only (sick/leave excluded)
+        const worked = g.weekday + g.sat + g.sun + g.ph;
+        let ot = Math.max(0, worked - FORTNIGHT_THRESHOLD);
         let weekday = g.weekday, sat = g.sat, sun = g.sun;
         let remaining = ot;
         const pull = (val) => { const take = Math.min(val, remaining); remaining -= take; return val - take; };
         weekday = pull(weekday);
         sat = pull(sat);
         sun = pull(sun);
-        return { ...g, weekday, sat, sun, ot, total, sick: 0, annual: 0, isSalary: false };
+        const total = worked + sick;
+        return { ...g, weekday, sat, sun, ph: g.ph, ot, total, sick, annual: 0, isSalary: false };
       });
 
       // Ensure all active salary staff appear, even with no shifts this period
@@ -614,17 +631,18 @@ export default function WagesPage() {
                               <div className="space-y-1">
                                 {[...r.shifts].sort((a, b) => a.date.localeCompare(b.date)).map((sh) => {
                                   const edited = !!sh.edit;
-                                  const canEdit = r.staffId && !sh.isPublicHoliday && (isManager || currentUser?.id === r.staffId);
+                                  const canEdit = r.staffId && !sh.isPublicHoliday && !sh.isSick && (isManager || currentUser?.id === r.staffId);
                                   return (
                                   <div key={sh.id} className="flex items-center gap-3 text-sm">
                                     <span className="w-32 text-gray-700">{new Date(sh.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })}</span>
                                     <span className="w-28 text-gray-600 tabular-nums">
                                       {sh.isPublicHoliday ? <span className="text-red-500 text-xs">Public holiday</span> : <>{String(sh.start).slice(0,5)}–{String(sh.end).slice(0,5)}</>}
                                     </span>
-                                    <span className="w-24 text-gray-400 text-xs">{dayLabel[sh.cat]}</span>
-                                    <span className="w-20 text-right tabular-nums font-medium text-gray-800">{fmt(sh.paidHrs)} hrs</span>
-                                    {sh.breakDeducted && <span className="text-[10px] text-gray-400">(−30 min lunch)</span>}
+                                    <span className="w-24 text-gray-400 text-xs">{sh.isSick ? "Sick" : dayLabel[sh.cat]}</span>
+                                    <span className="w-20 text-right tabular-nums font-medium text-gray-800">{sh.isSick && !sh.paidSick ? "—" : `${fmt(sh.paidHrs)} hrs`}</span>
+                                    {sh.breakDeducted && !sh.isSick && <span className="text-[10px] text-gray-400">(−30 min lunch)</span>}
                                     {sh.isPublicHoliday && <span className="text-[10px] text-red-400">(from schedule — closed)</span>}
+                                    {sh.isSick && <span className="text-[10px] text-amber-600">🤒 sick{sh.paidSick ? " — paid" : " — unpaid (casual)"}</span>}
                                     {edited && (
                                       <span className="text-[10px] text-blue-600" title={sh.edit.reason || ""}>
                                         ✏️ edited{sh.edit.no_lunch ? " · no lunch" : ""}{sh.adjustMins ? ` · ${sh.adjustMins > 0 ? "+" : ""}${sh.adjustMins} min` : ""}{sh.edit.reason ? ` — ${sh.edit.reason}` : ""}

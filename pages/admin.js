@@ -193,6 +193,16 @@ function StaffForm({ member, onSave, onCancel }) {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [sickDays, setSickDays] = useState([]);
+
+  useEffect(() => {
+    if (!member?.id) return;
+    supabase.from("sick_days")
+      .select("id, sick_date, reason")
+      .eq("staff_id", member.id)
+      .order("sick_date", { ascending: false })
+      .then(({ data }) => setSickDays(data || []));
+  }, [member?.id]);
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -435,6 +445,32 @@ function StaffForm({ member, onSave, onCancel }) {
             </div>
           ))}
         </div>
+
+        {/* Sick days — existing staff only */}
+        {!isNew && (
+          <div className="border-t pt-4">
+            <div className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+              Sick Days {sickDays.length > 0 && <span className="text-gray-400 font-normal">({sickDays.length})</span>}
+            </div>
+            {sickDays.length === 0 ? (
+              <p className="text-xs text-gray-400">No sick days recorded.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {sickDays.map((sd) => (
+                  <div key={sd.id} className="flex items-start gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                    <span className="text-sm">🤒</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-gray-700">
+                        {new Date(sd.sick_date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                      </div>
+                      {sd.reason && <div className="text-xs text-gray-500 mt-0.5">{sd.reason}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
