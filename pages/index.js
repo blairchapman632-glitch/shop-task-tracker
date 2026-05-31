@@ -603,6 +603,7 @@ export default function HomePage() {
   const [showOffRoster, setShowOffRoster] = useState(false);
   const [completingSection, setCompletingSection] = useState(null);
   const [todayRosteredIds, setTodayRosteredIds] = useState(new Set());
+  const [approvalReminderIds, setApprovalReminderIds] = useState(new Set());
 
   // ── Leaderboard ──
   const [leadersWeek, setLeadersWeek] = useState([]);
@@ -781,6 +782,67 @@ export default function HomePage() {
       setLoading(false);
     };
     load();
+  }, [authChecked, currentPharmacyId]);
+
+  // ── Wage approval reminders ──
+  useEffect(() => {
+    if (!authChecked || !currentPharmacyId) return;
+    const loadReminders = async () => {
+      try {
+        const { data: settings } = await supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", currentPharmacyId).single();
+        if (!settings?.payroll_start_date) return;
+
+        // Find the current (closing) pay period
+        const start = new Date(settings.payroll_start_date + "T00:00:00");
+        const now = new Date();
+        let cur = new Date(start);
+        while (cur.getTime() + 14 * 86400000 <= now.getTime()) {
+          cur.setDate(cur.getDate() + 14);
+        }
+        const periodStart = new Date(cur);
+        const periodEnd = new Date(cur); periodEnd.setDate(periodEnd.getDate() + 13);
+        // Deadline = last Monday = day 13 is Tuesday, so day 12 is Monday
+        const deadline = new Date(cur); deadline.setDate(deadline.getDate() + 12);
+
+        const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const periodStartISO = iso(periodStart);
+        const deadlineISO = iso(deadline);
+        const periodEndISO = iso(periodEnd);
+        const todayISO = iso(now);
+
+        // Only relevant up to the deadline
+        if (todayISO > deadlineISO) { setApprovalReminderIds(new Set()); return; }
+
+        const [{ data: periodShifts }, { data: appr }] = await Promise.all([
+          supabase.from("roster_shifts").select("staff_id, shift_date").gte("shift_date", periodStartISO).lte("shift_date", periodEndISO).not("staff_id", "is", null),
+          supabase.from("wage_approvals").select("staff_id").eq("pharmacy_id", currentPharmacyId).eq("period_start", periodStartISO),
+        ]);
+
+        const approvedIds = new Set((appr || []).map((a) => a.staff_id));
+
+        // Per staff: latest shift date that is <= deadline
+        const lastShiftBeforeDeadline = {};
+        for (const sh of periodShifts || []) {
+          if (sh.shift_date > deadlineISO) continue;
+          const sid = sh.staff_id;
+          if (!lastShiftBeforeDeadline[sid] || sh.shift_date > lastShiftBeforeDeadline[sid]) {
+            lastShiftBeforeDeadline[sid] = sh.shift_date;
+          }
+        }
+
+        // Reminder if today is their last-shift-before-deadline and not approved
+        const remind = new Set();
+        for (const [sid, lastDate] of Object.entries(lastShiftBeforeDeadline)) {
+          if (lastDate === todayISO && !approvedIds.has(Number(sid))) {
+            remind.add(Number(sid));
+          }
+        }
+        setApprovalReminderIds(remind);
+      } catch (err) {
+        console.error("Approval reminder load failed:", err);
+      }
+    };
+    loadReminders();
   }, [authChecked, currentPharmacyId]);
 
   // ── Leaderboard ──
@@ -1429,8 +1491,11 @@ export default function HomePage() {
                   <button
                     key={s.id}
                     onClick={() => setSelectedStaffId(s.id)}
-                    className={`flex flex-col items-center p-1.5 rounded-xl border transition-all hover:shadow-md ${isSelected ? "ring-2 ring-green-500 border-green-300" : "border-gray-200"}`}
+                    className={`relative flex flex-col items-center p-1.5 rounded-xl border transition-all hover:shadow-md ${isSelected ? "ring-2 ring-green-500 border-green-300" : "border-gray-200"}`}
                   >
+                    {approvalReminderIds.has(s.id) && (
+                      <span className="absolute -top-1 -right-1 z-10 text-base" title="Approve your timesheet">⚠️</span>
+                    )}
                     <img
                       src={s.photo_url || "/placeholder.png"}
                       alt={s.name}
@@ -1448,6 +1513,13 @@ export default function HomePage() {
                 <div className="text-xs text-gray-400">No staff rostered today.</div>
               )}
             </div>
+
+            {/* Wage approval reminder */}
+            {selectedStaffId && approvalReminderIds.has(selectedStaffId) && (
+              <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                ⚠️ {selectedStaffName}, please approve your timesheet for this pay period in Wages before it's finalised.
+              </div>
+            )}
 
             {/* Staff tip */}
             <div className="mt-2 text-xs text-gray-400">
