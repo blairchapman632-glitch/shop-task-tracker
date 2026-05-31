@@ -546,8 +546,8 @@ const handlePinSubmit = async () => {
           <div className="flex items-center gap-1">
             {[
               { key: "general", label: "Daily Tasks" },
-              { key: "assigned", label: "On the List" },
-              { key: "sections", label: "This Month" },
+              { key: "assigned", label: "Assigned Tasks" },
+              { key: "sections", label: "Section Cleans" },
             ].map((tab) => (
               <button
                 key={tab.key}
@@ -565,7 +565,7 @@ const handlePinSubmit = async () => {
             )}
             {activeTab === "assigned" && (
               <button onClick={openAdd} className="px-4 py-1.5 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600">
-                + Add to List
+                + Assigned Task
               </button>
             )}
 
@@ -612,6 +612,61 @@ const handlePinSubmit = async () => {
                     })}
                   </div>
                 )}
+              </div>
+
+              {/* Per-staff monthly count grid — for even planning */}
+              <div className="bg-white rounded-xl border overflow-hidden">
+                <div className="px-4 py-3 border-b">
+                  <div className="text-sm font-semibold text-gray-700">Sections per staff member — 2026</div>
+                  <div className="text-xs text-gray-400 mt-0.5">Count of assigned sections each month — use to balance the load</div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold text-gray-600 w-40">Staff</th>
+                        {MONTHS.map((m) => (
+                          <th key={m.value} className={`px-1 py-2 text-center font-semibold w-10 ${m.value === thisMonth ? "text-blue-600" : "text-gray-500"}`}>
+                            {m.label}
+                          </th>
+                        ))}
+                        <th className="px-2 py-2 text-center font-semibold text-gray-500 w-12">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        // Build: staffId -> { name, perMonth: {monthValue: count}, total }
+                        const rows = {};
+                        for (const sch of schedule) {
+                          const section = sections.find((sec) => sec.id === sch.section_id);
+                          if (!section || !section.assigned_staff_id) continue; // skip unassigned
+                          const sid = section.assigned_staff_id;
+                          if (!rows[sid]) rows[sid] = { name: section.staff?.name || `#${sid}`, perMonth: {}, total: 0 };
+                          rows[sid].perMonth[sch.month] = (rows[sid].perMonth[sch.month] || 0) + 1;
+                          rows[sid].total += 1;
+                        }
+                        const ordered = Object.values(rows).sort((a, b) => a.name.localeCompare(b.name));
+                        if (!ordered.length) {
+                          return <tr><td colSpan={MONTHS.length + 2} className="px-3 py-6 text-center text-gray-400">No sections assigned to staff yet.</td></tr>;
+                        }
+                        return ordered.map((r) => (
+                          <tr key={r.name} className="border-t hover:bg-gray-50">
+                            <td className="px-3 py-1.5 font-medium text-gray-800">{r.name}</td>
+                            {MONTHS.map((m) => {
+                              const count = r.perMonth[m.value] || 0;
+                              return (
+                                <td key={m.value} className={`px-1 py-1.5 text-center tabular-nums ${m.value === thisMonth ? "bg-blue-50" : ""} ${count === 0 ? "text-gray-300" : "text-gray-800 font-medium"}`}>
+                                  {count || "·"}
+                                </td>
+                              );
+                            })}
+                            <td className="px-2 py-1.5 text-center font-semibold text-gray-600 tabular-nums">{r.total}</td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
               {/* Year schedule grid */}

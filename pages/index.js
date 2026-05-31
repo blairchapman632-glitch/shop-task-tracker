@@ -268,7 +268,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
         onClick={onAddToList}
         className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
       >
-        <span>📝</span> Leave a Job
+        <span>📝</span> Create a Job
       </button>
       <button
         onClick={onViewRoster}
@@ -277,7 +277,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
         <span>📋</span> View Roster
       </button>
       <NavLink href="/insights" icon="📊" label="Insights" />
-      <NavLink href="#" icon="💰" label="Wages" disabled />
+      <NavLink href="/wages" icon="💰" label="Wages" />
       <NavLink href="#" icon="🏖️" label="Leave" disabled />
       <div className="border-t my-1" />
       <NavLink href="/roster" icon="📅" label="Roster" />
@@ -599,6 +599,8 @@ export default function HomePage() {
   const [monthlyCompletions, setMonthlyCompletions] = useState({});
   const [sectionCleans, setSectionCleans] = useState([]);
   const [sectionCleansExpanded, setSectionCleansExpanded] = useState(false);
+  const [cleanMonth, setCleanMonth] = useState("this");
+  const [showOffRoster, setShowOffRoster] = useState(false);
   const [completingSection, setCompletingSection] = useState(null);
   const [todayRosteredIds, setTodayRosteredIds] = useState(new Set());
 
@@ -656,7 +658,7 @@ export default function HomePage() {
         supabase.from("completions").select("task_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
         (() => {
           const months = [];
-          for (let i = 2; i >= 0; i--) {
+          for (let i = 2; i >= -1; i--) {
             const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
             months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`);
           }
@@ -681,10 +683,10 @@ export default function HomePage() {
       }
       setMonthlyCompletions(monthlyCompMap);
       const thisMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-      // Mark each record with whether it's current month or overdue
+      // Mark each record: overdue = a PAST month not completed; current/future tagged separately
       const enriched = (sectionCleanData || []).map((sc) => ({
         ...sc,
-        isOverdue: sc.month !== thisMonthStr && !sc.completed_at,
+        isOverdue: sc.month < thisMonthStr && !sc.completed_at,
         isCurrentMonth: sc.month === thisMonthStr,
       }));
       setSectionCleans(enriched);
@@ -1148,8 +1150,20 @@ export default function HomePage() {
               };
 
               // Section cleans logic
-              const myTodaySections = sectionCleans.filter((sc) => {
+              const nowDate = new Date();
+              const thisMonthKey = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, "0")}-01`;
+              const nextMonthDate = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 1);
+              const nextMonthKey = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, "0")}-01`;
+              const activeMonthKey = cleanMonth === "next" ? nextMonthKey : thisMonthKey;
+
+              // Sections for the active month tab (this month includes overdue from prior months)
+              const activeMonthCleans = sectionCleans.filter((sc) =>
+                cleanMonth === "next" ? sc.month === nextMonthKey : (sc.isCurrentMonth || sc.isOverdue)
+              );
+
+              const myTodaySections = activeMonthCleans.filter((sc) => {
                 if (sc.completed_at) return false;
+                if (cleanMonth === "next") return true; // no "today" concept for next month — show all incomplete
                 const assignedId = sc.section?.assigned_staff_id;
                 if (!assignedId) return true; // OTC = all staff
                 return todayRosteredIds.has(assignedId);
@@ -1161,9 +1175,8 @@ export default function HomePage() {
                 ...myTodaySections.filter((sc) => !sc.isOverdue),
               ];
 
-              const currentMonthStr = new Date().toISOString().slice(0, 7) + "-01";
-              const sectionDone = sectionCleans.filter((sc) => sc.completed_at).length;
-              const sectionTotal = sectionCleans.length;
+              const sectionDone = activeMonthCleans.filter((sc) => sc.completed_at).length;
+              const sectionTotal = activeMonthCleans.length;
 
               const handleSectionComplete = async (sc) => {
                 if (!selectedStaffId) { alert("Tap your photo first."); return; }
@@ -1298,9 +1311,24 @@ export default function HomePage() {
                   {/* Section Cleans */}
                   {sectionCleans.length > 0 && (
                     <div className="border-t pt-4">
+                      {/* This Month / Next Month toggle */}
+                      <div className="flex items-center gap-1 mb-2">
+                        {[
+                          { key: "this", label: "This Month" },
+                          { key: "next", label: "Next Month" },
+                        ].map((tab) => (
+                          <button
+                            key={tab.key}
+                            onClick={() => setCleanMonth(tab.key)}
+                            className={`text-[11px] rounded-full px-3 py-1 border font-medium ${cleanMonth === tab.key ? "bg-gray-700 text-white border-gray-700" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
                       {/* Today's sections — rostered staff, incomplete */}
                       <div className="flex items-center justify-between mb-1">
-                        <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">This Month</div>
+                        <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Section Cleans</div>
                         <span className="text-[11px] font-semibold text-gray-500">{sectionDone}/{sectionTotal} ({sectionTotal ? Math.round((sectionDone / sectionTotal) * 100) : 0}%)</span>
                       </div>
                       <div className="w-full bg-gray-100 rounded-full h-1 mb-2">
@@ -1344,13 +1372,13 @@ export default function HomePage() {
                         onClick={() => setSectionCleansExpanded((e) => !e)}
                         className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-100"
                       >
-                        <span>Section Cleans {sectionDone}/{sectionTotal}</span>
+                        <span>{cleanMonth === "next" ? "Next Month" : "Section Cleans"} {sectionDone}/{sectionTotal}</span>
                         <span>{sectionCleansExpanded ? "▲" : "▼"}</span>
                       </button>
 
                       {sectionCleansExpanded && (
                         <div className="grid grid-cols-4 gap-1.5 mt-2">
-                          {[...sectionCleans]
+                          {[...activeMonthCleans]
                             .sort((a, b) => (a.completed_at ? 1 : -1) - (b.completed_at ? 1 : -1))
                             .map((sc) => {
                               const isDone = Boolean(sc.completed_at);
@@ -1426,6 +1454,31 @@ export default function HomePage() {
               {selectedStaffId
                 ? <span className="text-green-700 font-medium">✓ {selectedStaffName} selected</span>
                 : "Tap your photo, then tap each task you complete."}
+            </div>
+
+            {/* Off-roster staff selection */}
+            <div className="mt-2">
+              <button
+                onClick={() => setShowOffRoster((o) => !o)}
+                className="text-xs text-blue-600 hover:underline"
+              >
+                Not on roster? Select your name
+              </button>
+              {showOffRoster && (
+                <select
+                  value={selectedStaffId || ""}
+                  onChange={(e) => {
+                    setSelectedStaffId(e.target.value ? Number(e.target.value) : null);
+                    setShowOffRoster(false);
+                  }}
+                  className="mt-1 block w-full max-w-xs border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">Select your name…</option>
+                  {staff.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              )}
             </div>
           </div>
 
@@ -1632,7 +1685,7 @@ export default function HomePage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
-                <h2 className="font-semibold text-gray-800">📝 Leave a Job</h2>
+                <h2 className="font-semibold text-gray-800">📝 Create a Job</h2>
                 <button onClick={() => setShowAddToList(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
               </div>
               <div className="px-5 py-4 space-y-3 overflow-y-auto">

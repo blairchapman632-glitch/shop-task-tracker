@@ -24,13 +24,13 @@ const WEEK_DAYS = [
   { key: "hours_sunday", label: "Sunday" },
 ];
 const DAYS = [
-  { key: "mon", label: "Monday" },
-  { key: "tue", label: "Tuesday" },
   { key: "wed", label: "Wednesday" },
   { key: "thu", label: "Thursday" },
   { key: "fri", label: "Friday" },
   { key: "sat", label: "Saturday" },
   { key: "sun", label: "Sunday" },
+  { key: "mon", label: "Monday" },
+  { key: "tue", label: "Tuesday" },
 ];
 
 const defaultSchedule = () =>
@@ -182,6 +182,8 @@ function StaffForm({ member, onSave, onCancel }) {
     can_access_roster: member?.can_access_roster ?? false,
     can_access_tasks: member?.can_access_tasks ?? false,
     can_access_admin: member?.can_access_admin ?? false,
+    can_access_wages: member?.can_access_wages ?? false,
+    no_lunch_deduction: member?.no_lunch_deduction ?? false,
     pin: member?.pin || "",
     photo_url: member?.photo_url || "",
     weekly_schedule: member?.weekly_schedule || defaultSchedule(),
@@ -236,6 +238,8 @@ function StaffForm({ member, onSave, onCancel }) {
       can_access_roster: form.can_access_roster,
       can_access_tasks: form.can_access_tasks,
       can_access_admin: form.can_access_admin,
+      can_access_wages: form.can_access_wages,
+      no_lunch_deduction: form.no_lunch_deduction,
       pin: form.pin || null,
       photo_url: form.photo_url || null,
       pharmacy_id: PHARMACY_ID,
@@ -365,14 +369,14 @@ function StaffForm({ member, onSave, onCancel }) {
             {form.schedule_type === "alternating" && (
               <div className="space-y-4">
                 <div>
-                  <div className="text-xs font-semibold text-blue-700 mb-2 px-1">Week A</div>
+                  <div className="text-xs font-semibold text-blue-700 mb-2 px-1">Week A <span className="font-normal text-gray-400">(Wed–Tue, first week of pay period)</span></div>
                   <DayScheduleGrid
                     schedule={form.week_ab_schedule.a}
                     onChange={(s) => set("week_ab_schedule", { ...form.week_ab_schedule, a: s })}
                   />
                 </div>
                 <div>
-                  <div className="text-xs font-semibold text-purple-700 mb-2 px-1">Week B</div>
+                  <div className="text-xs font-semibold text-purple-700 mb-2 px-1">Week B <span className="font-normal text-gray-400">(Wed–Tue, second week of pay period)</span></div>
                   <DayScheduleGrid
                     schedule={form.week_ab_schedule.b}
                     onChange={(s) => set("week_ab_schedule", { ...form.week_ab_schedule, b: s })}
@@ -414,6 +418,8 @@ function StaffForm({ member, onSave, onCancel }) {
             { field: "can_access_roster", label: "Can access roster", desc: "PIN unlocks the roster page" },
             { field: "can_access_tasks", label: "Can access tasks", desc: "PIN unlocks the tasks page" },
             { field: "can_access_admin", label: "Can access admin", desc: "PIN unlocks this admin page" },
+            { field: "can_access_wages", label: "Can access wages", desc: "PIN unlocks the full wages table for all staff" },
+            { field: "no_lunch_deduction", label: "Never deduct lunch break", desc: "Skip the 30-min lunch deduction on all shifts and public holidays" },
           ].map(({ field, label, desc }) => (
             <div key={field} className="flex items-center justify-between">
               <div>
