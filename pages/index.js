@@ -278,7 +278,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       </button>
       <NavLink href="/insights" icon="📊" label="Insights" />
       <NavLink href="/wages" icon="💰" label="Wages" />
-      <NavLink href="#" icon="🏖️" label="Leave" disabled />
+      <NavLink href="/availability" icon="🗓️" label="Requests" />
       <div className="border-t my-1" />
       <NavLink href="/roster" icon="📅" label="Roster" />
       <NavLink href="/tasks" icon="✅" label="Tasks" />

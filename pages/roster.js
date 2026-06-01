@@ -132,6 +132,11 @@ export default function RosterPage() {
   // Sick days
   const [sickByShift, setSickByShift] = useState({});
 
+  // Availability data (all staff) for conflict detection
+  const [allPatterns, setAllPatterns] = useState([]);
+  const [allOverrides, setAllOverrides] = useState([]);
+  const [showIssues, setShowIssues] = useState(false);
+
   // Notes
   const [dayNotes, setDayNotes] = useState({});
   const [monthNote, setMonthNote] = useState("");
@@ -197,6 +202,34 @@ const selectedDayShifts = selectedDate
     ? holidays.find((h) => h.date === selectedDate)
     : null;
 
+  // ── Availability conflict detection ──
+  const getShiftConflict = (shift) => {
+    if (!shift.staff_id) return null; // TBC handled separately
+    const date = shift.shift_date;
+    // Override for this exact date takes priority
+    const ovr = allOverrides.find((o) => String(o.staff_id) === String(shift.staff_id) && o.override_date === date);
+    let status = null;
+    if (ovr) {
+      status = ovr.status;
+    } else {
+      const dow = new Date(date + "T00:00:00").getDay();
+      const pats = allPatterns.filter((p) => String(p.staff_id) === String(shift.staff_id) && p.day_of_week === dow);
+      // Respect date range: pattern applies if date within [from_date, to_date] (nulls = open-ended)
+      const applicable = pats.find((p) =>
+        (!p.from_date || date >= p.from_date) && (!p.to_date || date <= p.to_date)
+      ) || pats.find((p) => !p.from_date && !p.to_date);
+      status = applicable?.status || null;
+    }
+    if (!status || status === "all_day") return null;
+    if (status === "unavailable") return "Marked unavailable";
+    const startMin = toMinutes(shift.start_time);
+    const endMin = toMinutes(shift.end_time);
+    const NOON = 12 * 60;
+    if (status === "am" && endMin > NOON) return "Available mornings only";
+    if (status === "pm" && startMin < NOON) return "Available afternoons only";
+    return null;
+  };
+
   // ── Data loading ──
   const refreshDayNotes = useCallback(async () => {
     const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
@@ -257,6 +290,14 @@ const selectedDayShifts = selectedDate
         supabase.from("roster_month_notes").select("*").eq("month", monthDate).maybeSingle(),
         supabase.from("roster_months").select("id, status").eq("month", monthDate).maybeSingle(),
       ]);
+
+      // Availability data for conflict detection (all staff)
+      const [{ data: patData }, { data: ovrData }] = await Promise.all([
+        supabase.from("availability_patterns").select("staff_id, day_of_week, status, from_date, to_date"),
+        supabase.from("availability_overrides").select("staff_id, override_date, status"),
+      ]);
+      setAllPatterns(patData || []);
+      setAllOverrides(ovrData || []);
 
       setShifts(shiftData || []);
       refreshSick();
@@ -730,10 +771,58 @@ const selectedDayShifts = selectedDate
     }
   };
 
+  // ── Availability panel loader ──
+  const loadStaffAvailability = async (staffId) => {
+    setAvailStaffId(staffId);
+    setAvailLoading(true);
+    const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+    const [{ data: pats }, { data: ovrs }, { data: mNote }] = await Promise.all([
+      supabase.from("availability_patterns").select("*").eq("staff_id", staffId),
+      supabase.from("availability_overrides").select("*").eq("staff_id", staffId).gte("override_date", `${monthStr}-01`).order("override_date"),
+      supabase.from("availability_manager_notes").select("note").eq("staff_id", staffId).eq("month", monthStr).maybeSingle(),
+    ]);
+    setAvailPatterns(pats || []);
+    setAvailOverrides(ovrs || []);
+    const firstNote = (pats || []).find((p) => p.note)?.note || "";
+    setAvailStaffNote(firstNote);
+    setAvailManagerNote(mNote?.note || "");
+    setAvailLoading(false);
+  };
+
+  const handleSaveManagerNote = async () => {
+    if (!availStaffId) return;
+    try {
+      setSavingManagerNote(true);
+      const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+      const { error } = await supabase.from("availability_manager_notes").upsert({
+        staff_id: availStaffId,
+        month: monthStr,
+        note: availManagerNote.trim() || null,
+        pharmacy_id: pharmacyId,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "staff_id,month" });
+      if (error) throw error;
+    } catch (err) {
+      alert("Couldn't save note: " + (err?.message || String(err)));
+    } finally {
+      setSavingManagerNote(false);
+    }
+  };
+
   // ── Sidebar modal state ──
   const [showHolidays, setShowHolidays] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showMonthNotes, setShowMonthNotes] = useState(false);
+
+  // Availability panel
+  const [showAvailability, setShowAvailability] = useState(false);
+  const [availStaffId, setAvailStaffId] = useState(null);
+  const [availPatterns, setAvailPatterns] = useState([]);
+  const [availOverrides, setAvailOverrides] = useState([]);
+  const [availStaffNote, setAvailStaffNote] = useState("");
+  const [availManagerNote, setAvailManagerNote] = useState("");
+  const [availLoading, setAvailLoading] = useState(false);
+  const [savingManagerNote, setSavingManagerNote] = useState(false);
 
   // ── Inline edit state ──
   const [inlineEdit, setInlineEdit] = useState(null); // { shift, rect }
@@ -810,15 +899,13 @@ const selectedDayShifts = selectedDate
 
       <div className="border-t my-1" />
 
-      {/* New features — placeholders */}
-      <div className="px-2 py-1.5 rounded-lg text-xs text-gray-300 flex items-center gap-2 cursor-not-allowed" title="Coming soon">
+      {/* New features */}
+      <button onClick={() => { setShowAvailability(true); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
         👥 Availability
-        <span className="ml-auto text-[9px]">Soon</span>
-      </div>
-      <div className="px-2 py-1.5 rounded-lg text-xs text-gray-300 flex items-center gap-2 cursor-not-allowed" title="Coming soon">
+      </button>
+      <button onClick={() => { setShowIssues(true); setShowAvailability(false); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
         ⚠️ Issues
-        <span className="ml-auto text-[9px]">Soon</span>
-      </div>
+      </button>
 
       <div className="border-t my-1" />
 
@@ -1109,6 +1196,7 @@ const selectedDayShifts = selectedDate
                             const end = formatTime(s.end_time);
                             const isDragging = draggedShiftId === s.id;
                             const isTBC = !s.staff_id && !s.staff_name;
+                            const conflict = getShiftConflict(s);
                             return (
                               <div
                                 key={s.id}
@@ -1124,13 +1212,13 @@ const selectedDayShifts = selectedDate
                                   inlineEndRef.current = s.end_time?.slice(0, 5) || "";
                                   setInlineSuggestions([]);
                                 }}
-                                className={`print-shift-line text-[10px] leading-tight truncate ${sickByShift[s.id] ? "text-red-400 line-through" : isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
+                                className={`print-shift-line text-[10px] leading-tight truncate ${sickByShift[s.id] ? "text-red-400 line-through" : conflict ? "text-amber-700 font-medium" : isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
                                 style={{
                                   fontSize: dayShifts.length > 7 ? "8px" : dayShifts.length > 5 ? "9px" : "10px"
                                 }}
-                                title={`${name} ${start}–${end} (${s.role})${sickByShift[s.id] ? " — Sick" : ""}`}
+                                title={`${name} ${start}–${end} (${s.role})${sickByShift[s.id] ? " — Sick" : ""}${conflict ? ` — ⚠️ ${conflict}` : ""}`}
                               >
-                                {sickByShift[s.id] && "🤒 "}{isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
+                                {sickByShift[s.id] && "🤒 "}{!sickByShift[s.id] && conflict && "⚠️ "}{isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
                               </div>
                             );
                           })}
@@ -1242,6 +1330,7 @@ const selectedDayShifts = selectedDate
                                 <div className={`text-xs font-medium truncate ${roleColour[s.role] || "text-gray-800"}`}>
                                   {name}
                                   {sickByShift[s.id] && <span className="ml-1 text-[10px] px-1 py-0.5 rounded-full bg-red-100 text-red-600">🤒 Sick</span>}
+                                  {!sickByShift[s.id] && getShiftConflict(s) && <span className="ml-1 text-[10px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">⚠️ {getShiftConflict(s)}</span>}
                                 </div>
                                 <div className="text-[10px] text-gray-500">{start}–{end} · {s.role}</div>
                               </div>
@@ -1468,6 +1557,218 @@ const selectedDayShifts = selectedDate
           </div>
         </div>
       )}
+
+    {/* ── Issues panel ── */}
+      {showIssues && (() => {
+        const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+        const monthShifts = shifts.filter((s) => s.shift_date?.startsWith(monthStr));
+        const holidayDates = new Set(holidays.map((h) => h.date));
+
+        // Build issue list
+        const issues = [];
+
+        // 1. Availability conflicts
+        for (const s of monthShifts) {
+          const conflict = getShiftConflict(s);
+          if (conflict) {
+            const name = s.staff?.name || s.staff_name || "?";
+            issues.push({ type: "availability", date: s.shift_date, shift: s, label: `${name} — ${conflict}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
+          }
+        }
+
+        // 2. TBC shifts
+        for (const s of monthShifts) {
+          if (!s.staff_id && !s.staff_name) {
+            issues.push({ type: "tbc", date: s.shift_date, shift: s, label: `TBC shift — ${s.role}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
+          }
+        }
+
+        // 3. Public holiday shifts
+        for (const s of monthShifts) {
+          if (holidayDates.has(s.shift_date)) {
+            const name = s.staff?.name || s.staff_name || "TBC";
+            const hol = holidays.find((h) => h.date === s.shift_date);
+            issues.push({ type: "ph", date: s.shift_date, shift: s, label: `${name} rostered on ${hol?.name || "public holiday"}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
+          }
+        }
+
+        // Sort by date
+        issues.sort((a, b) => a.date.localeCompare(b.date));
+
+        const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday" };
+        const typeStyle = {
+          availability: "bg-amber-50 border-amber-200 text-amber-800",
+          tbc: "bg-red-50 border-red-200 text-red-700",
+          ph: "bg-orange-50 border-orange-200 text-orange-700",
+        };
+        const typeIcon = { availability: "⚠️", tbc: "❓", ph: "🏖️" };
+
+        return (
+          <div className="no-print fixed inset-0 z-50 flex">
+            <div className="flex-1 bg-black/20" onClick={() => setShowIssues(false)} />
+            <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+                <div className="font-semibold text-gray-900 text-sm">⚠️ Issues <span className="text-gray-400 font-normal">— {monthLabel}</span></div>
+                <button onClick={() => setShowIssues(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {issues.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="text-3xl mb-2">✅</div>
+                    <div className="text-sm font-medium text-gray-700">No issues this month</div>
+                    <div className="text-xs text-gray-400 mt-1">All shifts look good.</div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-xs text-gray-500 mb-2">{issues.length} issue{issues.length !== 1 ? "s" : ""} found</div>
+                    {issues.map((issue, i) => (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          setSelectedDate(issue.date);
+                          setShowIssues(false);
+                        }}
+                        className={`w-full text-left rounded-lg border px-3 py-2.5 ${typeStyle[issue.type]} hover:opacity-80 transition-opacity`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className="text-sm shrink-0">{typeIcon[issue.type]}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-semibold">{typeLabel[issue.type]}</div>
+                            <div className="text-xs mt-0.5 font-medium truncate">{issue.label}</div>
+                            <div className="text-[11px] opacity-70 mt-0.5">
+                              {new Date(issue.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })} · {issue.sub}
+                            </div>
+                            <div className="text-[11px] opacity-60 mt-0.5">Tap to open day →</div>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+    {/* ── Availability modal ── */}
+      {showAvailability && (() => {
+        const AVAIL_DAYS = [
+          { dow: 1, label: "Mon" }, { dow: 2, label: "Tue" }, { dow: 3, label: "Wed" },
+          { dow: 4, label: "Thu" }, { dow: 5, label: "Fri" }, { dow: 6, label: "Sat" }, { dow: 0, label: "Sun" },
+        ];
+        const STATUS = {
+          all_day: { label: "All day", emoji: "✅", cls: "bg-green-50 text-green-700 border-green-200" },
+          am: { label: "AM only", emoji: "🌅", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+          pm: { label: "PM only", emoji: "🌆", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+          unavailable: { label: "Unavailable", emoji: "❌", cls: "bg-red-50 text-red-600 border-red-200" },
+        };
+        const patByDow = Object.fromEntries(availPatterns.map((p) => [p.day_of_week, p]));
+        const range = availPatterns.find((p) => p.from_date || p.to_date);
+        const fmtO = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
+        const selectedStaff = staffOptions.find((s) => String(s.id) === String(availStaffId));
+
+        return (
+          <div className="no-print fixed inset-0 z-50 flex">
+            <div className="flex-1 bg-black/20" onClick={() => setShowAvailability(false)} />
+            <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+                <div className="font-semibold text-gray-900 text-sm">👥 Availability <span className="text-gray-400 font-normal">— {monthLabel}</span></div>
+                <button onClick={() => setShowAvailability(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {/* Staff picker */}
+                <div>
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Staff member</div>
+                  <select
+                    value={availStaffId || ""}
+                    onChange={(e) => { if (e.target.value) loadStaffAvailability(e.target.value); else setAvailStaffId(null); }}
+                    className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
+                  >
+                    <option value="">— Select staff —</option>
+                    {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+
+                {!availStaffId ? (
+                  <p className="text-xs text-gray-400">Select a staff member to see their availability.</p>
+                ) : availLoading ? (
+                  <p className="text-xs text-gray-400">Loading…</p>
+                ) : availPatterns.length === 0 && availOverrides.length === 0 ? (
+                  <p className="text-xs text-gray-400">{selectedStaff?.name || "This staff member"} hasn't submitted any availability yet.</p>
+                ) : (
+                  <>
+                    {/* Weekly pattern */}
+                    <div className="border-t pt-3">
+                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Weekly availability</div>
+                      <div className="space-y-1">
+                        {AVAIL_DAYS.map((d) => {
+                          const st = patByDow[d.dow]?.status || "all_day";
+                          const meta = STATUS[st] || STATUS.all_day;
+                          return (
+                            <div key={d.dow} className="flex items-center gap-2">
+                              <span className="text-xs w-10 text-gray-600">{d.label}</span>
+                              <span className={`text-[11px] px-2 py-0.5 rounded-full border ${meta.cls}`}>{meta.emoji} {meta.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {range && (range.from_date || range.to_date) && (
+                        <div className="text-[11px] text-gray-500 mt-2">
+                          Applies {range.from_date ? `from ${fmtO(range.from_date)}` : ""}{range.to_date ? ` until ${fmtO(range.to_date)}` : " (ongoing)"}
+                        </div>
+                      )}
+                      {availStaffNote && (
+                        <div className="mt-2 text-[11px] text-gray-600 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                          <span className="font-medium">Their note:</span> {availStaffNote}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Overrides */}
+                    <div className="border-t pt-3">
+                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Specific dates</div>
+                      {availOverrides.length === 0 ? (
+                        <p className="text-xs text-gray-400">None upcoming.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {availOverrides.map((o) => {
+                            const meta = STATUS[o.status] || STATUS.all_day;
+                            return (
+                              <div key={o.id} className="flex items-start gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                <span>{meta.emoji}</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs text-gray-700">{fmtO(o.override_date)} — {meta.label}</div>
+                                  {o.note && <div className="text-[11px] text-gray-500">{o.note}</div>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Manager note */}
+                    <div className="border-t pt-3">
+                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Paige's note <span className="text-gray-400 font-normal">— {monthLabel}</span></div>
+                      <textarea
+                        value={availManagerNote}
+                        onChange={(e) => setAvailManagerNote(e.target.value)}
+                        placeholder="Your own note for this staff member this month…"
+                        rows={3}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs resize-none"
+                      />
+                      <button onClick={handleSaveManagerNote} disabled={savingManagerNote} className="mt-2 w-full py-1.5 text-xs bg-gray-700 text-white rounded hover:bg-gray-800 disabled:opacity-50">
+                        {savingManagerNote ? "Saving…" : "Save note"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     {/* ── Month Notes modal ── */}
       {showMonthNotes && (
