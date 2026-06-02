@@ -32,10 +32,15 @@
       "static/chunks/main.js",
       "static/chunks/pages/admin.js"
     ],
-    "/locum": [
+    "/roster": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/locum.js"
+      "static/chunks/pages/roster.js"
+    ],
+    "/tasks": [
+      "static/chunks/webpack.js",
+      "static/chunks/main.js",
+      "static/chunks/pages/tasks.js"
     ]
   },
   "ampFirstPages": []

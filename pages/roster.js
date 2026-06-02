@@ -283,7 +283,7 @@ const selectedDayShifts = selectedDate
         { data: rosterMonthData },
       ] = await Promise.all([
         supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, pharmacy_id, staff:staff_id(id, name)`),
-        supabase.from("staff").select("id,name,active,role").order("name"),
+        supabase.from("staff").select("id,name,active,role").neq("role", "Locum").order("name"),
         supabase.from("shift_templates").select("*").order("name"),
         supabase.from("public_holidays").select("*"),
         supabase.from("roster_day_notes").select("*").gte("date", startDate).lt("date", endDate),
