@@ -2,7 +2,20 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 
+
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
+
+const formatTime = (time) => {
+  if (!time) return "";
+  const [hourStr, minuteStr] = String(time).split(":");
+  let hour = Number(hourStr);
+  const minute = Number(minuteStr);
+  const suffix = hour >= 12 ? "pm" : "am";
+  hour = hour % 12;
+  if (hour === 0) hour = 12;
+  if (minute === 0) return `${hour}${suffix}`;
+  return `${hour}.${String(minute).padStart(2, "0")}${suffix}`;
+};
 
 const ROLES = [
   "Pharmacist",
@@ -486,6 +499,493 @@ function StaffForm({ member, onSave, onCancel }) {
     </div>
   );
 }
+// ─── Locum Form ───────────────────────────────────────────────────────────────
+
+function LocumForm({ member, onSave, onCancel }) {
+  const isNew = !member?.id;
+  const [form, setForm] = useState({
+    name: member?.name || "",
+    email: member?.email || "",
+    phone: member?.phone || "",
+    address: member?.address || "",
+    ahpra_number: member?.ahpra_number || "",
+    pdl_cert: member?.pdl_cert ?? false,
+    hourly_rate: member?.hourly_rate || "",
+    rate_weekday: member?.rate_weekday ?? 70,
+    rate_saturday: member?.rate_saturday ?? 75,
+    rate_sunday: member?.rate_sunday ?? 80,
+    notes: member?.notes || "",
+    pin: member?.pin || "",
+    active: member?.active ?? true,
+    can_access_wages: member?.can_access_wages ?? false,
+    date_of_birth: member?.date_of_birth || "",
+    tfn: member?.tfn || "",
+    bank_account_name: member?.bank_account_name || "",
+    bsb: member?.bsb || "",
+    account_number: member?.account_number || "",
+    super_fund_name: member?.super_fund_name || "",
+    super_fund_usi: member?.super_fund_usi || "",
+    super_fund_abn: member?.super_fund_abn || "",
+    super_member_number: member?.super_member_number || "",
+  });
+  const [payrollOpen, setPayrollOpen] = useState(false);
+  const [bookings, setBookings] = useState([]);
+  const [newBookingDate, setNewBookingDate] = useState("");
+  const [newBookingStart, setNewBookingStart] = useState("09:00");
+  const [newBookingEnd, setNewBookingEnd] = useState("17:00");
+  const [savingBooking, setSavingBooking] = useState(false);
+  const [deletingBooking, setDeletingBooking] = useState(null);
+  const [documents, setDocuments] = useState([]);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
+
+  useEffect(() => {
+    if (!member?.id) return;
+    supabase.from("roster_shifts")
+      .select("id, shift_date, start_time, end_time")
+      .eq("staff_id", member.id)
+      .gte("shift_date", new Date().toISOString().slice(0, 10))
+      .order("shift_date")
+      .then(({ data }) => setBookings(data || []));
+    supabase.from("locum_documents")
+      .select("*")
+      .eq("staff_id", member.id)
+      .order("uploaded_at", { ascending: false })
+      .then(({ data }) => setDocuments(data || []));
+  }, [member?.id]);
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { setError("Name is required."); return; }
+    if (form.pin && form.pin.length !== 4) { setError("PIN must be 4 digits."); return; }
+    setSaving(true);
+    setError("");
+    const payload = {
+      name: form.name.trim(),
+      email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
+      address: form.address.trim() || null,
+      ahpra_number: form.ahpra_number.trim() || null,
+      
+      hourly_rate: form.hourly_rate ? Number(form.hourly_rate) : null,
+      rate_weekday: form.rate_weekday ? Number(form.rate_weekday) : 70,
+      rate_saturday: form.rate_saturday ? Number(form.rate_saturday) : 75,
+      rate_sunday: form.rate_sunday ? Number(form.rate_sunday) : 80,
+      notes: form.notes.trim() || null,
+      pin: form.pin || null,
+      active: form.active,
+      can_access_wages: form.can_access_wages,
+      date_of_birth: form.date_of_birth || null,
+      tfn: form.tfn.trim() || null,
+      bank_account_name: form.bank_account_name.trim() || null,
+      bsb: form.bsb.trim() || null,
+      account_number: form.account_number.trim() || null,
+      super_fund_name: form.super_fund_name.trim() || null,
+      super_fund_usi: form.super_fund_usi.trim() || null,
+      super_fund_abn: form.super_fund_abn.trim() || null,
+      super_member_number: form.super_member_number.trim() || null,
+      role: "Locum",
+      employment_type: "Casual",
+      pharmacy_id: PHARMACY_ID,
+      onboarding_token: isNew ? Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) : undefined,
+    };
+    let result;
+    if (isNew) {
+      result = await supabase.from("staff").insert(payload).select().single();
+    } else {
+      result = await supabase.from("staff").update(payload).eq("id", member.id).select().single();
+    }
+    setSaving(false);
+    if (result.error) { setError(result.error.message); return; }
+    onSave(result.data);
+  };
+
+  const handleAddBooking = async () => {
+    if (!member?.id) { setError("Save the locum first before adding bookings."); return; }
+    if (!newBookingDate) { setError("Please select a date."); return; }
+    setSavingBooking(true);
+    setError("");
+    try {
+      const { data: monthData } = await supabase.from("roster_months").select("id").eq("month", newBookingDate.slice(0, 7) + "-01").maybeSingle();
+      let rosterMonthId = monthData?.id;
+      if (!rosterMonthId) {
+        const { data: created } = await supabase.from("roster_months").insert([{ month: newBookingDate.slice(0, 7) + "-01", status: "draft", pharmacy_id: PHARMACY_ID }]).select("id").single();
+        rosterMonthId = created?.id;
+      }
+      const { data, error: insErr } = await supabase.from("roster_shifts").insert([{
+        staff_id: member.id,
+        shift_date: newBookingDate,
+        start_time: newBookingStart,
+        end_time: newBookingEnd,
+        role: "Locum",
+        roster_month_id: rosterMonthId,
+      }]).select("id, shift_date, start_time, end_time").single();
+      if (insErr) throw insErr;
+      setBookings((b) => [...b, data].sort((a, c) => a.shift_date.localeCompare(c.shift_date)));
+      setNewBookingDate("");
+      setNewBookingStart("09:00");
+      setNewBookingEnd("17:00");
+    } catch (err) {
+      setError("Couldn't add booking: " + (err?.message || String(err)));
+    } finally {
+      setSavingBooking(false);
+    }
+  };
+
+  const handleDeleteBooking = async (id) => {
+    if (!window.confirm("Remove this booking from the roster?")) return;
+    setDeletingBooking(id);
+    await supabase.from("roster_shifts").delete().eq("id", id);
+    setBookings((b) => b.filter((x) => x.id !== id));
+    setDeletingBooking(null);
+  };
+
+  const fmtBookingDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+  const handleDocUpload = async (file, type) => {
+    if (!file || !member?.id) return;
+    setUploadingDoc(true);
+    setError("");
+    try {
+      const ext = file.name.split(".").pop();
+      const filename = `${member.id}_${type}_${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("locum-documents")
+        .upload(filename, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from("locum-documents").getPublicUrl(filename);
+      const { data: doc, error: insErr } = await supabase.from("locum_documents").insert([{
+        staff_id: member.id,
+        type,
+        url: urlData.publicUrl,
+        filename: file.name,
+        pharmacy_id: PHARMACY_ID,
+      }]).select().single();
+      if (insErr) throw insErr;
+      setDocuments((prev) => [doc, ...prev]);
+    } catch (err) {
+      setError("Upload failed: " + (err?.message || String(err)));
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
+
+  const handleDocDelete = async (doc) => {
+    if (!window.confirm("Delete this document?")) return;
+    await supabase.from("locum_documents").delete().eq("id", doc.id);
+    setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+        <h2 className="font-semibold text-gray-800">{isNew ? "Add Locum" : "Edit Locum"}</h2>
+        <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+        {/* Professional details */}
+        <div>
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Professional</div>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+              <input value={form.name} onChange={(e) => set("name", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="Full name" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
+                <input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="04xx xxx xxx" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                <input value={form.email} onChange={(e) => set("email", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="email@example.com" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">AHPRA Number</label>
+              <input value={form.ahpra_number} onChange={(e) => set("ahpra_number", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="PHA0000000000" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-2">Rates ($/hr)</label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { field: "rate_weekday", label: "Weekday" },
+                  { field: "rate_saturday", label: "Saturday" },
+                  { field: "rate_sunday", label: "Sunday" },
+                ].map(({ field, label }) => (
+                  <div key={field}>
+                    <div className="text-[11px] text-gray-500 mb-1">{label}</div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-gray-400">$</span>
+                      <input
+                        type="text" inputMode="decimal"
+                        value={form[field]}
+                        onChange={(e) => set(field, e.target.value.replace(/[^\d.]/g, ""))}
+                        className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+              <textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} rows={2} placeholder="e.g. Good with vaccinations, prefers weekends" className="w-full border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+          </div>
+        </div>
+
+        {/* Payroll — collapsible */}
+        <div className="border rounded-lg overflow-hidden">
+          <button onClick={() => setPayrollOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 text-xs font-semibold text-gray-600 uppercase tracking-wide hover:bg-gray-100">
+            <span>💳 Payroll Details</span>
+            <span>{payrollOpen ? "▾" : "▸"}</span>
+          </button>
+          {payrollOpen && (
+            <div className="px-4 py-3 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Date of Birth</label>
+                  <input type="date" value={form.date_of_birth} onChange={(e) => set("date_of_birth", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">TFN</label>
+                  <input value={form.tfn} onChange={(e) => set("tfn", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="xxx xxx xxx" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Address</label>
+                <input value={form.address} onChange={(e) => set("address", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="Street, Suburb, State, Postcode" />
+              </div>
+              <div className="text-xs font-medium text-gray-500 pt-1">Bank Account</div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Account Name</label>
+                <input value={form.bank_account_name} onChange={(e) => set("bank_account_name", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="Full name as on account" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">BSB</label>
+                  <input value={form.bsb} onChange={(e) => set("bsb", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="xxx-xxx" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
+                  <input value={form.account_number} onChange={(e) => set("account_number", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="xxxxxxxx" />
+                </div>
+              </div>
+              <div className="text-xs font-medium text-gray-500 pt-1">Superannuation</div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Fund Name</label>
+                  <input value={form.super_fund_name} onChange={(e) => set("super_fund_name", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="e.g. GuildSuper" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">USI / SPIN</label>
+                  <input value={form.super_fund_usi} onChange={(e) => set("super_fund_usi", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="e.g. RES0103AU" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Fund ABN</label>
+                  <input value={form.super_fund_abn} onChange={(e) => set("super_fund_abn", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="xx xxx xxx xxx" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Member Number</label>
+                  <input value={form.super_member_number} onChange={(e) => set("super_member_number", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="xxxxxxxxx" />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Onboarding link */}
+        {!isNew && member?.onboarding_token && (
+          <div className="border rounded-lg p-3 bg-blue-50 border-blue-100">
+            <div className="text-xs font-semibold text-blue-700 mb-1">📋 Onboarding Link</div>
+            <div className="text-[11px] text-blue-600 break-all mb-2">
+              {typeof window !== "undefined" ? `${window.location.origin}/locum?token=${member.onboarding_token}` : ""}
+            </div>
+            <button
+              onClick={() => {
+                const url = `${window.location.origin}/locum?token=${member.onboarding_token}`;
+                navigator.clipboard.writeText(url);
+                alert("Link copied to clipboard!");
+              }}
+              className="text-[11px] px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Copy link
+            </button>
+          </div>
+        )}
+
+        {/* Access */}
+        <div className="space-y-3">
+          {[
+            { field: "active", label: "Active", desc: "Appears in roster staff picker" },
+            { field: "can_access_wages", label: "Can approve wages", desc: "PIN unlocks wages approval for their own timesheet" },
+          ].map(({ field, label, desc }) => (
+            <div key={field} className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium text-gray-700">{label}</div>
+                <div className="text-xs text-gray-400">{desc}</div>
+              </div>
+              <button onClick={() => set(field, !form[field])} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form[field] ? "bg-blue-600" : "bg-gray-200"}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form[field] ? "translate-x-6" : "translate-x-1"}`} />
+              </button>
+            </div>
+          ))}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">PIN (4 digits, optional)</label>
+            <input type="password" inputMode="numeric" maxLength={4} value={form.pin} onChange={(e) => set("pin", e.target.value.replace(/\D/g, ""))} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="••••" />
+          </div>
+        </div>
+
+        {/* Documents */}
+        {!isNew && (
+          <div className="border-t pt-4">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+              Documents {documents.length > 0 && <span className="text-gray-400 font-normal">({documents.length})</span>}
+            </div>
+
+            {/* Existing documents */}
+            {documents.length === 0 ? (
+              <p className="text-xs text-gray-400 mb-3">No documents uploaded yet.</p>
+            ) : (
+              <div className="space-y-1.5 mb-3">
+                {documents.map((doc) => (
+                  <div key={doc.id} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                    <span className="text-sm">📄</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium text-gray-700 truncate">{doc.filename || doc.type}</div>
+                      <div className="text-[11px] text-gray-400">{doc.type} · {new Date(doc.uploaded_at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</div>
+                    </div>
+                    <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
+                    <button onClick={() => handleDocDelete(doc)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Delete</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Upload new document */}
+            <div className="space-y-2 border rounded-lg p-3 bg-gray-50">
+              <div className="text-[11px] font-medium text-gray-500">Upload document</div>
+              <div className="flex gap-2">
+                {[
+                  { type: "indemnity_cert", label: "Indemnity Cert" },
+                  { type: "locum_agreement", label: "Locum Agreement" },
+                  { type: "other", label: "Other" },
+                ].map(({ type, label }) => (
+                  <label key={type} className={`flex-1 text-center text-[11px] px-2 py-2 rounded-lg border cursor-pointer hover:bg-blue-50 hover:border-blue-200 ${uploadingDoc ? "opacity-40 pointer-events-none" : "border-gray-200 text-gray-600"}`}>
+                    {uploadingDoc ? "Uploading…" : `+ ${label}`}
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc}
+                      onChange={(e) => handleDocUpload(e.target.files?.[0], type)} />
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bookings */}
+        {!isNew && (
+          <div className="border-t pt-4">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Upcoming Bookings</div>
+            {bookings.length === 0 ? (
+              <p className="text-xs text-gray-400 mb-3">No upcoming bookings.</p>
+            ) : (
+              <div className="space-y-1.5 mb-3">
+                {bookings.map((b) => (
+                  <div key={b.id} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                    <div>
+                      <div className="text-xs font-medium text-gray-700">{fmtBookingDate(b.shift_date)}</div>
+                      <div className="text-[11px] text-gray-500">{formatTime(b.start_time)} – {formatTime(b.end_time)}</div>
+                    </div>
+                    <button onClick={() => handleDeleteBooking(b.id)} disabled={deletingBooking === b.id} className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40">Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="space-y-2 border rounded-lg p-3 bg-gray-50">
+              <div className="text-[11px] font-medium text-gray-500">Add booking</div>
+              <input type="date" value={newBookingDate} onChange={(e) => setNewBookingDate(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+              <div className="flex gap-2 items-center">
+                <input type="time" value={newBookingStart} onChange={(e) => setNewBookingStart(e.target.value)} className="flex-1 border rounded-lg px-2 py-1.5 text-sm" />
+                <span className="text-gray-400 text-sm">–</span>
+                <input type="time" value={newBookingEnd} onChange={(e) => setNewBookingEnd(e.target.value)} className="flex-1 border rounded-lg px-2 py-1.5 text-sm" />
+              </div>
+              <button onClick={handleAddBooking} disabled={savingBooking || !newBookingDate} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40">
+                {savingBooking ? "Adding…" : "+ Add to roster"}
+              </button>
+            </div>
+          </div>
+        )}
+        {isNew && <p className="text-xs text-gray-400">Save the locum first, then you can add bookings.</p>}
+
+        {error && <p className="text-sm text-red-500">{error}</p>}
+      </div>
+
+      <div className="px-5 py-4 border-t shrink-0 space-y-2">
+        {!isNew && bookings.length > 0 && (
+          <button
+            onClick={async () => {
+              try {
+                const { generateLocumAgreement } = await import("../lib/generateLocumAgreement");
+                await generateLocumAgreement({ locum: { ...member, ...form }, bookings });
+              } catch (err) {
+                alert("PDF generation failed: " + (err?.message || String(err)));
+              }
+            }}
+            className="w-full border border-blue-200 text-blue-700 rounded-lg py-2 text-sm font-medium hover:bg-blue-50"
+          >
+            📄 Generate Locum Agreement PDF
+          </button>
+        )}
+
+        {!isNew && (
+          <button onClick={async () => {
+            try {
+              const XLSX = await import("xlsx");
+              const data = [{
+                "Name": form.name,
+                "DOB": form.date_of_birth || "",
+                "Address": form.address || "",
+                "Phone": form.phone || "",
+                "Email": form.email || "",
+                "TFN": form.tfn || "",
+                "Super Fund Name": form.super_fund_name || "",
+                "Super Fund USI/SPIN": form.super_fund_usi || "",
+                "Super Fund ABN": form.super_fund_abn || "",
+                "Super Member Number": form.super_member_number || "",
+                "Weekday Rate ($/hr)": form.rate_weekday || 70,
+                "Saturday Rate ($/hr)": form.rate_saturday || 75,
+                "Sunday Rate ($/hr)": form.rate_sunday || 80,
+              }];
+              const ws = XLSX.utils.json_to_sheet(data);
+              const wb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(wb, ws, "Locum");
+              XLSX.writeFile(wb, `locum_${form.name.replace(/\s+/g, "_").toLowerCase()}.xlsx`);
+            } catch (err) {
+              alert("Export failed: " + (err?.message || String(err)));
+            }
+          }} className="w-full border border-green-300 text-green-700 rounded-lg py-2 text-sm font-medium hover:bg-green-50">
+            ↓ Export to Excel
+          </button>
+        )}
+        <div className="flex gap-2">
+          <button onClick={onCancel} className="flex-1 border border-gray-300 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
+            {saving ? "Saving…" : isNew ? "Add Locum" : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Settings Tab ─────────────────────────────────────────────────────────────
 
 function SettingsTab() {
@@ -686,6 +1186,126 @@ function SettingsTab() {
   );
 }
 
+// ─── Locums Tab ───────────────────────────────────────────────────────────────
+
+function LocumsTab() {
+  const [locums, setLocums] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [formKey, setFormKey] = useState(0);
+  const [showInactive, setShowInactive] = useState(false);
+  const [successId, setSuccessId] = useState(null);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      const { data } = await supabase
+        .from("staff")
+        .select("*")
+        .eq("pharmacy_id", PHARMACY_ID)
+        .eq("role", "Locum")
+        .order("name");
+      setLocums(data || []);
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  const handleSave = (saved) => {
+    setLocums((prev) => {
+      const exists = prev.find((s) => s.id === saved.id);
+      if (exists) return prev.map((s) => s.id === saved.id ? saved : s);
+      return [...prev, saved].sort((a, b) => a.name.localeCompare(b.name));
+    });
+    setSelected(saved);
+    setSuccessId(saved.id);
+    setTimeout(() => setSuccessId(null), 3000);
+  };
+
+  const visible = locums.filter((s) => showInactive ? true : s.active !== false);
+
+  const handleExport = async () => {
+    try {
+      const XLSX = await import("xlsx");
+      const data = locums.filter((s) => s.active !== false).map((s) => ({
+        "Name": s.name,
+        "DOB": s.date_of_birth || "",
+        "Address": s.address || "",
+        "Phone": s.phone || "",
+        "TFN": s.tfn || "",
+        "Super Fund Name": s.super_fund_name || "",
+        "Super Fund USI/SPIN": s.super_fund_usi || "",
+        "Super Fund ABN": s.super_fund_abn || "",
+        "Super Member Number": s.super_member_number || "",
+        "Weekday Rate ($/hr)": s.rate_weekday || 70,
+        "Saturday Rate ($/hr)": s.rate_saturday || 75,
+        "Sunday Rate ($/hr)": s.rate_sunday || 80,
+      }));
+      if (!data.length) { alert("No active locums to export."); return; }
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Locums");
+      XLSX.writeFile(wb, `locum_directory_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (err) {
+      alert("Export failed: " + (err?.message || String(err)));
+    }
+  };
+
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      {/* Left list */}
+      <div className="w-[260px] min-w-[260px] bg-white border-r flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
+          <button onClick={() => { setSelected("new"); setFormKey((k) => k + 1); }} className="text-xs font-medium text-blue-600 hover:text-blue-700">+ Add Locum</button>
+          <button onClick={() => setShowInactive((v) => !v)} className="text-xs text-gray-400 hover:text-gray-600">{showInactive ? "Hide inactive" : "Show inactive"}</button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="p-4 text-sm text-gray-400">Loading…</div>
+          ) : visible.length === 0 ? (
+            <div className="p-4 text-sm text-gray-400">No locums yet.</div>
+          ) : (
+            visible.map((s) => (
+              <button key={s.id} onClick={() => { setSelected(s); setFormKey((k) => k + 1); }} className={`w-full flex items-center gap-3 px-3 py-2.5 border-b hover:bg-gray-50 text-left ${selected?.id === s.id ? "bg-blue-50" : ""}`}>
+                <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-semibold text-sm shrink-0">
+                  {s.name.charAt(0)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-gray-800 truncate">{s.name}</div>
+                  <div className="text-xs text-gray-400 truncate">{s.ahpra_number || "No AHPRA"}{s.hourly_rate ? ` · $${s.hourly_rate}/hr` : ""}</div>
+                </div>
+                {s.active === false && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-400 shrink-0">Inactive</span>}
+                {s.pdl_cert && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100 shrink-0">PDL</span>}
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Right form */}
+      <div className="flex-1 bg-white overflow-hidden flex flex-col">
+        {successId && (
+          <div className="shrink-0 bg-green-50 border-b border-green-200 px-5 py-2 text-sm text-green-700 font-medium">
+            ✓ Changes saved successfully.
+          </div>
+        )}
+        {!selected ? (
+          <div className="h-full flex items-center justify-center text-sm text-gray-400">
+            Select a locum to edit, or add a new one.
+          </div>
+        ) : (
+          <LocumForm
+            key={formKey}
+            member={selected === "new" ? null : selected}
+            onSave={handleSave}
+            onCancel={() => setSelected(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 
@@ -693,6 +1313,7 @@ export default function AdminPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [adminUser, setAdminUser] = useState(null);
   const [tab, setTab] = useState("staff");
+  const [locumFormKey, setLocumFormKey] = useState(0);
   const [staffList, setStaffList] = useState([]);
   const [showInactive, setShowInactive] = useState(false);
   const [selected, setSelected] = useState(null); // null = none, "new" = add form, or staff object
@@ -708,6 +1329,7 @@ export default function AdminPage() {
         .from("staff")
         .select("*")
         .eq("pharmacy_id", PHARMACY_ID)
+        .neq("role", "Locum")
         .order("name", { ascending: true });
       setStaffList(data || []);
       setLoading(false);
@@ -806,13 +1428,13 @@ export default function AdminPage() {
 
           {/* Top tabs */}
           <div className="flex border-b shrink-0 px-4">
-            {["staff", "settings"].map((t) => (
+            {["staff", "locums", "settings"].map((t) => (
               <button
                 key={t}
                 onClick={() => { setTab(t); setSelected(null); }}
                 className={`mr-4 py-3 text-sm font-medium ${tab === t ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
               >
-                {t === "staff" ? "👥 Staff" : "⚙️ Settings"}
+                {t === "staff" ? "👥 Staff" : t === "locums" ? "💊 Locums" : "⚙️ Settings"}
               </button>
             ))}
           </div>
@@ -825,6 +1447,8 @@ export default function AdminPage() {
             )}
             {tab === "settings" ? (
               <SettingsTab />
+            ) : tab === "locums" ? (
+              <LocumsTab key={locumFormKey} />
             ) : !selected ? (
               <div className="h-full flex items-center justify-center text-sm text-gray-400">
                 Select a staff member to edit, or add a new one.
