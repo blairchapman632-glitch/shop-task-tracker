@@ -639,6 +639,7 @@ export default function HomePage() {
 
       const now = new Date();
       const todayStr = now.toISOString().slice(0, 10);
+      const dow = now.getDay();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
 
@@ -732,8 +733,19 @@ export default function HomePage() {
           const nextShift = nextShiftMap[Number(task.assigned_staff_id)];
           return nextShift === todayStr;
         }
-        // On the List tasks — show based on assignment type
+        // On the List tasks — show based on schedule (day/date) AND assignment type
         if (task.task_type === "on_the_list") {
+          // Date/day gate — must match today's schedule first
+          const freq = task.frequency || "monthly_anytime";
+          if (freq === "weekly") {
+            const arr = Array.isArray(task.days_of_week) ? task.days_of_week : [];
+            if (arr.length && !arr.includes(dow)) return false;
+          } else if (freq === "specific_date") {
+            if (task.specific_date?.slice(0, 10) !== todayStr) return false;
+          }
+          // monthly_anytime → no date gate, shows all month
+
+          // Assignment gate — who is rostered
           // Role-based — show if anyone in that role is rostered today
           if (task.assigned_role) {
             return uniqueOnShift.some((sh) => staffRoleMap[sh.id] === task.assigned_role);
@@ -961,8 +973,10 @@ export default function HomePage() {
       }
       if (!selectedStaffId) { alert("Tap your photo first, then tap the task."); return; }
       recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId);
-      // For On the List tasks, mark the task itself as completed
-      if (task.task_type === "on_the_list") {
+      // For On the List tasks: only one-off tasks complete permanently.
+      // Weekly/monthly recurring tasks just record the completion and reset next period.
+      const isOneOff = task.show_next_shift || task.frequency === "specific_date";
+      if (task.task_type === "on_the_list" && isOneOff) {
         await supabase.from("tasks").update({
           completed_at: new Date().toISOString(),
           completed_by_staff_id: selectedStaff.id,
@@ -1150,7 +1164,9 @@ export default function HomePage() {
               const dailyTotal = regularTasks.length;
               const dailyPct = dailyTotal ? Math.round((dailyDone / dailyTotal) * 100) : 0;
 
-              const monthlyDone = monthlyTasks.filter((t) => Boolean(monthlyCompletions[t.id])).length;
+              const monthlyDone = monthlyTasks.filter((t) =>
+                t.frequency === "weekly" ? completedTaskIds.has(t.id) : Boolean(monthlyCompletions[t.id])
+              ).length;
               const monthlyTotal = monthlyTasks.length;
               const monthlyPct = monthlyTotal ? Math.round((monthlyDone / monthlyTotal) * 100) : 0;
 
@@ -1307,7 +1323,10 @@ export default function HomePage() {
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         {monthlyTasks.map((task) => {
-                          const isDone = Boolean(monthlyCompletions[task.id]);
+                          const isWeekly = task.frequency === "weekly";
+                          const isDone = isWeekly
+                            ? completedTaskIds.has(task.id)
+                            : Boolean(monthlyCompletions[task.id]);
                           const monthlyComp = monthlyCompletions[task.id];
                           const assignedStaff = task.assigned_staff_id ? staffById[task.assigned_staff_id] : null;
                           const isOnListOverdue = !isDone && (

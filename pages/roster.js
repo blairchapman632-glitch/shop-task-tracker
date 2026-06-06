@@ -137,6 +137,13 @@ export default function RosterPage() {
   const [allOverrides, setAllOverrides] = useState([]);
   const [showIssues, setShowIssues] = useState(false);
 
+  // Leave requests
+  const [leaveRequests, setLeaveRequests] = useState([]);
+  const [approvedLeave, setApprovedLeave] = useState([]);
+  const [showRequests, setShowRequests] = useState(false);
+  const [requestManagerNotes, setRequestManagerNotes] = useState({});
+  const [processingLeaveId, setProcessingLeaveId] = useState(null);
+
   // Notes
   const [dayNotes, setDayNotes] = useState({});
   const [monthNote, setMonthNote] = useState("");
@@ -206,6 +213,14 @@ const selectedDayShifts = selectedDate
   const getShiftConflict = (shift) => {
     if (!shift.staff_id) return null; // TBC handled separately
     const date = shift.shift_date;
+
+    // Approved leave covering this date takes top priority
+    const leave = approvedLeave.find((lr) =>
+      String(lr.staff_id) === String(shift.staff_id) &&
+      date >= lr.from_date && date <= lr.to_date
+    );
+    if (leave) return `On ${leave.leave_type}`;
+
     // Override for this exact date takes priority
     const ovr = allOverrides.find((o) => String(o.staff_id) === String(shift.staff_id) && o.override_date === date);
     let status = null;
@@ -214,11 +229,7 @@ const selectedDayShifts = selectedDate
     } else {
       const dow = new Date(date + "T00:00:00").getDay();
       const pats = allPatterns.filter((p) => String(p.staff_id) === String(shift.staff_id) && p.day_of_week === dow);
-      // Respect date range: pattern applies if date within [from_date, to_date] (nulls = open-ended)
-      const applicable = pats.find((p) =>
-        (!p.from_date || date >= p.from_date) && (!p.to_date || date <= p.to_date)
-      ) || pats.find((p) => !p.from_date && !p.to_date);
-      status = applicable?.status || null;
+      status = pats[0]?.status || null;
     }
     if (!status || status === "all_day") return null;
     if (status === "unavailable") return "Marked unavailable";
@@ -253,7 +264,15 @@ const selectedDayShifts = selectedDate
     (data || []).forEach((s) => { map[s.roster_shift_id] = s; });
     setSickByShift(map);
   }, []);
-
+const refreshLeave = useCallback(async () => {
+    const { data } = await supabase
+      .from("leave_requests")
+      .select("*, staff:staff_id(id, name)")
+      .order("from_date", { ascending: true });
+    const all = data || [];
+    setLeaveRequests(all);
+    setApprovedLeave(all.filter((lr) => lr.status === "approved"));
+  }, []);
   const refreshShifts = useCallback(async () => {
     const { data, error } = await supabase
       .from("roster_shifts")
@@ -293,11 +312,20 @@ const selectedDayShifts = selectedDate
 
       // Availability data for conflict detection (all staff)
       const [{ data: patData }, { data: ovrData }] = await Promise.all([
-        supabase.from("availability_patterns").select("staff_id, day_of_week, status, from_date, to_date"),
+        supabase.from("availability_patterns").select("staff_id, day_of_week, status").eq("year_month", monthStr),
         supabase.from("availability_overrides").select("staff_id, override_date, status"),
       ]);
       setAllPatterns(patData || []);
       setAllOverrides(ovrData || []);
+
+      // Leave requests
+      const { data: leaveData } = await supabase
+        .from("leave_requests")
+        .select("*, staff:staff_id(id, name)")
+        .order("from_date", { ascending: true });
+      const allLeave = leaveData || [];
+      setLeaveRequests(allLeave);
+      setApprovedLeave(allLeave.filter((lr) => lr.status === "approved"));
 
       setShifts(shiftData || []);
       refreshSick();
@@ -316,7 +344,12 @@ const selectedDayShifts = selectedDate
     };
     load();
   }, [monthOffset]);
-
+// Reload availability panel when month changes
+  useEffect(() => {
+    if (showAvailability && availStaffId) {
+      loadStaffAvailability(availStaffId);
+    }
+  }, [monthOffset]);
   // ── Hours summary ──
   const monthHours = () => {
     const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
@@ -772,23 +805,43 @@ const selectedDayShifts = selectedDate
   };
 
   // ── Availability panel loader ──
-  const loadStaffAvailability = async (staffId) => {
+  const loadStaffAvailability = async (staffId, monthOffset = availMonthOffset) => {
     setAvailStaffId(staffId);
     setAvailLoading(true);
-    const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
-    const [{ data: pats }, { data: ovrs }, { data: mNote }] = await Promise.all([
-      supabase.from("availability_patterns").select("*").eq("staff_id", staffId),
+    const d = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+    const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const monthStart = `${monthStr}-01`;
+    const monthEnd = `${d.getFullYear()}-${String(d.getMonth() + 2).padStart(2, "0")}-01`;
+    const [{ data: pats }, { data: ovrs }, { data: mNote }, { data: leave }] = await Promise.all([
+      supabase.from("availability_patterns").select("*").eq("staff_id", staffId).eq("year_month", monthStr),
       supabase.from("availability_overrides").select("*").eq("staff_id", staffId).gte("override_date", `${monthStr}-01`).order("override_date"),
       supabase.from("availability_manager_notes").select("note").eq("staff_id", staffId).eq("month", monthStr).maybeSingle(),
+      // Approved leave overlapping the viewed month: from_date < next month AND to_date >= month start
+      supabase.from("leave_requests").select("*").eq("staff_id", staffId).eq("status", "approved").lt("from_date", monthEnd).gte("to_date", monthStart).order("from_date"),
     ]);
     setAvailPatterns(pats || []);
     setAvailOverrides(ovrs || []);
+    setAvailLeave(leave || []);
     const firstNote = (pats || []).find((p) => p.note)?.note || "";
     setAvailStaffNote(firstNote);
     setAvailManagerNote(mNote?.note || "");
     setAvailLoading(false);
   };
-
+const handleLeaveDecision = async (lr, decision) => {
+    setProcessingLeaveId(lr.id);
+    try {
+      const { error } = await supabase.from("leave_requests").update({
+        status: decision,
+        manager_note: (requestManagerNotes[lr.id] || "").trim() || null,
+      }).eq("id", lr.id);
+      if (error) throw error;
+      await refreshLeave();
+    } catch (err) {
+      alert("Couldn't update request: " + (err?.message || String(err)));
+    } finally {
+      setProcessingLeaveId(null);
+    }
+  };
   const handleSaveManagerNote = async () => {
     if (!availStaffId) return;
     try {
@@ -823,6 +876,8 @@ const selectedDayShifts = selectedDate
   const [availManagerNote, setAvailManagerNote] = useState("");
   const [availLoading, setAvailLoading] = useState(false);
   const [savingManagerNote, setSavingManagerNote] = useState(false);
+  const [availMonthOffset, setAvailMonthOffset] = useState(0);
+  const [availLeave, setAvailLeave] = useState([]);
 
   // ── Inline edit state ──
   const [inlineEdit, setInlineEdit] = useState(null); // { shift, rect }
@@ -905,6 +960,14 @@ const selectedDayShifts = selectedDate
       </button>
       <button onClick={() => { setShowIssues(true); setShowAvailability(false); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
         ⚠️ Issues
+      </button>
+      <button onClick={() => { setShowRequests(true); setShowIssues(false); setShowAvailability(false); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
+        📨 Requests
+        {leaveRequests.filter((lr) => lr.status === "pending").length > 0 && (
+          <span className="ml-auto text-[10px] bg-red-500 text-white rounded-full px-1.5 py-0.5 font-semibold">
+            {leaveRequests.filter((lr) => lr.status === "pending").length}
+          </span>
+        )}
       </button>
 
       <div className="border-t my-1" />
@@ -1673,8 +1736,32 @@ const selectedDayShifts = selectedDate
             <div className="flex-1 bg-black/20" onClick={() => setShowAvailability(false)} />
             <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
-                <div className="font-semibold text-gray-900 text-sm">👥 Availability <span className="text-gray-400 font-normal">— {monthLabel}</span></div>
+                <div className="font-semibold text-gray-900 text-sm">👥 Availability</div>
                 <button onClick={() => setShowAvailability(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+              </div>
+              <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50 shrink-0">
+                <button
+                  onClick={() => {
+                    const newOffset = availMonthOffset - 1;
+                    setAvailMonthOffset(newOffset);
+                    if (availStaffId) loadStaffAvailability(availStaffId, newOffset);
+                  }}
+                  className="px-2 py-1 text-xs border rounded hover:bg-white"
+                >←</button>
+                <span className="text-xs font-medium text-gray-700">
+                  {(() => {
+                    const d = new Date(today.getFullYear(), today.getMonth() + availMonthOffset, 1);
+                    return d.toLocaleDateString("en-AU", { month: "long", year: "numeric" });
+                  })()}
+                </span>
+                <button
+                  onClick={() => {
+                    const newOffset = availMonthOffset + 1;
+                    setAvailMonthOffset(newOffset);
+                    if (availStaffId) loadStaffAvailability(availStaffId, newOffset);
+                  }}
+                  className="px-2 py-1 text-xs border rounded hover:bg-white"
+                >→</button>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {/* Staff picker */}
@@ -1694,7 +1781,7 @@ const selectedDayShifts = selectedDate
                   <p className="text-xs text-gray-400">Select a staff member to see their availability.</p>
                 ) : availLoading ? (
                   <p className="text-xs text-gray-400">Loading…</p>
-                ) : availPatterns.length === 0 && availOverrides.length === 0 ? (
+                ) : availPatterns.length === 0 && availOverrides.length === 0 && availLeave.length === 0 ? (
                   <p className="text-xs text-gray-400">{selectedStaff?.name || "This staff member"} hasn't submitted any availability yet.</p>
                 ) : (
                   <>
@@ -1748,6 +1835,31 @@ const selectedDayShifts = selectedDate
                       )}
                     </div>
 
+                    {/* Approved leave */}
+                    <div className="border-t pt-3">
+                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Approved leave</div>
+                      {availLeave.length === 0 ? (
+                        <p className="text-xs text-gray-400">None this month.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {availLeave.map((lr) => {
+                            const same = lr.from_date === lr.to_date;
+                            const range = same ? fmtO(lr.from_date) : `${fmtO(lr.from_date)} → ${fmtO(lr.to_date)}`;
+                            return (
+                              <div key={lr.id} className="flex items-start gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2">
+                                <span>🏖️</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs font-medium text-red-700">{lr.leave_type}</div>
+                                  <div className="text-[11px] text-gray-600">{range}{!lr.all_day && lr.start_time ? ` · ${lr.start_time.slice(0,5)}–${lr.end_time?.slice(0,5)}` : ""}</div>
+                                  {lr.note && <div className="text-[11px] text-gray-500">{lr.note}</div>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Manager note */}
                     <div className="border-t pt-3">
                       <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Paige's note <span className="text-gray-400 font-normal">— {monthLabel}</span></div>
@@ -1769,7 +1881,111 @@ const selectedDayShifts = selectedDate
           </div>
         );
       })()}
+{/* ── Requests panel ── */}
+      {showRequests && (() => {
+        const pending = leaveRequests.filter((lr) => lr.status === "pending");
+        const decided = leaveRequests.filter((lr) => lr.status !== "pending");
+        const fmtD = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
+        const dateRange = (lr) => {
+          const same = lr.from_date === lr.to_date;
+          const base = same ? fmtD(lr.from_date) : `${fmtD(lr.from_date)} → ${fmtD(lr.to_date)}`;
+          return base + (!lr.all_day && lr.start_time ? ` · ${lr.start_time.slice(0,5)}–${lr.end_time?.slice(0,5)}` : "");
+        };
+        const statusStyle = {
+          approved: "bg-green-50 text-green-700 border-green-200",
+          declined: "bg-red-50 text-red-600 border-red-200",
+        };
 
+        return (
+          <div className="no-print fixed inset-0 z-50 flex">
+            <div className="flex-1 bg-black/20" onClick={() => setShowRequests(false)} />
+            <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+                <div className="font-semibold text-gray-900 text-sm">📨 Leave Requests</div>
+                <button onClick={() => setShowRequests(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+                {/* Pending */}
+                <div>
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                    Pending {pending.length > 0 && <span className="text-red-500">({pending.length})</span>}
+                  </div>
+                  {pending.length === 0 ? (
+                    <p className="text-xs text-gray-400">No pending requests.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {pending.map((lr) => (
+                        <div key={lr.id} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-semibold text-gray-800">{lr.staff?.name || "?"}</span>
+                            <span className="text-[11px] text-gray-600">{lr.leave_type}</span>
+                          </div>
+                          <div className="text-xs text-gray-600 mt-0.5">{dateRange(lr)}</div>
+                          {lr.note && <div className="text-xs text-gray-500 mt-1 italic">"{lr.note}"</div>}
+                          <textarea
+                            value={requestManagerNotes[lr.id] || ""}
+                            onChange={(e) => setRequestManagerNotes((p) => ({ ...p, [lr.id]: e.target.value }))}
+                            placeholder="Note back to staff (optional)…"
+                            rows={2}
+                            className="w-full mt-2 rounded border border-gray-300 px-2 py-1.5 text-xs resize-none"
+                          />
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              onClick={() => handleLeaveDecision(lr, "declined")}
+                              disabled={processingLeaveId === lr.id}
+                              className="flex-1 py-1.5 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50 disabled:opacity-50"
+                            >
+                              Decline
+                            </button>
+                            <button
+                              onClick={() => handleLeaveDecision(lr, "approved")}
+                              disabled={processingLeaveId === lr.id}
+                              className="flex-1 py-1.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                            >
+                              {processingLeaveId === lr.id ? "..." : "Approve"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Decided */}
+                <div className="border-t pt-3">
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Approved / Declined</div>
+                  {decided.length === 0 ? (
+                    <p className="text-xs text-gray-400">Nothing yet.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {decided.map((lr) => (
+                        <div key={lr.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium text-gray-800">{lr.staff?.name || "?"}</span>
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full border ${statusStyle[lr.status] || ""}`}>
+                              {lr.status === "approved" ? "Approved" : "Declined"}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-600 mt-0.5">{lr.leave_type} · {dateRange(lr)}</div>
+                          {lr.manager_note && <div className="text-[11px] text-blue-600 mt-0.5">Note: {lr.manager_note}</div>}
+                          <button
+                            onClick={() => handleLeaveDecision(lr, "pending")}
+                            className="mt-1 text-[11px] text-gray-500 hover:text-gray-700 underline"
+                          >
+                            Reset to pending
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     {/* ── Month Notes modal ── */}
       {showMonthNotes && (
         <div className="no-print fixed inset-0 z-50 flex">
