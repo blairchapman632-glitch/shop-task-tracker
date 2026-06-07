@@ -220,10 +220,10 @@ function ApproveModal({ row, periodStart, currentUser, isManager, onClose, onApp
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="fixed inset-0 bg-black/40" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
-        <h2 className="font-semibold text-gray-800 mb-1">Approve timesheet</h2>
+        <h2 className="font-semibold text-gray-800 mb-1">Confirm your hours</h2>
         <p className="text-sm text-gray-500 mb-4">
           {row.name} — {fmt(row.total)} hrs this fortnight.{" "}
-          {isManager ? `${row.name}'s PIN, or a manager PIN to approve on their behalf.` : "Enter your PIN to approve."}
+          {isManager ? `${row.name}'s PIN, or a manager PIN to confirm on their behalf.` : "Enter your PIN to confirm."}
         </p>
         <input
           type="password"
@@ -240,7 +240,7 @@ function ApproveModal({ row, periodStart, currentUser, isManager, onClose, onApp
         <div className="flex gap-2">
           <button onClick={onClose} className="flex-1 border border-gray-300 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
           <button onClick={handleApprove} disabled={saving} className="flex-1 bg-green-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
-            {saving ? "Approving…" : "Approve"}
+            {saving ? "Confirming…" : "Confirm"}
           </button>
         </div>
       </div>
@@ -415,10 +415,10 @@ export default function WagesPage() {
       if (shiftIds.length) {
         const [{ data: editData }, { data: sickData }] = await Promise.all([
           supabase.from("shift_edits").select("*").in("roster_shift_id", shiftIds),
-          supabase.from("sick_days").select("roster_shift_id").in("roster_shift_id", shiftIds),
+          supabase.from("sick_days").select("roster_shift_id, leave_type").in("roster_shift_id", shiftIds),
         ]);
         editsByShift = Object.fromEntries((editData || []).map((e) => [e.roster_shift_id, e]));
-        sickByShift = Object.fromEntries((sickData || []).map((s) => [s.roster_shift_id, true]));
+        sickByShift = Object.fromEntries((sickData || []).map((s) => [s.roster_shift_id, s]));
       }
 
       setStaff(staffData || []);
@@ -449,15 +449,23 @@ export default function WagesPage() {
         const cat = dayCategory(sh.shift_date, holidaySet);
 
         if (isSick) {
-          // Permanent → hours go to Sick column. Casual → unpaid (zero). Either way not in worked categories.
+          const sickRecord = sickByShift[sh.id];
+          const isCompassionate = sickRecord?.leave_type === "compassionate";
+          // Permanent → hours go to Sick or Compassionate column. Casual → unpaid (zero).
           if (isPermanent) {
-            grouped[key].sick = (grouped[key].sick || 0) + hrs;
+            if (isCompassionate) {
+              grouped[key].compassionate = (grouped[key].compassionate || 0) + hrs;
+            } else {
+              grouped[key].sick = (grouped[key].sick || 0) + hrs;
+            }
           }
           grouped[key].shifts.push({
             id: sh.id, date: sh.shift_date, start: sh.start_time, end: sh.end_time,
             cat: "sick", rosteredHrs, adjustMins,
             paidHrs: isPermanent ? hrs : 0,
-            breakDeducted: breakApplies, edit, isSick, paidSick: isPermanent,
+            breakDeducted: breakApplies, edit, isSick,
+            isCompassionate,
+            paidSick: isPermanent,
           });
         } else {
           grouped[key][cat] += hrs;
@@ -567,6 +575,7 @@ export default function WagesPage() {
         }
         const sick = g.sick || 0;
         const annual = g.annual || 0;
+        const compassionate = g.compassionate || 0;
         // OT threshold based on worked hours only (sick/leave excluded)
         const worked = g.weekday + g.sat + g.sun + g.ph;
         let ot = Math.max(0, worked - FORTNIGHT_THRESHOLD);
@@ -576,8 +585,8 @@ export default function WagesPage() {
         weekday = pull(weekday);
         sat = pull(sat);
         sun = pull(sun);
-        const total = worked + sick + annual;
-        return { ...g, weekday, sat, sun, ph: g.ph, ot, total, sick, annual, isSalary: false };
+        const total = worked + sick + annual + compassionate;
+        return { ...g, weekday, sat, sun, ph: g.ph, ot, total, sick, annual, compassionate, isSalary: false };
       });
 
       // Ensure all active salary staff appear, even with no shifts this period
@@ -626,6 +635,7 @@ export default function WagesPage() {
         "Sunday hrs": Number(r.sun.toFixed(2)),
         "PH hrs": Number(r.ph.toFixed(2)),
         "Sick hrs": Number(r.sick.toFixed(2)),
+        "Compassionate hrs": Number((r.compassionate || 0).toFixed(2)),
         "Annual Leave hrs": Number(r.annual.toFixed(2)),
         "OT hrs": Number(r.ot.toFixed(2)),
         "Total hrs": Number(r.total.toFixed(2)),
@@ -672,7 +682,7 @@ export default function WagesPage() {
               {isManager && (
                 <div className="ml-auto flex items-center gap-2">
                   {!allApproved && rows.some((r) => r.staffId) && (
-                    <span className="text-xs text-amber-600">Some timesheets not yet approved</span>
+                    <span className="text-xs text-amber-600">Some hours not yet confirmed</span>
                   )}
                   <button
                     onClick={handleExport}
@@ -704,6 +714,7 @@ export default function WagesPage() {
                     <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">Sun</th>
                     <th className="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">PH</th>
                     <th className="px-3 py-2 text-right text-xs font-semibold text-gray-400 uppercase">Sick</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-gray-400 uppercase">Comp</th>
                     <th className="px-3 py-2 text-right text-xs font-semibold text-gray-400 uppercase">Annual</th>
                     <th className="px-3 py-2 text-right text-xs font-semibold text-orange-500 uppercase">OT</th>
                     <th className="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase">Total</th>
@@ -731,6 +742,7 @@ export default function WagesPage() {
                         <td className="px-3 py-2 text-right tabular-nums text-gray-700">{fmt(r.sun)}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-gray-700">{fmt(r.ph)}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-gray-300">{fmt(r.sick)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-300">{fmt(r.compassionate || 0)}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-gray-300">{fmt(r.annual)}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-orange-600 font-medium">{fmt(r.ot)}</td>
                         <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-800">{fmt(r.total)}</td>
@@ -738,9 +750,9 @@ export default function WagesPage() {
                           {!r.staffId || r.isSalary ? (
                             <span className="text-xs text-gray-300">—</span>
                           ) : approved ? (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">✓ Approved</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">✓ Confirmed</span>
                           ) : (
-                            <button onClick={() => setApproveRow(r)} className="text-xs px-2 py-0.5 rounded-full border border-blue-200 text-blue-600 hover:bg-blue-50">Approve</button>
+                            <button onClick={() => setApproveRow(r)} className="text-xs px-2 py-0.5 rounded-full border border-blue-200 text-blue-600 hover:bg-blue-50">Confirm hours</button>
                           )}
                         </td>
                       </tr>
@@ -766,7 +778,8 @@ export default function WagesPage() {
                                     <span className="w-20 text-right tabular-nums font-medium text-gray-800">{sh.isSick && !sh.paidSick ? "—" : `${fmt(sh.paidHrs)} hrs`}</span>
                                     {sh.breakDeducted && !sh.isSick && !sh.isLeave && <span className="text-[10px] text-gray-400">(−30 min lunch)</span>}
                                     {sh.isPublicHoliday && <span className="text-[10px] text-red-400">(from schedule — closed)</span>}
-                                    {sh.isSick && <span className="text-[10px] text-amber-600">🤒 sick{sh.paidSick ? " — paid" : " — unpaid (casual)"}</span>}
+                                    {sh.isSick && sh.isCompassionate && <span className="text-[10px] text-purple-600">🕊️ compassionate{sh.paidSick ? " — paid" : " — unpaid (casual)"}</span>}
+                                    {sh.isSick && !sh.isCompassionate && <span className="text-[10px] text-amber-600">🤒 sick/carer's{sh.paidSick ? " — paid" : " — unpaid (casual)"}</span>}
                                     {sh.isLeave && <span className="text-[10px] text-blue-500">🏖️ {sh.leaveType}</span>}
                                     {edited && (
                                       <span className="text-[10px] text-blue-600" title={sh.edit.reason || ""}>

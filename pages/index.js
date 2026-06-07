@@ -1543,7 +1543,7 @@ export default function HomePage() {
             {/* Wage approval reminder */}
             {selectedStaffId && approvalReminderIds.has(selectedStaffId) && (
               <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                ⚠️ {selectedStaffName}, please approve your timesheet for this pay period in Wages before it's finalised.
+                ⚠️ {selectedStaffName}, please confirm your hours for this pay period in Wages before it's finalised.
               </div>
             )}
 

@@ -456,8 +456,9 @@ const refreshLeave = useCallback(async () => {
     }
   };
 
-  const handleMarkSick = async (shift, name) => {
-    const reason = window.prompt(`Mark ${name}'s shift as sick?\n\nOptional reason (shown only in their staff file):`, "");
+  const handleMarkSick = async (shift, name, leaveType = "sick") => {
+    const label = leaveType === "compassionate" ? "compassionate leave" : "sick / carer's leave";
+    const reason = window.prompt(`Mark ${name} as on ${label}?\n\nOptional reason (shown only in their staff file):`, "");
     if (reason === null) return; // cancelled
     try {
       const { error } = await supabase.from("sick_days").upsert({
@@ -465,12 +466,13 @@ const refreshLeave = useCallback(async () => {
         staff_id: shift.staff_id || null,
         sick_date: shift.shift_date,
         reason: reason.trim() || null,
+        leave_type: leaveType,
         pharmacy_id: pharmacyId,
       }, { onConflict: "roster_shift_id" });
       if (error) throw error;
       await refreshSick();
     } catch (err) {
-      alert("Couldn't mark sick: " + (err?.message || String(err)));
+      alert("Couldn't mark absence: " + (err?.message || String(err)));
     }
   };
 
@@ -1275,13 +1277,13 @@ const handleLeaveDecision = async (lr, decision) => {
                                   inlineEndRef.current = s.end_time?.slice(0, 5) || "";
                                   setInlineSuggestions([]);
                                 }}
-                                className={`print-shift-line text-[10px] leading-tight truncate ${sickByShift[s.id] ? "text-red-400 line-through" : conflict ? "text-amber-700 font-medium" : isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
+                                className={`print-shift-line text-[10px] leading-tight truncate ${sickByShift[s.id]?.leave_type === "compassionate" ? "text-purple-400 line-through" : sickByShift[s.id] ? "text-red-400 line-through" : conflict ? "text-amber-700 font-medium" : isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
                                 style={{
                                   fontSize: dayShifts.length > 7 ? "8px" : dayShifts.length > 5 ? "9px" : "10px"
                                 }}
                                 title={`${name} ${start}–${end} (${s.role})${sickByShift[s.id] ? " — Sick" : ""}${conflict ? ` — ⚠️ ${conflict}` : ""}`}
                               >
-                                {sickByShift[s.id] && "🤒 "}{!sickByShift[s.id] && conflict && "⚠️ "}{isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
+                                {sickByShift[s.id]?.leave_type === "compassionate" ? "🕊️ " : sickByShift[s.id] ? "🤒 " : !sickByShift[s.id] && conflict ? "⚠️ " : ""}{isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
                               </div>
                             );
                           })}
@@ -1392,16 +1394,20 @@ const handleLeaveDecision = async (lr, decision) => {
                               <div className="min-w-0">
                                 <div className={`text-xs font-medium truncate ${roleColour[s.role] || "text-gray-800"}`}>
                                   {name}
-                                  {sickByShift[s.id] && <span className="ml-1 text-[10px] px-1 py-0.5 rounded-full bg-red-100 text-red-600">🤒 Sick</span>}
+                                  {sickByShift[s.id]?.leave_type === "compassionate" && <span className="ml-1 text-[10px] px-1 py-0.5 rounded-full bg-purple-100 text-purple-600">🕊️ Compassionate</span>}
+                                  {sickByShift[s.id] && sickByShift[s.id]?.leave_type !== "compassionate" && <span className="ml-1 text-[10px] px-1 py-0.5 rounded-full bg-red-100 text-red-600">🤒 Sick / Carer's</span>}
                                   {!sickByShift[s.id] && getShiftConflict(s) && <span className="ml-1 text-[10px] px-1 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">⚠️ {getShiftConflict(s)}</span>}
                                 </div>
                                 <div className="text-[10px] text-gray-500">{start}–{end} · {s.role}</div>
                               </div>
                               <div className="flex gap-1 shrink-0">
                                 {sickByShift[s.id] ? (
-                                  <button onClick={() => handleUnmarkSick(s)} className="px-1.5 py-0.5 text-[10px] border border-amber-200 text-amber-600 rounded hover:bg-amber-50">Unsick</button>
+                                  <button onClick={() => handleUnmarkSick(s)} className="px-1.5 py-0.5 text-[10px] border border-amber-200 text-amber-600 rounded hover:bg-amber-50">Unmark</button>
                                 ) : (
-                                  <button onClick={() => handleMarkSick(s, name)} className="px-1.5 py-0.5 text-[10px] border border-amber-200 text-amber-600 rounded hover:bg-amber-50">Sick</button>
+                                  <>
+                                    <button onClick={() => handleMarkSick(s, name, "sick")} className="px-1.5 py-0.5 text-[10px] border border-amber-200 text-amber-600 rounded hover:bg-amber-50">🤒 Sick</button>
+                                    <button onClick={() => handleMarkSick(s, name, "compassionate")} className="px-1.5 py-0.5 text-[10px] border border-purple-200 text-purple-600 rounded hover:bg-purple-50">🕊️ Comp</button>
+                                  </>
                                 )}
                                 <button onClick={() => handleStartEdit(s)} className="px-1.5 py-0.5 text-[10px] border border-blue-200 text-blue-600 rounded hover:bg-blue-50">Edit</button>
                                 <button onClick={() => handleDeleteShift(s.id, name)} className="px-1.5 py-0.5 text-[10px] border border-red-200 text-red-600 rounded hover:bg-red-50">Del</button>
