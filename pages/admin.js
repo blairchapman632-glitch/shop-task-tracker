@@ -238,6 +238,15 @@ function StaffForm({ member, onSave, onCancel }) {
   const handleSave = async () => {
     if (!form.name.trim()) { setError("Name is required."); return; }
     if (form.pin && form.pin.length !== 4) { setError("PIN must be 4 digits."); return; }
+
+    // PIN uniqueness — real PINs must be unique within the pharmacy; "0000" is the unset placeholder and may repeat
+    if (form.pin && form.pin !== "0000") {
+      let q = supabase.from("staff").select("id, name").eq("pharmacy_id", PHARMACY_ID).eq("pin", form.pin);
+      if (member?.id) q = q.neq("id", member.id);
+      const { data: clash } = await q.maybeSingle();
+      if (clash) { setError("That PIN is already taken. Please choose a different PIN."); return; }
+    }
+
     setSaving(true);
     setError("");
     const payload = {
@@ -552,6 +561,15 @@ function LocumForm({ member, onSave, onCancel }) {
   const handleSave = async () => {
     if (!form.name.trim()) { setError("Name is required."); return; }
     if (form.pin && form.pin.length !== 4) { setError("PIN must be 4 digits."); return; }
+
+    // PIN uniqueness — real PINs must be unique within the pharmacy; "0000" is the unset placeholder and may repeat
+    if (form.pin && form.pin !== "0000") {
+      let q = supabase.from("staff").select("id, name").eq("pharmacy_id", PHARMACY_ID).eq("pin", form.pin);
+      if (member?.id) q = q.neq("id", member.id);
+      const { data: clash } = await q.maybeSingle();
+      if (clash) { setError("That PIN is already taken. Please choose a different PIN."); return; }
+    }
+
     setSaving(true);
     setError("");
     const payload = {

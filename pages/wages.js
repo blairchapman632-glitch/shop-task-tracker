@@ -82,20 +82,40 @@ function Sidebar() {
 // ─── PIN Screen ───────────────────────────────────────────────────────────────
 
 function PinScreen({ onUnlock }) {
+  const [staffList, setStaffList] = useState([]);
+  const [step, setStep] = useState("select"); // select → pin
+  const [selectedStaff, setSelectedStaff] = useState(null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
 
+  useEffect(() => {
+    supabase.from("staff")
+      .select("id, name, photo_url, can_access_wages")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .eq("active", true)
+      .neq("role", "Locum")
+      .order("name")
+      .then(({ data }) => setStaffList(data || []));
+  }, []);
+
+  const handleSelect = (s) => {
+    setSelectedStaff(s);
+    setPin("");
+    setError("");
+    setStep("pin");
+  };
+
   const handleSubmit = async () => {
-    if (pin.length !== 4) return;
+    if (pin.length !== 4) { setError("Enter your 4-digit PIN."); return; }
     setChecking(true);
     setError("");
     const { data, error: err } = await supabase
       .from("staff")
       .select("id, name, can_access_wages")
-      .eq("pharmacy_id", PHARMACY_ID)
+      .eq("id", selectedStaff.id)
       .eq("pin", pin)
-      .single();
+      .maybeSingle();
     setChecking(false);
     if (err || !data) {
       setError("Incorrect PIN.");
@@ -107,25 +127,49 @@ function PinScreen({ onUnlock }) {
 
   return (
     <div className="flex h-screen items-center justify-center bg-gray-100">
-      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm text-center">
-        <div className="text-2xl mb-1">💰</div>
-        <h1 className="text-lg font-bold text-gray-800 mb-1">Wages</h1>
-        <p className="text-sm text-gray-500 mb-6">Enter your PIN to continue</p>
-        <input
-          type="password"
-          inputMode="numeric"
-          maxLength={4}
-          value={pin}
-          onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-          placeholder="••••"
-          className="w-full border rounded-lg px-4 py-3 text-center text-2xl tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
-          autoFocus
-        />
-        {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
-        <button onClick={handleSubmit} disabled={pin.length !== 4 || checking} className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium disabled:opacity-40">
-          {checking ? "Checking…" : "Unlock"}
-        </button>
+      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+        <div className="text-center mb-6">
+          <div className="text-2xl mb-1">💰</div>
+          <h1 className="text-lg font-bold text-gray-800 mb-1">Wages</h1>
+          <p className="text-sm text-gray-500">
+            {step === "select" ? "Select your name" : "Enter your PIN"}
+          </p>
+        </div>
+
+        {step === "select" ? (
+          <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+            {staffList.map((s) => (
+              <button key={s.id} onClick={() => handleSelect(s)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 text-left border border-transparent hover:border-gray-200">
+                <img src={s.photo_url || "/placeholder.png"} alt={s.name} className="w-10 h-10 rounded-full object-cover" />
+                <span className="text-sm font-medium text-gray-800">{s.name}</span>
+              </button>
+            ))}
+            {staffList.length === 0 && <div className="text-sm text-gray-400 text-center">Loading staff…</div>}
+          </div>
+        ) : (
+          <div className="text-center">
+            <img src={selectedStaff.photo_url || "/placeholder.png"} alt={selectedStaff.name} className="w-14 h-14 rounded-full object-cover mx-auto mb-2" />
+            <div className="font-medium text-gray-800 mb-4">{selectedStaff.name}</div>
+            <input
+              type="password"
+              inputMode="numeric"
+              maxLength={4}
+              value={pin}
+              onChange={(e) => { setPin(e.target.value.replace(/\D/g, "")); setError(""); }}
+              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              placeholder="••••"
+              autoFocus
+              className="w-full border rounded-lg px-4 py-3 text-center text-2xl tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => { setStep("select"); setSelectedStaff(null); }} className="flex-1 border border-gray-300 rounded-lg py-2.5 text-sm text-gray-600 hover:bg-gray-50">Back</button>
+              <button onClick={handleSubmit} disabled={pin.length !== 4 || checking} className="flex-1 bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40">
+                {checking ? "Checking…" : "Continue"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -133,21 +177,38 @@ function PinScreen({ onUnlock }) {
 
 // ─── Approve Modal ──────────────────────────────────────────────────────────
 
-function ApproveModal({ row, periodStart, onClose, onApproved }) {
+function ApproveModal({ row, periodStart, currentUser, isManager, onClose, onApproved }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   const handleApprove = async () => {
     setError("");
-    if (pin.length !== 4) { setError("Enter your 4-digit PIN."); return; }
+    if (pin.length !== 4) { setError("Enter the 4-digit PIN."); return; }
     setSaving(true);
-    // Verify PIN belongs to this staff member
-    const { data, error: vErr } = await supabase
-      .from("staff").select("id").eq("id", row.staffId).eq("pin", pin).single();
-    if (vErr || !data) { setSaving(false); setError("Incorrect PIN."); return; }
+
+    // First check: does the PIN belong to this staff member (self-approval)?
+    const { data: selfMatch } = await supabase
+      .from("staff").select("id").eq("id", row.staffId).eq("pin", pin).maybeSingle();
+
+    let approvedBy = null;
+    if (selfMatch) {
+      approvedBy = row.staffId; // self-approved
+    } else if (isManager) {
+      // Manager override: PIN must belong to a staff member with wages access
+      const { data: mgrMatch } = await supabase
+        .from("staff").select("id").eq("pin", pin).eq("can_access_wages", true).eq("pharmacy_id", PHARMACY_ID).maybeSingle();
+      if (mgrMatch) approvedBy = mgrMatch.id; // manager-approved on their behalf
+    }
+
+    if (!approvedBy) {
+      setSaving(false);
+      setError(isManager ? "PIN doesn't match this staff member or a manager." : "Incorrect PIN.");
+      return;
+    }
+
     const { error: insErr } = await supabase.from("wage_approvals").upsert(
-      { staff_id: row.staffId, period_start: periodStart, approved_at: new Date().toISOString(), pharmacy_id: PHARMACY_ID },
+      { staff_id: row.staffId, period_start: periodStart, approved_at: new Date().toISOString(), approved_by_staff_id: approvedBy, pharmacy_id: PHARMACY_ID },
       { onConflict: "staff_id,period_start" }
     );
     setSaving(false);
@@ -160,7 +221,10 @@ function ApproveModal({ row, periodStart, onClose, onApproved }) {
       <div className="fixed inset-0 bg-black/40" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
         <h2 className="font-semibold text-gray-800 mb-1">Approve timesheet</h2>
-        <p className="text-sm text-gray-500 mb-4">{row.name} — enter your PIN to approve {fmt(row.total)} hrs for this fortnight.</p>
+        <p className="text-sm text-gray-500 mb-4">
+          {row.name} — {fmt(row.total)} hrs this fortnight.{" "}
+          {isManager ? `${row.name}'s PIN, or a manager PIN to approve on their behalf.` : "Enter your PIN to approve."}
+        </p>
         <input
           type="password"
           inputMode="numeric"
@@ -239,10 +303,12 @@ function EditShiftModal({ shift, currentUser, isManager, onClose, onSaved }) {
           {new Date(shift.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "short" })} · rostered {rosteredStart}–{rosteredEnd}
         </p>
 
-        <label className="flex items-center gap-2 text-sm mb-4 cursor-pointer">
-          <input type="checkbox" checked={noLunch} onChange={(e) => setNoLunch(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
-          <span className="text-gray-700">No lunch break taken (adds 30 min back)</span>
-        </label>
+        {!shift.neverDeductsLunch && (
+          <label className="flex items-center gap-2 text-sm mb-4 cursor-pointer">
+            <input type="checkbox" checked={noLunch} onChange={(e) => setNoLunch(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+            <span className="text-gray-700">No lunch break taken (adds 30 min back)</span>
+          </label>
+        )}
 
         <div className="text-xs font-medium text-gray-600 mb-1">Adjust time (optional)</div>
         <div className="flex items-center gap-2 mb-1">
@@ -708,7 +774,7 @@ export default function WagesPage() {
                                       </span>
                                     )}
                                     {canEdit && (
-                                      <button onClick={(e) => { e.stopPropagation(); setEditShift({ ...sh }); }} className="ml-auto text-[11px] text-blue-600 hover:underline">
+                                      <button onClick={(e) => { e.stopPropagation(); setEditShift({ ...sh, neverDeductsLunch: r.staffId ? (staff.find((st) => st.id === r.staffId)?.no_lunch_deduction === true) : false }); }} className="ml-auto text-[11px] text-blue-600 hover:underline">
                                         {edited ? "Edit" : "Adjust"}
                                       </button>
                                     )}
@@ -734,6 +800,8 @@ export default function WagesPage() {
         <ApproveModal
           row={approveRow}
           periodStart={toISO(period.start)}
+          currentUser={currentUser}
+          isManager={isManager}
           onClose={() => setApproveRow(null)}
           onApproved={handleApproved}
         />

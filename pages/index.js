@@ -137,6 +137,13 @@ function ChangePINModal({ staff, onClose }) {
     setError("");
     if (newPin.length !== 4) { setError("New PIN must be 4 digits."); return; }
     if (newPin !== confirmPin) { setError("New PINs don't match."); return; }
+
+    // PIN uniqueness — real PINs must be unique within the pharmacy; "0000" is the unset placeholder and may repeat
+    if (newPin !== "0000") {
+      const clash = staff.find((s) => s.id !== selectedStaff.id && s.pin === newPin);
+      if (clash) { setError("PIN duplication. Please choose a different PIN."); return; }
+    }
+
     setSaving(true);
     // Verify current PIN
     const { data, error: verifyErr } = await supabase
