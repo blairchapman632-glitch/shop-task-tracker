@@ -116,6 +116,10 @@ export default function RosterPage() {
   const [editEnd, setEditEnd] = useState("17:00");
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Copy-month undo snapshot
+  const [copyUndo, setCopyUndo] = useState(null); // { monthLabel, targetMonthDate, targetEnd, shifts: [...] }
+  const [undoingCopy, setUndoingCopy] = useState(false);
+
   // Drag
   const [draggedShiftId, setDraggedShiftId] = useState(null);
   const [dragTargetDate, setDragTargetDate] = useState(null);
@@ -228,8 +232,16 @@ const selectedDayShifts = selectedDate
       status = ovr.status;
     } else {
       const dow = new Date(date + "T00:00:00").getDay();
-      const pats = allPatterns.filter((p) => String(p.staff_id) === String(shift.staff_id) && p.day_of_week === dow);
-      status = pats[0]?.status || null;
+      // Find all ranges for this staff/day that cover the shift date; latest-created wins
+      const covering = allPatterns
+        .filter((p) =>
+          String(p.staff_id) === String(shift.staff_id) &&
+          p.day_of_week === dow &&
+          (!p.from_date || p.from_date <= date) &&
+          (!p.to_date || p.to_date >= date)
+        )
+        .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+      status = covering[0]?.status || null;
     }
     if (!status || status === "all_day") return null;
     if (status === "unavailable") return "Marked unavailable";
@@ -310,9 +322,11 @@ const refreshLeave = useCallback(async () => {
         supabase.from("roster_months").select("id, status").eq("month", monthDate).maybeSingle(),
       ]);
 
-      // Availability data for conflict detection (all staff)
+      // Availability data for conflict detection (all staff) — range model
+      const monthLast = `${monthStr}-${String(new Date(currentYear, currentMonth + 1, 0).getDate()).padStart(2, "0")}`;
       const [{ data: patData }, { data: ovrData }] = await Promise.all([
-        supabase.from("availability_patterns").select("staff_id, day_of_week, status").eq("year_month", monthStr),
+        supabase.from("availability_patterns").select("staff_id, day_of_week, status, from_date, to_date, created_at")
+          .or(`and(from_date.lte.${monthLast},to_date.gte.${startDate}),and(from_date.lte.${monthLast},to_date.is.null)`),
         supabase.from("availability_overrides").select("staff_id, override_date, status"),
       ]);
       setAllPatterns(patData || []);
@@ -587,7 +601,12 @@ const refreshLeave = useCallback(async () => {
       const targetEnd = `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`;
       const prevEnd = `${prevYear}-${String(prevMonthIndex + 2).padStart(2, "0")}-01`;
 
-      await supabase.from("roster_shifts").delete().gte("shift_date", targetMonthDate).lt("shift_date", targetEnd);
+      // Snapshot the non-locum shifts we're about to delete, so the copy can be undone this session
+      const { data: snapshot } = await supabase.from("roster_shifts")
+        .select("staff_id, staff_name, shift_date, start_time, end_time, role, roster_month_id")
+        .gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum");
+
+      await supabase.from("roster_shifts").delete().gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum");
 
       const { data: prevShifts } = await supabase.from("roster_shifts").select("*").gte("shift_date", prevMonthDate).lt("shift_date", prevEnd);
       if (!prevShifts?.length) { alert("No shifts found in previous month."); return; }
@@ -618,6 +637,7 @@ const refreshLeave = useCallback(async () => {
       };
 
       const copied = prevShifts.map((s) => {
+        if (s.role === "Locum") return null; // locum bookings are date-specific, not copied forward
         const orig = new Date(s.shift_date);
         const newDate = findDate(getWeekday(orig), getOccurrence(orig));
         if (!newDate) return null;
@@ -627,9 +647,31 @@ const refreshLeave = useCallback(async () => {
       if (!copied.length) { alert("No valid shifts to copy."); return; }
       await supabase.from("roster_shifts").insert(copied);
       await refreshShifts();
-      alert("Previous month copied successfully.");
+      setCopyUndo({ monthLabel, targetMonthDate, targetEnd, shifts: snapshot || [] });
     } catch (err) {
       alert("Couldn't copy month: " + (err?.message || String(err)));
+    }
+  };
+
+  // ── Undo last copy ──
+  const handleUndoCopy = async () => {
+    if (!copyUndo) return;
+    if (!window.confirm(`Undo the copy into ${copyUndo.monthLabel}? This restores the shifts that were there before.`)) return;
+    try {
+      setUndoingCopy(true);
+      // Remove the copied-in non-locum shifts
+      await supabase.from("roster_shifts").delete()
+        .gte("shift_date", copyUndo.targetMonthDate).lt("shift_date", copyUndo.targetEnd).neq("role", "Locum");
+      // Restore the snapshot
+      if (copyUndo.shifts.length) {
+        await supabase.from("roster_shifts").insert(copyUndo.shifts);
+      }
+      await refreshShifts();
+      setCopyUndo(null);
+    } catch (err) {
+      alert("Couldn't undo copy: " + (err?.message || String(err)));
+    } finally {
+      setUndoingCopy(false);
     }
   };
 
@@ -813,13 +855,17 @@ const refreshLeave = useCallback(async () => {
     const d = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
     const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     const monthStart = `${monthStr}-01`;
-    const monthEnd = `${d.getFullYear()}-${String(d.getMonth() + 2).padStart(2, "0")}-01`;
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    const monthLast = `${monthStr}-${String(lastDay).padStart(2, "0")}`;
+    const monthEndExclusive = `${d.getFullYear()}-${String(d.getMonth() + 2).padStart(2, "0")}-01`;
     const [{ data: pats }, { data: ovrs }, { data: mNote }, { data: leave }] = await Promise.all([
-      supabase.from("availability_patterns").select("*").eq("staff_id", staffId).eq("year_month", monthStr),
-      supabase.from("availability_overrides").select("*").eq("staff_id", staffId).gte("override_date", `${monthStr}-01`).order("override_date"),
+      // All ranges overlapping the viewed month
+      supabase.from("availability_patterns").select("*").eq("staff_id", staffId)
+        .or(`and(from_date.lte.${monthLast},to_date.gte.${monthStart}),and(from_date.lte.${monthLast},to_date.is.null)`)
+        .order("from_date").order("created_at"),
+      supabase.from("availability_overrides").select("*").eq("staff_id", staffId).gte("override_date", monthStart).order("override_date"),
       supabase.from("availability_manager_notes").select("note").eq("staff_id", staffId).eq("month", monthStr).maybeSingle(),
-      // Approved leave overlapping the viewed month: from_date < next month AND to_date >= month start
-      supabase.from("leave_requests").select("*").eq("staff_id", staffId).eq("status", "approved").lt("from_date", monthEnd).gte("to_date", monthStart).order("from_date"),
+      supabase.from("leave_requests").select("*").eq("staff_id", staffId).eq("status", "approved").lt("from_date", monthEndExclusive).gte("to_date", monthStart).order("from_date"),
     ]);
     setAvailPatterns(pats || []);
     setAvailOverrides(ovrs || []);
@@ -828,6 +874,110 @@ const refreshLeave = useCallback(async () => {
     setAvailStaffNote(firstNote);
     setAvailManagerNote(mNote?.note || "");
     setAvailLoading(false);
+  };
+
+  // ── Paige availability editing (panel) ──
+  const AVAIL_DOWS = [1, 2, 3, 4, 5, 6, 0];
+
+  const availStartNewRange = () => {
+    const blank = {};
+    AVAIL_DOWS.forEach((d) => { blank[d] = "all_day"; });
+    setAvailEditPattern(blank);
+    setAvailEditFrom("");
+    setAvailEditTo("");
+    setAvailEditNote("");
+    setAvailEditingKey("new");
+  };
+
+  const availEditRange = (range) => {
+    const key = `${range.from_date || ""}|${range.to_date || ""}`;
+    if (availEditingKey === key) { setAvailEditingKey(null); return; }
+    setAvailEditPattern({ ...range.days });
+    setAvailEditFrom(range.from_date || "");
+    setAvailEditTo(range.to_date || "");
+    setAvailEditNote(range.note || "");
+    setAvailEditingKey(key);
+  };
+
+  const availSaveRange = async () => {
+    if (!availStaffId) return;
+    setAvailSavingRange(true);
+    try {
+      const d = new Date(today.getFullYear(), today.getMonth() + availMonthOffset, 1);
+      const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const rFrom = availEditFrom || `${monthStr}-01`;
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      const rTo = availEditTo || `${monthStr}-${String(lastDay).padStart(2, "0")}`;
+      if (rTo < rFrom) { alert("'Until' can't be before 'Applies from'."); setAvailSavingRange(false); return; }
+
+      // Replace any existing range with the exact same from/to
+      await supabase.from("availability_patterns").delete()
+        .eq("staff_id", availStaffId).eq("from_date", rFrom).eq("to_date", rTo);
+
+      const rows = AVAIL_DOWS.map((dow) => ({
+        staff_id: availStaffId,
+        day_of_week: dow,
+        status: availEditPattern[dow] || "all_day",
+        note: availEditNote.trim() || null,
+        pharmacy_id: pharmacyId,
+        from_date: rFrom,
+        to_date: rTo,
+        year_month: monthStr,
+      }));
+      const { error } = await supabase.from("availability_patterns").insert(rows);
+      if (error) throw error;
+      setAvailEditingKey(null);
+      await loadStaffAvailability(availStaffId);
+    } catch (err) {
+      alert("Couldn't save range: " + (err?.message || String(err)));
+    } finally {
+      setAvailSavingRange(false);
+    }
+  };
+
+  const availDeleteRange = async (range) => {
+    if (!window.confirm("Delete this availability range?")) return;
+    try {
+      let q = supabase.from("availability_patterns").delete().eq("staff_id", availStaffId).eq("from_date", range.from_date);
+      q = range.to_date ? q.eq("to_date", range.to_date) : q.is("to_date", null);
+      const { error } = await q;
+      if (error) throw error;
+      if (availEditingKey === `${range.from_date || ""}|${range.to_date || ""}`) setAvailEditingKey(null);
+      await loadStaffAvailability(availStaffId);
+    } catch (err) {
+      alert("Couldn't delete range: " + (err?.message || String(err)));
+    }
+  };
+
+  const availAddOverride = async () => {
+    if (!availStaffId || !availNewOvrDate) return;
+    if (availOverrides.some((o) => o.override_date === availNewOvrDate)) { alert("There's already an entry for that date."); return; }
+    try {
+      const { error } = await supabase.from("availability_overrides").insert([{
+        staff_id: availStaffId,
+        override_date: availNewOvrDate,
+        status: availNewOvrStatus,
+        note: availNewOvrNote.trim() || null,
+        pharmacy_id: pharmacyId,
+      }]);
+      if (error) throw error;
+      setAvailNewOvrDate("");
+      setAvailNewOvrStatus("unavailable");
+      setAvailNewOvrNote("");
+      await loadStaffAvailability(availStaffId);
+    } catch (err) {
+      alert("Couldn't add date: " + (err?.message || String(err)));
+    }
+  };
+
+  const availRemoveOverride = async (override) => {
+    try {
+      const { error } = await supabase.from("availability_overrides").delete().eq("id", override.id);
+      if (error) throw error;
+      await loadStaffAvailability(availStaffId);
+    } catch (err) {
+      alert("Couldn't remove date: " + (err?.message || String(err)));
+    }
   };
 const handleLeaveDecision = async (lr, decision) => {
     setProcessingLeaveId(lr.id);
@@ -880,6 +1030,16 @@ const handleLeaveDecision = async (lr, decision) => {
   const [savingManagerNote, setSavingManagerNote] = useState(false);
   const [availMonthOffset, setAvailMonthOffset] = useState(0);
   const [availLeave, setAvailLeave] = useState([]);
+  // Paige editing availability in the panel
+  const [availEditPattern, setAvailEditPattern] = useState({}); // dow -> status (working grid for add/edit)
+  const [availEditFrom, setAvailEditFrom] = useState("");
+  const [availEditTo, setAvailEditTo] = useState("");
+  const [availEditNote, setAvailEditNote] = useState("");
+  const [availEditingKey, setAvailEditingKey] = useState(null); // "from|to" of range being edited inline, or "new"
+  const [availSavingRange, setAvailSavingRange] = useState(false);
+  const [availNewOvrDate, setAvailNewOvrDate] = useState("");
+  const [availNewOvrStatus, setAvailNewOvrStatus] = useState("unavailable");
+  const [availNewOvrNote, setAvailNewOvrNote] = useState("");
 
   // ── Inline edit state ──
   const [inlineEdit, setInlineEdit] = useState(null); // { shift, rect }
@@ -931,6 +1091,12 @@ const handleLeaveDecision = async (lr, decision) => {
       <button onClick={handleCopyPreviousMonth} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-blue-700 hover:bg-blue-50 w-full text-left font-medium">
         📋 Copy last month
       </button>
+
+      {copyUndo && (
+        <button onClick={handleUndoCopy} disabled={undoingCopy} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-amber-700 hover:bg-amber-50 w-full text-left font-medium disabled:opacity-50">
+          ↩️ {undoingCopy ? "Undoing…" : `Undo copy (${copyUndo.monthLabel})`}
+        </button>
+      )}
 
       <button
         onClick={handlePublishToggle}
@@ -1732,10 +1898,18 @@ const handleLeaveDecision = async (lr, decision) => {
           pm: { label: "PM only", emoji: "🌆", cls: "bg-amber-50 text-amber-700 border-amber-200" },
           unavailable: { label: "Unavailable", emoji: "❌", cls: "bg-red-50 text-red-600 border-red-200" },
         };
-        const patByDow = Object.fromEntries(availPatterns.map((p) => [p.day_of_week, p]));
-        const range = availPatterns.find((p) => p.from_date || p.to_date);
         const fmtO = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
         const selectedStaff = staffOptions.find((s) => String(s.id) === String(availStaffId));
+        // Group pattern rows into ranges keyed by from_date|to_date
+        const availRanges = (() => {
+          const byKey = {};
+          (availPatterns || []).forEach((p) => {
+            const key = `${p.from_date || ""}|${p.to_date || ""}`;
+            if (!byKey[key]) byKey[key] = { from_date: p.from_date, to_date: p.to_date, note: p.note || "", days: {} };
+            byKey[key].days[p.day_of_week] = p.status;
+          });
+          return Object.values(byKey).sort((a, b) => (a.from_date || "").localeCompare(b.from_date || ""));
+        })();
 
         return (
           <div className="no-print fixed inset-0 z-50 flex">
@@ -1787,34 +1961,130 @@ const handleLeaveDecision = async (lr, decision) => {
                   <p className="text-xs text-gray-400">Select a staff member to see their availability.</p>
                 ) : availLoading ? (
                   <p className="text-xs text-gray-400">Loading…</p>
-                ) : availPatterns.length === 0 && availOverrides.length === 0 && availLeave.length === 0 ? (
-                  <p className="text-xs text-gray-400">{selectedStaff?.name || "This staff member"} hasn't submitted any availability yet.</p>
                 ) : (
                   <>
-                    {/* Weekly pattern */}
+                    {availPatterns.length === 0 && availOverrides.length === 0 && availLeave.length === 0 && (
+                      <p className="text-xs text-gray-400">{selectedStaff?.name || "This staff member"} hasn't submitted any availability yet — you can add it below.</p>
+                    )}
+                    {/* Weekly availability — one block per range */}
                     <div className="border-t pt-3">
                       <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Weekly availability</div>
-                      <div className="space-y-1">
-                        {AVAIL_DAYS.map((d) => {
-                          const st = patByDow[d.dow]?.status || "all_day";
-                          const meta = STATUS[st] || STATUS.all_day;
-                          return (
-                            <div key={d.dow} className="flex items-center gap-2">
-                              <span className="text-xs w-10 text-gray-600">{d.label}</span>
-                              <span className={`text-[11px] px-2 py-0.5 rounded-full border ${meta.cls}`}>{meta.emoji} {meta.label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {range && (range.from_date || range.to_date) && (
-                        <div className="text-[11px] text-gray-500 mt-2">
-                          Applies {range.from_date ? `from ${fmtO(range.from_date)}` : ""}{range.to_date ? ` until ${fmtO(range.to_date)}` : " (ongoing)"}
+                      {availRanges.length === 0 ? (
+                        <p className="text-xs text-gray-400">No weekly pattern this month.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {availRanges.map((r, idx) => {
+                            const rangeLabel = r.to_date
+                              ? `${fmtO(r.from_date)} → ${fmtO(r.to_date)}`
+                              : `From ${fmtO(r.from_date)} (ongoing)`;
+                            const rKey = `${r.from_date || ""}|${r.to_date || ""}`;
+                            const isEditing = availEditingKey === rKey;
+                            return (
+                              <div key={idx} className={`rounded-lg border px-3 py-2 ${isEditing ? "border-blue-300 bg-blue-50/40" : "border-gray-100 bg-gray-50"}`}>
+                                <div className="flex items-center justify-between gap-2 mb-1.5">
+                                  <span className="text-[11px] font-semibold text-gray-700">{rangeLabel}</span>
+                                  <div className="flex gap-2 shrink-0">
+                                    <button onClick={() => availEditRange(r)} className="text-[11px] text-blue-600 hover:underline">{isEditing ? "Close" : "Edit"}</button>
+                                    <button onClick={() => availDeleteRange(r)} className="text-[11px] text-red-500 hover:text-red-700">Delete</button>
+                                  </div>
+                                </div>
+                                {!isEditing && (
+                                  <div className="space-y-1">
+                                    {AVAIL_DAYS.map((d) => {
+                                      const st = r.days[d.dow] || "all_day";
+                                      const meta = STATUS[st] || STATUS.all_day;
+                                      return (
+                                        <div key={d.dow} className="flex items-center gap-2">
+                                          <span className="text-xs w-10 text-gray-600">{d.label}</span>
+                                          <span className={`text-[11px] px-2 py-0.5 rounded-full border ${meta.cls}`}>{meta.emoji} {meta.label}</span>
+                                        </div>
+                                      );
+                                    })}
+                                    {r.note && <div className="mt-2 text-[11px] text-gray-600 italic">{r.note}</div>}
+                                  </div>
+                                )}
+                                {isEditing && (
+                                  <div className="space-y-2">
+                                    {AVAIL_DAYS.map((d) => (
+                                      <div key={d.dow} className="flex items-center gap-2">
+                                        <span className="text-xs w-10 shrink-0 text-gray-600">{d.label}</span>
+                                        <div className="flex gap-1 flex-1">
+                                          {Object.entries(STATUS).map(([val, meta]) => {
+                                            const active = (availEditPattern[d.dow] || "all_day") === val;
+                                            return (
+                                              <button key={val} onClick={() => setAvailEditPattern((p) => ({ ...p, [d.dow]: val }))} title={meta.label}
+                                                className={`flex-1 text-[11px] rounded border py-1 ${active ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}>
+                                                {meta.emoji}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    ))}
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <label className="block text-[10px] font-medium text-gray-600 mb-1">Applies from</label>
+                                        <input type="date" value={availEditFrom} onChange={(e) => setAvailEditFrom(e.target.value)} className="w-full border rounded px-2 py-1 text-xs" />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[10px] font-medium text-gray-600 mb-1">Until</label>
+                                        <input type="date" value={availEditTo} onChange={(e) => setAvailEditTo(e.target.value)} className="w-full border rounded px-2 py-1 text-xs" />
+                                      </div>
+                                    </div>
+                                    <textarea value={availEditNote} onChange={(e) => setAvailEditNote(e.target.value)} rows={2} placeholder="Note (optional)…" className="w-full border rounded px-2 py-1.5 text-xs resize-none" />
+                                    <button onClick={availSaveRange} disabled={availSavingRange} className="w-full bg-blue-600 text-white rounded py-1.5 text-xs font-medium disabled:opacity-50">
+                                      {availSavingRange ? "Saving…" : "Save changes"}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
-                      {availStaffNote && (
-                        <div className="mt-2 text-[11px] text-gray-600 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
-                          <span className="font-medium">Their note:</span> {availStaffNote}
+
+                      {/* Add a new range */}
+                      {availEditingKey === "new" ? (
+                        <div className="mt-3 rounded-lg border border-blue-300 bg-blue-50/40 px-3 py-2 space-y-2">
+                          <div className="text-[11px] font-semibold text-gray-700">New range</div>
+                          {AVAIL_DAYS.map((d) => (
+                            <div key={d.dow} className="flex items-center gap-2">
+                              <span className="text-xs w-10 shrink-0 text-gray-600">{d.label}</span>
+                              <div className="flex gap-1 flex-1">
+                                {Object.entries(STATUS).map(([val, meta]) => {
+                                  const active = (availEditPattern[d.dow] || "all_day") === val;
+                                  return (
+                                    <button key={val} onClick={() => setAvailEditPattern((p) => ({ ...p, [d.dow]: val }))} title={meta.label}
+                                      className={`flex-1 text-[11px] rounded border py-1 ${active ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}>
+                                      {meta.emoji}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-medium text-gray-600 mb-1">Applies from</label>
+                              <input type="date" value={availEditFrom} onChange={(e) => setAvailEditFrom(e.target.value)} className="w-full border rounded px-2 py-1 text-xs" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-medium text-gray-600 mb-1">Until</label>
+                              <input type="date" value={availEditTo} onChange={(e) => setAvailEditTo(e.target.value)} className="w-full border rounded px-2 py-1 text-xs" />
+                            </div>
+                          </div>
+                          <textarea value={availEditNote} onChange={(e) => setAvailEditNote(e.target.value)} rows={2} placeholder="Note (optional)…" className="w-full border rounded px-2 py-1.5 text-xs resize-none" />
+                          <div className="flex gap-2">
+                            <button onClick={() => setAvailEditingKey(null)} className="flex-1 border rounded py-1.5 text-xs hover:bg-gray-50">Cancel</button>
+                            <button onClick={availSaveRange} disabled={availSavingRange} className="flex-1 bg-blue-600 text-white rounded py-1.5 text-xs font-medium disabled:opacity-50">
+                              {availSavingRange ? "Saving…" : "Save range"}
+                            </button>
+                          </div>
                         </div>
+                      ) : (
+                        <button onClick={availStartNewRange} className="mt-3 w-full border border-blue-200 text-blue-600 rounded-lg py-1.5 text-xs font-medium hover:bg-blue-50">
+                          + Add availability range
+                        </button>
                       )}
                     </div>
 
@@ -1822,9 +2092,9 @@ const handleLeaveDecision = async (lr, decision) => {
                     <div className="border-t pt-3">
                       <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Specific dates</div>
                       {availOverrides.length === 0 ? (
-                        <p className="text-xs text-gray-400">None upcoming.</p>
+                        <p className="text-xs text-gray-400 mb-2">None upcoming.</p>
                       ) : (
-                        <div className="space-y-1.5">
+                        <div className="space-y-1.5 mb-3">
                           {availOverrides.map((o) => {
                             const meta = STATUS[o.status] || STATUS.all_day;
                             return (
@@ -1834,11 +2104,26 @@ const handleLeaveDecision = async (lr, decision) => {
                                   <div className="text-xs text-gray-700">{fmtO(o.override_date)} — {meta.label}</div>
                                   {o.note && <div className="text-[11px] text-gray-500">{o.note}</div>}
                                 </div>
+                                <button onClick={() => availRemoveOverride(o)} className="text-[11px] text-red-500 hover:text-red-700 shrink-0">Remove</button>
                               </div>
                             );
                           })}
                         </div>
                       )}
+
+                      {/* Add specific date */}
+                      <div className="space-y-2 border-t pt-2">
+                        <input type="date" value={availNewOvrDate} onChange={(e) => setAvailNewOvrDate(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs" />
+                        <div className="flex gap-1">
+                          {Object.entries(STATUS).map(([val, meta]) => (
+                            <button key={val} onClick={() => setAvailNewOvrStatus(val)} className={`flex-1 text-[11px] rounded border py-1 ${availNewOvrStatus === val ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200"}`}>
+                              {meta.emoji}
+                            </button>
+                          ))}
+                        </div>
+                        <input value={availNewOvrNote} onChange={(e) => setAvailNewOvrNote(e.target.value)} placeholder="Note (optional)" className="w-full border rounded px-2 py-1.5 text-xs" />
+                        <button onClick={availAddOverride} disabled={!availNewOvrDate} className="w-full bg-blue-600 text-white rounded py-1.5 text-xs font-medium disabled:opacity-40">Add date</button>
+                      </div>
                     </div>
 
                     {/* Approved leave */}

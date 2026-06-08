@@ -54,6 +54,8 @@ export default function AvailabilityPage() {
   const [patternNote, setPatternNote] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [savedRanges, setSavedRanges] = useState([]); // [{ from_date, to_date, note, days: {dow: status} }]
+  const [editingRangeKey, setEditingRangeKey] = useState(null); // "from|to" of the range being edited inline
   const [overrides, setOverrides] = useState([]); // {override_date, status, note}
   const [newOverrideDate, setNewOverrideDate] = useState("");
   const [newOverrideStatus, setNewOverrideStatus] = useState("unavailable");
@@ -78,7 +80,7 @@ export default function AvailabilityPage() {
 
   // Load active staff and published months
   useEffect(() => {
-    supabase.from("staff").select("id, name, photo_url, pin, role").eq("pharmacy_id", PHARMACY_ID).eq("active", true).order("name")
+    supabase.from("staff").select("id, name, photo_url, pin, role, employment_type").eq("pharmacy_id", PHARMACY_ID).eq("active", true).order("name")
       .then(({ data }) => setStaffList((data || []).filter((s) => s.role !== "Locum")));
     supabase.from("roster_months").select("month, status").eq("status", "published")
       .then(({ data }) => {
@@ -103,59 +105,118 @@ export default function AvailabilityPage() {
     if (error || !data) { setPinError("Incorrect PIN."); setPin(""); return; }
     await loadExisting(selectedStaff.id, selectedMonth);
     await loadMyLeave(selectedStaff.id);
+    const leaveOnly = ["Permanent", "Salary"].includes(selectedStaff.employment_type);
+    setActiveTab(leaveOnly ? "leave" : "availability");
     setStep("form");
   };
 
   const loadExisting = async (staffId, yearMonth) => {
     setLoading(true);
-    // Load overrides and this month's patterns in parallel
+    const monthStart = `${yearMonth}-01`;
+    const monthEnd = `${yearMonth}-31`; // string compare upper bound, safe for date strings
+    // Load all ranges that overlap the selected month, plus overrides
     const [{ data: pats }, { data: ovrs }] = await Promise.all([
-      supabase.from("availability_patterns").select("*").eq("staff_id", staffId).eq("year_month", yearMonth),
+      supabase.from("availability_patterns").select("*").eq("staff_id", staffId)
+        .or(`and(from_date.lte.${monthEnd},to_date.gte.${monthStart}),and(from_date.lte.${monthEnd},to_date.is.null)`)
+        .order("from_date"),
       supabase.from("availability_overrides").select("*").eq("staff_id", staffId).gte("override_date", new Date().toISOString().slice(0, 10)).order("override_date"),
     ]);
 
-    let sourcePats = pats || [];
+    // Group pattern rows into ranges keyed by from_date|to_date
+    const byRange = {};
+    (pats || []).forEach((p) => {
+      const key = `${p.from_date || ""}|${p.to_date || ""}`;
+      if (!byRange[key]) byRange[key] = { from_date: p.from_date, to_date: p.to_date, note: p.note || "", days: {} };
+      byRange[key].days[p.day_of_week] = p.status;
+    });
+    const ranges = Object.values(byRange).map((r) => {
+      DAYS.forEach((d) => { if (!(d.dow in r.days)) r.days[d.dow] = "all_day"; });
+      return r;
+    });
+    setSavedRanges(ranges);
 
-    // If no patterns for this month, find the most recent prior month's patterns
-    if (sourcePats.length === 0) {
-      const { data: prior } = await supabase
-        .from("availability_patterns")
-        .select("*")
-        .eq("staff_id", staffId)
-        .lt("year_month", yearMonth)
-        .order("year_month", { ascending: false })
-        .limit(7); // 7 rows = one full week pattern
-      if (prior && prior.length > 0) {
-        sourcePats = prior;
-      }
-    }
-
+    // Reset the editing grid to a fresh blank range
     const pmap = {};
-    sourcePats.forEach((p) => { pmap[p.day_of_week] = p.status; });
-    // Default any unset day to all_day
-    DAYS.forEach((d) => { if (!(d.dow in pmap)) pmap[d.dow] = "all_day"; });
+    DAYS.forEach((d) => { pmap[d.dow] = "all_day"; });
     setPattern(pmap);
-    const firstWithMeta = sourcePats.find((p) => p.note);
-    setPatternNote(firstWithMeta?.note || "");
+    setPatternNote("");
+    setFromDate("");
+    setToDate("");
+
     setOverrides((ovrs || []).map((o) => ({ override_date: o.override_date, status: o.status, note: o.note || "" })));
+    setEditingRangeKey(null);
     setLoading(false);
   };
 
   const setDayStatus = (dow, status) => setPattern((p) => ({ ...p, [dow]: status }));
 
-  const addOverride = () => {
+  // Add an override — saves immediately to the DB
+  const addOverride = async () => {
     if (!newOverrideDate) return;
     if (overrides.some((o) => o.override_date === newOverrideDate)) {
       alert("You already have an entry for that date.");
       return;
     }
-    setOverrides((o) => [...o, { override_date: newOverrideDate, status: newOverrideStatus, note: newOverrideNote.trim() }].sort((a, b) => a.override_date.localeCompare(b.override_date)));
-    setNewOverrideDate("");
-    setNewOverrideStatus("unavailable");
-    setNewOverrideNote("");
+    try {
+      const { error } = await supabase.from("availability_overrides").insert([{
+        staff_id: selectedStaff.id,
+        override_date: newOverrideDate,
+        status: newOverrideStatus,
+        note: newOverrideNote.trim() || null,
+        pharmacy_id: PHARMACY_ID,
+      }]);
+      if (error) throw error;
+      setNewOverrideDate("");
+      setNewOverrideStatus("unavailable");
+      setNewOverrideNote("");
+      await loadExisting(selectedStaff.id, selectedMonth);
+      setSaved(true);
+      setTimeout(() => { try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) {} }, 50);
+    } catch (err) {
+      alert("Couldn't add date: " + (err?.message || String(err)));
+    }
   };
 
-  const removeOverride = (date) => setOverrides((o) => o.filter((x) => x.override_date !== date));
+  // Remove an override — deletes immediately from the DB
+  const removeOverride = async (date) => {
+    try {
+      const { error } = await supabase.from("availability_overrides").delete()
+        .eq("staff_id", selectedStaff.id).eq("override_date", date);
+      if (error) throw error;
+      await loadExisting(selectedStaff.id, selectedMonth);
+    } catch (err) {
+      alert("Couldn't remove date: " + (err?.message || String(err)));
+    }
+  };
+  const handleDeleteRange = async (range) => {
+    if (!window.confirm("Delete this availability range?")) return;
+    try {
+      let q = supabase.from("availability_patterns").delete().eq("staff_id", selectedStaff.id).eq("from_date", range.from_date);
+      q = range.to_date ? q.eq("to_date", range.to_date) : q.is("to_date", null);
+      const { error } = await q;
+      if (error) throw error;
+      await loadExisting(selectedStaff.id, selectedMonth);
+    } catch (err) {
+      alert("Couldn't delete range: " + (err?.message || String(err)));
+    }
+  };
+
+  const rangeKey = (r) => `${r.from_date || ""}|${r.to_date || ""}`;
+
+  const handleEditRange = (range) => {
+    const key = rangeKey(range);
+    if (editingRangeKey === key) {
+      // Toggle closed
+      setEditingRangeKey(null);
+      return;
+    }
+    // Load this range into the working grid; saving with the same dates replaces it
+    setPattern({ ...range.days });
+    setPatternNote(range.note || "");
+    setFromDate(range.from_date || "");
+    setToDate(range.to_date || "");
+    setEditingRangeKey(key);
+  };
 const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
 
   const loadMyLeave = async (staffId) => {
@@ -214,36 +275,35 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
     setSaving(true);
     try {
       const staffId = selectedStaff.id;
-      console.log("Saving month:", selectedMonth, "staffId:", staffId);
-      // Replace patterns: delete then insert current grid
-      const { error: delError } = await supabase.from("availability_patterns").delete().eq("staff_id", staffId).eq("year_month", selectedMonth);
-      console.log("Delete error:", delError);
+      // Default blank dates to the selected month's span
+      const rFrom = fromDate || `${selectedMonth}-01`;
+      const lastDay = new Date(Number(selectedMonth.slice(0, 4)), Number(selectedMonth.slice(5, 7)), 0).getDate();
+      const rTo = toDate || `${selectedMonth}-${String(lastDay).padStart(2, "0")}`;
+
+      if (rTo < rFrom) { alert("'Until' can't be before 'Applies from'."); setSaving(false); return; }
+
+      // Replace any existing range with the exact same from/to
+      await supabase.from("availability_patterns").delete()
+        .eq("staff_id", staffId).eq("from_date", rFrom).eq("to_date", rTo);
+
       const patternRows = DAYS.map((d) => ({
         staff_id: staffId,
         day_of_week: d.dow,
         status: pattern[d.dow] || "all_day",
         note: patternNote.trim() || null,
         pharmacy_id: PHARMACY_ID,
+        from_date: rFrom,
+        to_date: rTo,
         year_month: selectedMonth,
       }));
       const { error: insError } = await supabase.from("availability_patterns").insert(patternRows);
-      console.log("Insert error:", insError);
+      if (insError) throw insError;
 
-      // Replace overrides
-      await supabase.from("availability_overrides").delete().eq("staff_id", staffId);
-      if (overrides.length) {
-        await supabase.from("availability_overrides").insert(
-          overrides.map((o) => ({
-            staff_id: staffId,
-            override_date: o.override_date,
-            status: o.status,
-            note: o.note || null,
-            pharmacy_id: PHARMACY_ID,
-          }))
-        );
-      }
+      // Reload ranges so the new one shows in the list and the grid resets
+      await loadExisting(staffId, selectedMonth);
+      setEditingRangeKey(null);
       setSaved(true);
-      setTimeout(() => { try { window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); } catch (e) {} }, 50);
+      setTimeout(() => { try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) {} }, 50);
     } catch (err) {
       alert("Couldn't save: " + (err?.message || String(err)));
     } finally {
@@ -313,10 +373,10 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
               </div>
 
               <div className="flex gap-1 mb-4">
-                {[
-                  { key: "availability", label: "📅 Availability" },
-                  { key: "leave", label: "🏖️ Leave" },
-                ].map((tab) => (
+                {(["Permanent", "Salary"].includes(selectedStaff.employment_type)
+                  ? [{ key: "leave", label: "🏖️ Leave" }]
+                  : [{ key: "availability", label: "📅 Availability" }, { key: "leave", label: "🏖️ Leave" }]
+                ).map((tab) => (
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
@@ -330,6 +390,97 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
 
             {activeTab === "availability" && (
             <>
+            {/* Saved availability — ranges + specific dates (single source of truth) */}
+            {(savedRanges.length > 0 || overrides.length > 0) && (
+              <div className="bg-white rounded-2xl shadow-sm border p-5">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Your saved availability</div>
+
+                {/* Saved ranges */}
+                <div className="space-y-2">
+                  {savedRanges.map((r, i) => {
+                    const rangeLabel = r.to_date
+                      ? `${fmtDate(r.from_date)} → ${fmtDate(r.to_date)}`
+                      : `From ${fmtDate(r.from_date)} (ongoing)`;
+                    const limited = DAYS.filter((d) => (r.days[d.dow] || "all_day") !== "all_day")
+                      .map((d) => `${d.label.slice(0, 3)}: ${statusMeta(r.days[d.dow]).label}`);
+                    const isEditing = editingRangeKey === rangeKey(r);
+                    return (
+                      <div key={i} className={`rounded-lg border px-3 py-2 ${isEditing ? "border-blue-300 bg-blue-50/40" : "border-gray-100 bg-gray-50"}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <button onClick={() => handleEditRange(r)} className="flex items-center gap-1.5 text-left min-w-0">
+                            <span className={`text-gray-400 text-xs transition-transform ${isEditing ? "rotate-180" : ""}`}>▾</span>
+                            <span className="text-sm font-medium text-gray-800 truncate">{rangeLabel}</span>
+                          </button>
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => handleEditRange(r)} className="text-xs text-blue-600 hover:underline">{isEditing ? "Close" : "Edit"}</button>
+                            <button onClick={() => handleDeleteRange(r)} className="text-xs text-red-500 hover:text-red-700">Delete</button>
+                          </div>
+                        </div>
+                        {r.note && <div className="text-[11px] text-gray-500 mt-0.5 italic">{r.note}</div>}
+
+                        {/* Inline editor */}
+                        {isEditing && (
+                          <div className="mt-3 pt-3 border-t border-blue-200 space-y-2">
+                            {DAYS.map((d) => (
+                              <div key={d.dow} className="flex items-center gap-2">
+                                <span className="text-xs w-20 shrink-0 text-gray-700">{d.label}</span>
+                                <div className="flex gap-1 flex-1">
+                                  {STATUS_OPTIONS.map((opt) => {
+                                    const active = (pattern[d.dow] || "all_day") === opt.value;
+                                    return (
+                                      <button key={opt.value} onClick={() => setDayStatus(d.dow, opt.value)} title={opt.label}
+                                        className={`flex-1 text-[11px] rounded-lg border py-1.5 ${active ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}>
+                                        {opt.emoji}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[10px] font-medium text-gray-600 mb-1">Applies from</label>
+                                <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-xs" />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-medium text-gray-600 mb-1">Until</label>
+                                <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-xs" />
+                              </div>
+                            </div>
+                            <textarea value={patternNote} onChange={(e) => setPatternNote(e.target.value)} rows={2} placeholder="Note (optional)…" className="w-full border rounded-lg px-3 py-2 text-xs resize-none" />
+                            <button onClick={handleSave} disabled={saving} className="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
+                              {saving ? "Saving…" : "Save changes"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Saved specific dates */}
+                {overrides.length > 0 && (
+                  <div className="mt-3 pt-3 border-t">
+                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Specific dates</div>
+                    <div className="space-y-1.5">
+                      {overrides.map((o) => (
+                        <div key={o.override_date} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                          <span>{statusMeta(o.status).emoji}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm text-gray-700">{fmtDate(o.override_date)} — {statusMeta(o.status).label}</div>
+                            {o.note && <div className="text-xs text-gray-500">{o.note}</div>}
+                          </div>
+                          <button onClick={() => removeOverride(o.override_date)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-gray-400 mt-3">Add another range or specific date below.</p>
+              </div>
+            )}
+
             <div className="bg-white rounded-2xl shadow-sm border p-5">
               <div className="mb-4">
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Month</label>
@@ -353,8 +504,8 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                 <p className="text-[11px] text-gray-400 mt-1">Changing month loads that month's availability. Your current month is not affected.</p>
               </div>
 
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Weekly availability</div>
-              <p className="text-xs text-gray-400 mb-3">Set the days you can't work or are limited for this month.</p>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Add availability</div>
+              <p className="text-xs text-gray-400 mb-3">Set your weekly pattern, optionally limit it to a date range, then save. Add more ranges for periods that differ.</p>
 
               {loading ? (
                 <div className="text-sm text-gray-400">Loading…</div>
@@ -403,29 +554,25 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                 <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional)</label>
                 <textarea value={patternNote} onChange={(e) => setPatternNote(e.target.value)} rows={2} placeholder="Anything Paige should know…" className="w-full border rounded-lg px-3 py-2 text-sm resize-none" />
               </div>
+
+              {/* Save this range — directly under the grid */}
+              {publishedMonths.has(selectedMonth) ? (
+                <div className="mt-4 w-full rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-center text-sm text-amber-700 font-medium">
+                  🔒 This month's roster is published — availability can't be changed.
+                </div>
+              ) : (
+                <button onClick={handleSave} disabled={saving} className="mt-4 w-full bg-blue-600 text-white rounded-xl py-3 text-sm font-medium disabled:opacity-40">
+                  {saving ? "Saving…" : (fromDate || toDate) ? "Save this range" : "Save availability"}
+                </button>
+              )}
             </div>
 
-            {/* Specific dates */}
+            {/* Add a specific date — saves immediately */}
             <div className="bg-white rounded-2xl shadow-sm border p-5">
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Specific dates</div>
-              <p className="text-xs text-gray-400 mb-3">One-off exceptions — a day you can't do, or a normally-off day you can.</p>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Add a specific date</div>
+              <p className="text-xs text-gray-400 mb-3">One-off exception — a day you can't do, or a normally-off day you can. Saves straight away.</p>
 
-              {overrides.length > 0 && (
-                <div className="space-y-1.5 mb-3">
-                  {overrides.map((o) => (
-                    <div key={o.override_date} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                      <span>{statusMeta(o.status).emoji}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm text-gray-700">{fmtDate(o.override_date)} — {statusMeta(o.status).label}</div>
-                        {o.note && <div className="text-xs text-gray-500">{o.note}</div>}
-                      </div>
-                      <button onClick={() => removeOverride(o.override_date)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="space-y-2 border-t pt-3">
+              <div className="space-y-2">
                 <input type="date" value={newOverrideDate} onChange={(e) => setNewOverrideDate(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
                 <div className="flex gap-1">
                   {STATUS_OPTIONS.map((opt) => (
@@ -435,26 +582,15 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                   ))}
                 </div>
                 <input value={newOverrideNote} onChange={(e) => setNewOverrideNote(e.target.value)} placeholder="Note (optional)" className="w-full border rounded-lg px-3 py-2 text-sm" />
-                <button onClick={addOverride} disabled={!newOverrideDate} className="w-full border border-blue-200 text-blue-600 rounded-lg py-2 text-sm font-medium hover:bg-blue-50 disabled:opacity-40">+ Add date</button>
+                <button onClick={addOverride} disabled={!newOverrideDate} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save date</button>
               </div>
             </div>
 
-            {/* Save */}
-            {publishedMonths.has(selectedMonth) ? (
-              <div className="w-full rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-center text-sm text-amber-700 font-medium">
-                🔒 This month's roster is published — availability can't be changed.
-              </div>
-            ) : (
-              <button onClick={handleSave} disabled={saving} className="w-full bg-blue-600 text-white rounded-xl py-3 text-sm font-medium disabled:opacity-40">
-                {saving ? "Saving…" : "Save my availability"}
-              </button>
-            )}
             {saved && (
               <div className="rounded-xl bg-green-50 border border-green-200 px-4 py-4 text-center">
                 <div className="text-2xl mb-1">✅</div>
-                <div className="text-sm font-semibold text-green-700">All done — your availability is saved.</div>
-                <div className="text-xs text-green-600 mt-0.5">Paige can now see it. You can safely close this page.</div>
-                <button onClick={() => setSaved(false)} className="mt-3 text-xs text-green-700 underline">Keep editing</button>
+                <div className="text-sm font-semibold text-green-700">Saved.</div>
+                <button onClick={() => setSaved(false)} className="mt-2 text-xs text-green-700 underline">Dismiss</button>
               </div>
             )}
             </>
