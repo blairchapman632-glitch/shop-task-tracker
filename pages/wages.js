@@ -451,8 +451,9 @@ export default function WagesPage() {
         if (isSick) {
           const sickRecord = sickByShift[sh.id];
           const isCompassionate = sickRecord?.leave_type === "compassionate";
-          // Permanent → hours go to Sick or Compassionate column. Casual → unpaid (zero).
-          if (isPermanent) {
+          const isSalaryStaff = sh.staff_id ? (staffById[sh.staff_id]?.employment_type === "Salary") : false;
+          // Permanent and Salary → hours go to Sick or Compassionate column. Casual → unpaid (zero).
+          if (isPermanent || isSalaryStaff) {
             if (isCompassionate) {
               grouped[key].compassionate = (grouped[key].compassionate || 0) + hrs;
             } else {
@@ -518,7 +519,7 @@ export default function WagesPage() {
         const st = staffById[lr.staff_id];
         if (!st || st.active === false) continue;
         if (st.employment_type === "Casual") continue; // casuals don't accrue paid leave
-        if (st.employment_type === "Salary") continue;  // salary is fixed; leave doesn't change pay
+        // Salary staff: leave doesn't change pay, but we still route hours for balance tracking
 
         const key = `s_${lr.staff_id}`;
         if (!grouped[key]) {
@@ -571,7 +572,11 @@ export default function WagesPage() {
         const isSalary = st?.employment_type === "Salary";
         if (isSalary) {
           const salaryHrs = Number(st?.contracted_hours) || 0;
-          return { ...g, weekday: 0, sat: 0, sun: 0, ph: 0, ot: 0, sick: 0, annual: 0, total: salaryHrs, isSalary: true };
+          const sSick = g.sick || 0;
+          const sComp = g.compassionate || 0;
+          const sAnnual = g.annual || 0;
+          const contracted = Math.max(0, salaryHrs - (sSick + sComp + sAnnual));
+          return { ...g, weekday: 0, sat: 0, sun: 0, ph: 0, ot: 0, sick: sSick, compassionate: sComp, annual: sAnnual, contracted, total: salaryHrs, isSalary: true };
         }
         const sick = g.sick || 0;
         const annual = g.annual || 0;
@@ -598,7 +603,8 @@ export default function WagesPage() {
             staffId: st.id,
             name: st.name,
             role: st.role,
-            weekday: 0, sat: 0, sun: 0, ph: 0, ot: 0, sick: 0, annual: 0,
+            weekday: 0, sat: 0, sun: 0, ph: 0, ot: 0, sick: 0, compassionate: 0, annual: 0,
+            contracted: Number(st.contracted_hours) || 0,
             total: Number(st.contracted_hours) || 0,
             shifts: [],
             isSalary: true,
@@ -628,18 +634,33 @@ export default function WagesPage() {
       const XLSX = await import("xlsx");
       const startISO = toISO(period.start);
       const endISO = toISO(period.end);
-      const data = rows.map((r) => ({
-        Name: r.name,
-        "Weekday hrs": Number(r.weekday.toFixed(2)),
-        "Saturday hrs": Number(r.sat.toFixed(2)),
-        "Sunday hrs": Number(r.sun.toFixed(2)),
-        "PH hrs": Number(r.ph.toFixed(2)),
-        "Sick hrs": Number(r.sick.toFixed(2)),
-        "Compassionate hrs": Number((r.compassionate || 0).toFixed(2)),
-        "Annual Leave hrs": Number(r.annual.toFixed(2)),
-        "OT hrs": Number(r.ot.toFixed(2)),
-        "Total hrs": Number(r.total.toFixed(2)),
-      }));
+      const data = rows.map((r) => {
+        const sick = Number((r.sick || 0).toFixed(2));
+        const comp = Number((r.compassionate || 0).toFixed(2));
+        const annual = Number((r.annual || 0).toFixed(2));
+        let leaveNote = "";
+        if (r.isSalary) {
+          const parts = [];
+          if (sick) parts.push(`${sick} sick`);
+          if (comp) parts.push(`${comp} comp`);
+          if (annual) parts.push(`${annual} annual`);
+          if (parts.length) leaveNote = "incl. " + parts.join(", ");
+        }
+        return {
+          Name: r.name,
+          "Contracted hrs": Number((r.isSalary ? (r.contracted || 0) : 0).toFixed(2)),
+          "Weekday hrs": Number(r.weekday.toFixed(2)),
+          "Saturday hrs": Number(r.sat.toFixed(2)),
+          "Sunday hrs": Number(r.sun.toFixed(2)),
+          "PH hrs": Number(r.ph.toFixed(2)),
+          "Sick hrs": sick,
+          "Compassionate hrs": comp,
+          "Annual Leave hrs": annual,
+          "OT hrs": Number(r.ot.toFixed(2)),
+          "Total hrs": Number(r.total.toFixed(2)),
+          "Leave note": leaveNote,
+        };
+      });
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Wages");

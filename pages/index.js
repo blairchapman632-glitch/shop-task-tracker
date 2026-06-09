@@ -832,17 +832,20 @@ export default function HomePage() {
         // Only relevant up to the deadline
         if (todayISO > deadlineISO) { setApprovalReminderIds(new Set()); return; }
 
-        const [{ data: periodShifts }, { data: appr }] = await Promise.all([
+        const [{ data: periodShifts }, { data: appr }, { data: staffTypes }] = await Promise.all([
           supabase.from("roster_shifts").select("staff_id, shift_date").gte("shift_date", periodStartISO).lte("shift_date", periodEndISO).not("staff_id", "is", null),
           supabase.from("wage_approvals").select("staff_id").eq("pharmacy_id", currentPharmacyId).eq("period_start", periodStartISO),
+          supabase.from("staff").select("id, employment_type").eq("pharmacy_id", currentPharmacyId),
         ]);
 
         const approvedIds = new Set((appr || []).map((a) => a.staff_id));
+        const salaryIds = new Set((staffTypes || []).filter((s) => s.employment_type === "Salary").map((s) => s.id));
 
-        // Per staff: latest shift date that is <= deadline
+        // Per staff: latest shift date that is <= deadline (salary staff don't confirm hours)
         const lastShiftBeforeDeadline = {};
         for (const sh of periodShifts || []) {
           if (sh.shift_date > deadlineISO) continue;
+          if (salaryIds.has(sh.staff_id)) continue;
           const sid = sh.staff_id;
           if (!lastShiftBeforeDeadline[sid] || sh.shift_date > lastShiftBeforeDeadline[sid]) {
             lastShiftBeforeDeadline[sid] = sh.shift_date;
