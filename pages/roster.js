@@ -2153,7 +2153,7 @@ const handleLeaveDecision = async (lr, decision) => {
 
                     {/* Manager note */}
                     <div className="border-t pt-3">
-                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Paige's note <span className="text-gray-400 font-normal">— {monthLabel}</span></div>
+                      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Manager note <span className="text-gray-400 font-normal">— {monthLabel}</span></div>
                       <textarea
                         value={availManagerNote}
                         onChange={(e) => setAvailManagerNote(e.target.value)}

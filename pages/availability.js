@@ -552,7 +552,7 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
 
               <div className="mt-3">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional)</label>
-                <textarea value={patternNote} onChange={(e) => setPatternNote(e.target.value)} rows={2} placeholder="Anything Paige should know…" className="w-full border rounded-lg px-3 py-2 text-sm resize-none" />
+                <textarea value={patternNote} onChange={(e) => setPatternNote(e.target.value)} rows={2} placeholder="Anything the roster manager should know…" className="w-full border rounded-lg px-3 py-2 text-sm resize-none" />
               </div>
 
               {/* Save this range — directly under the grid */}
@@ -651,7 +651,7 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                 </button>
                 {leaveSaved && (
                   <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-center text-sm text-green-700 font-medium">
-                    ✅ Request submitted — Paige will review it.
+                    ✅ Request submitted for review.
                   </div>
                 )}
               </div>
