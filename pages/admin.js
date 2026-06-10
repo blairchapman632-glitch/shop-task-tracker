@@ -460,6 +460,26 @@ function StaffForm({ member, onSave, onCancel }) {
           ))}
         </div>
 
+        {/* Personal link — active existing staff only */}
+        {!isNew && form.active && member?.staff_token && (
+          <div className="border rounded-lg p-3 bg-blue-50 border-blue-100">
+            <div className="text-xs font-semibold text-blue-700 mb-1">🔗 Personal Link</div>
+            <div className="text-[11px] text-blue-600 break-all mb-2">
+              {typeof window !== "undefined" ? `${window.location.origin}/me?token=${member.staff_token}` : ""}
+            </div>
+            <button
+              onClick={() => {
+                const url = `${window.location.origin}/me?token=${member.staff_token}`;
+                navigator.clipboard.writeText(url);
+                alert("Link copied to clipboard!");
+              }}
+              className="text-[11px] px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Copy link
+            </button>
+          </div>
+        )}
+
         {/* Sick days — existing staff only */}
         {!isNew && (
           <div className="border-t pt-4">
