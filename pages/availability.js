@@ -247,6 +247,7 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
         end_time: partial ? leaveEnd : null,
         note: leaveNote.trim() || null,
         status: "pending",
+        staff_seen_status: "pending",
       }]);
       if (error) throw error;
       await loadMyLeave(selectedStaff.id);

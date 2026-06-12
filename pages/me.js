@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -334,7 +334,7 @@ function TimeOffTab({ staff }) {
         all_day: isMultiDay ? true : leaveAllDay,
         start_time: partial ? leaveStart : null,
         end_time: partial ? leaveEnd : null,
-        note: leaveNote.trim() || null, status: "pending",
+        note: leaveNote.trim() || null, status: "pending", staff_seen_status: "pending",
       }]);
       if (error) throw error;
       await loadMyLeave();
@@ -652,6 +652,249 @@ function TimeOffTab({ staff }) {
   );
 }
 
+const meFmtWhen = (d) =>
+  new Date(d).toLocaleString("en-AU", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+function MessagesTab({ staff }) {
+  const [staffList, setStaffList] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeStaffId, setActiveStaffId] = useState(null);
+  const [composeText, setComposeText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+  const threadEndRef = useRef(null);
+
+  const me = staff;
+
+  useEffect(() => {
+    supabase.from("staff").select("id, name, photo_url, role").eq("pharmacy_id", PHARMACY_ID).eq("active", true).order("name")
+      .then(({ data }) => setStaffList(data || []));
+    loadMessages();
+  }, [staff.id]);
+
+  const loadMessages = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("messages")
+      .select("*")
+      .or(`recipient_staff_id.eq.${me.id},sender_staff_id.eq.${me.id}`)
+      .order("created_at", { ascending: true });
+    const visible = (data || []).filter((m) => {
+      if (m.recipient_staff_id === me.id && m.deleted_by_recipient) return false;
+      if (m.sender_staff_id === me.id && m.deleted_by_sender) return false;
+      return true;
+    });
+    setMessages(visible);
+    setLoading(false);
+  };
+
+  const markThreadRead = async (otherId) => {
+    const unreadIds = messages
+      .filter((m) => m.recipient_staff_id === me.id && m.sender_staff_id === otherId && !m.read_at)
+      .map((m) => m.id);
+    if (!unreadIds.length) return;
+    await supabase.from("messages").update({ read_at: new Date().toISOString() }).in("id", unreadIds);
+    setMessages((prev) => prev.map((m) => unreadIds.includes(m.id) ? { ...m, read_at: new Date().toISOString() } : m));
+  };
+
+  const openThread = (otherId) => { setActiveStaffId(otherId); markThreadRead(otherId); };
+
+  const sendMessage = async () => {
+    const body = composeText.trim();
+    if (!body || !activeStaffId) return;
+    setSending(true);
+    try {
+      const { data, error } = await supabase.from("messages").insert({
+        pharmacy_id: PHARMACY_ID, sender_staff_id: me.id, recipient_staff_id: activeStaffId, type: "dm", body,
+      }).select("*").single();
+      if (error) throw error;
+      setMessages((prev) => [...prev, data]);
+      setComposeText("");
+    } catch (err) {
+      alert("Couldn't send: " + (err?.message || String(err)));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleImagePick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !activeStaffId) return;
+    if (!file.type.startsWith("image/")) { alert("Please choose an image."); return; }
+    setUploading(true);
+    try {
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `${me.id}/${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("message-images").upload(path, file, { upsert: false });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("message-images").getPublicUrl(path);
+      const { data, error } = await supabase.from("messages").insert({
+        pharmacy_id: PHARMACY_ID, sender_staff_id: me.id, recipient_staff_id: activeStaffId, type: "dm", body: null, image_url: pub.publicUrl,
+      }).select("*").single();
+      if (error) throw error;
+      setMessages((prev) => [...prev, data]);
+    } catch (err) {
+      alert("Couldn't send image: " + (err?.message || String(err)));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeStaffId && threadEndRef.current) threadEndRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [activeStaffId, messages]);
+
+  const staffById = Object.fromEntries(staffList.map((s) => [s.id, s]));
+
+  const conversations = (() => {
+    const byOther = {};
+    for (const m of messages) {
+      const otherId = m.sender_staff_id === me.id ? m.recipient_staff_id : m.sender_staff_id;
+      if (!otherId) continue;
+      if (!byOther[otherId]) byOther[otherId] = { otherId, last: m, unread: 0 };
+      if (new Date(m.created_at) >= new Date(byOther[otherId].last.created_at)) byOther[otherId].last = m;
+      if (m.recipient_staff_id === me.id && !m.read_at) byOther[otherId].unread += 1;
+    }
+    return Object.values(byOther).sort((a, b) => new Date(b.last.created_at) - new Date(a.last.created_at));
+  })();
+
+  const systemNotes = messages.filter((m) => m.type === "system" && m.recipient_staff_id === me.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  const activeThread = activeStaffId
+    ? messages.filter((m) =>
+        (m.sender_staff_id === activeStaffId && m.recipient_staff_id === me.id) ||
+        (m.sender_staff_id === me.id && m.recipient_staff_id === activeStaffId)
+      ).sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    : [];
+
+  return (
+    <div className="max-w-lg mx-auto space-y-4">
+      {/* Top bar */}
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-gray-700">{activeStaffId ? staffById[activeStaffId]?.name || "Conversation" : "Messages"}</div>
+        {!activeStaffId ? (
+          <button onClick={() => setShowNewChat((v) => !v)} className="text-sm bg-blue-600 text-white rounded-lg px-3 py-1.5 font-medium">✏️ New</button>
+        ) : (
+          <button onClick={() => setActiveStaffId(null)} className="text-sm text-blue-600 hover:underline">← Inbox</button>
+        )}
+      </div>
+
+      {/* New chat picker */}
+      {!activeStaffId && showNewChat && (
+        <div className="bg-white rounded-2xl shadow-sm border p-4">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Message someone</div>
+          <div className="space-y-1 max-h-[40vh] overflow-y-auto">
+            {staffList.filter((s) => s.id !== me.id).map((s) => (
+              <button key={s.id} onClick={() => { setShowNewChat(false); openThread(s.id); }} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-left">
+                <img src={s.photo_url || "/placeholder.png"} alt={s.name} className="w-8 h-8 rounded-full object-cover" />
+                <span className="text-sm font-medium text-gray-800">{s.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Inbox */}
+      {!activeStaffId && !showNewChat && (
+        <>
+          {systemNotes.length > 0 && (
+            <div className="bg-white rounded-2xl shadow-sm border p-4">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">🔔 Notifications</div>
+              <div className="space-y-2">
+                {systemNotes.map((n) => (
+                  <div key={n.id} className={`rounded-lg border px-3 py-2 ${n.read_at ? "border-gray-100 bg-gray-50" : "border-blue-200 bg-blue-50"}`}>
+                    <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">{n.body}</div>
+                    <div className="text-[11px] text-gray-400 mt-0.5">{meFmtWhen(n.created_at)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl shadow-sm border p-4">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Conversations</div>
+            {loading ? (
+              <div className="text-sm text-gray-400">Loading…</div>
+            ) : conversations.length === 0 ? (
+              <p className="text-sm text-gray-400">No messages yet. Tap “New” to message someone.</p>
+            ) : (
+              <div className="space-y-1">
+                {conversations.map((c) => {
+                  const other = staffById[c.otherId];
+                  const preview = c.last.body || (c.last.image_url ? "📷 Photo" : "");
+                  return (
+                    <button key={c.otherId} onClick={() => openThread(c.otherId)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 text-left">
+                      <img src={other?.photo_url || "/placeholder.png"} alt={other?.name} className="w-10 h-10 rounded-full object-cover" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-gray-800 truncate">{other?.name || "Unknown"}</span>
+                          <span className="text-[11px] text-gray-400 shrink-0">{meFmtWhen(c.last.created_at)}</span>
+                        </div>
+                        <div className="text-xs text-gray-500 truncate">{c.last.sender_staff_id === me.id ? "You: " : ""}{preview}</div>
+                      </div>
+                      {c.unread > 0 && <span className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] font-semibold">{c.unread}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Thread */}
+      {activeStaffId && (
+        <div className="bg-white rounded-2xl shadow-sm border flex flex-col" style={{ height: "65vh" }}>
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+            {activeThread.length === 0 && <p className="text-sm text-gray-400 text-center mt-4">No messages yet. Say hello 👋</p>}
+            {activeThread.map((m) => {
+              const mine = m.sender_staff_id === me.id;
+              return (
+                <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[75%] rounded-2xl px-3 py-2 ${mine ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-800"}`}>
+                    {m.image_url && (
+                      <a href={m.image_url} target="_blank" rel="noopener noreferrer">
+                        <img src={m.image_url} alt="" className="rounded-lg max-w-full max-h-64 object-cover mb-1" />
+                      </a>
+                    )}
+                    {m.body && <div className="text-sm whitespace-pre-wrap break-words">{m.body}</div>}
+                    <div className={`text-[10px] mt-0.5 ${mine ? "text-blue-100" : "text-gray-400"}`}>
+                      {meFmtWhen(m.created_at)}{mine && m.read_at ? " · Seen" : ""}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            <div ref={threadEndRef} />
+          </div>
+
+          <div className="flex gap-2 px-3 py-3 border-t shrink-0 items-end">
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImagePick} className="hidden" />
+            <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="rounded-lg px-3 py-2 text-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40" title="Send photo">
+              {uploading ? "…" : "📷"}
+            </button>
+            <textarea
+              value={composeText}
+              onChange={(e) => setComposeText(e.target.value)}
+              rows={1}
+              placeholder="Message…"
+              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+            />
+            <button onClick={sendMessage} disabled={!composeText.trim() || sending} className="rounded-lg px-4 py-2 text-sm font-medium bg-blue-600 text-white disabled:opacity-40">
+              {sending ? "…" : "Send"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RosterTab({ staff }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -800,6 +1043,56 @@ export default function MePage() {
   const [checking, setChecking] = useState(false);
 
   const [tab, setTab] = useState("shifts");
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [leaveUpdate, setLeaveUpdate] = useState(false);
+
+  // Unread message count for the tab badge (count only)
+  useEffect(() => {
+    if (!staff?.id) return;
+    supabase
+      .from("messages")
+      .select("id")
+      .eq("recipient_staff_id", staff.id)
+      .is("read_at", null)
+      .eq("deleted_by_recipient", false)
+      .then(({ data }) => setUnreadCount((data || []).length));
+  }, [staff?.id, tab]);
+
+  // Leave status update indicator for the Time off tab
+  useEffect(() => {
+    if (!staff?.id) return;
+    supabase
+      .from("leave_requests")
+      .select("status, staff_seen_status")
+      .eq("staff_id", staff.id)
+      .neq("status", "pending")
+      .then(({ data }) => {
+        const hasUpdate = (data || []).some((lr) => lr.status !== lr.staff_seen_status);
+        setLeaveUpdate(hasUpdate);
+      });
+  }, [staff?.id, tab]);
+
+  // When the Time off tab is opened, mark this staff member's requests as seen
+  useEffect(() => {
+    if (!staff?.id || tab !== "timeoff") return;
+    const markSeen = async () => {
+      try {
+        const { data } = await supabase
+          .from("leave_requests")
+          .select("id, status, staff_seen_status")
+          .eq("staff_id", staff.id)
+          .neq("status", "pending");
+        const toUpdate = (data || []).filter((lr) => lr.status !== lr.staff_seen_status);
+        for (const lr of toUpdate) {
+          await supabase.from("leave_requests").update({ staff_seen_status: lr.status }).eq("id", lr.id);
+        }
+        if (toUpdate.length) setLeaveUpdate(false);
+      } catch (err) {
+        console.error("Mark leave seen failed:", err);
+      }
+    };
+    markSeen();
+  }, [staff?.id, tab]);
 
   // Look up staff by token
   useEffect(() => {
@@ -926,11 +1219,21 @@ export default function MePage() {
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`flex-1 min-w-[72px] py-2.5 text-xs font-medium flex flex-col items-center gap-0.5 ${
+            className={`relative flex-1 min-w-[72px] py-2.5 text-xs font-medium flex flex-col items-center gap-0.5 ${
               tab === t.key ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400"
             }`}
           >
-            <span className="text-base">{t.icon}</span>
+            <span className="relative text-base">
+              {t.icon}
+              {t.key === "messages" && unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none">
+                  {unreadCount}
+                </span>
+              )}
+              {t.key === "timeoff" && leaveUpdate && (
+                <span className="absolute -top-1.5 -right-2 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" title="Leave request update" />
+              )}
+            </span>
             {t.label}
           </button>
         ))}
@@ -944,6 +1247,8 @@ export default function MePage() {
           <RosterTab staff={staff} />
         ) : tab === "timeoff" ? (
           <TimeOffTab staff={staff} />
+        ) : tab === "messages" ? (
+          <MessagesTab staff={staff} />
         ) : (
           <div className="text-sm text-gray-400 text-center mt-10">
             {TABS.find((t) => t.key === tab)?.label} tab — coming next.

@@ -285,7 +285,8 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       </button>
       <NavLink href="/insights" icon="📊" label="Insights" />
       <NavLink href="/wages" icon="💰" label="Wages" />
-      <NavLink href="/availability" icon="🗓️" label="Requests" />
+      <NavLink href="/availability" icon="🗓️" label="Time off" />
+      <NavLink href="/messages" icon="💬" label="Messages" />
       <div className="border-t my-1" />
       <NavLink href="/roster" icon="📅" label="Roster" />
       <NavLink href="/tasks" icon="✅" label="Tasks" />
@@ -611,6 +612,8 @@ export default function HomePage() {
   const [completingSection, setCompletingSection] = useState(null);
   const [todayRosteredIds, setTodayRosteredIds] = useState(new Set());
   const [approvalReminderIds, setApprovalReminderIds] = useState(new Set());
+  const [unreadByStaff, setUnreadByStaff] = useState({}); // staffId -> unread message count
+  const [leaveUpdateIds, setLeaveUpdateIds] = useState(new Set()); // staff with unseen leave status changes
 
   // ── Leaderboard ──
   const [leadersWeek, setLeadersWeek] = useState([]);
@@ -865,6 +868,51 @@ export default function HomePage() {
       }
     };
     loadReminders();
+  }, [authChecked, currentPharmacyId]);
+
+  // ── Unread message counts (per staff, count only — no message content) ──
+  useEffect(() => {
+    if (!authChecked || !currentPharmacyId) return;
+    const loadUnread = async () => {
+      try {
+        const { data } = await supabase
+          .from("messages")
+          .select("recipient_staff_id")
+          .eq("pharmacy_id", currentPharmacyId)
+          .is("read_at", null)
+          .eq("deleted_by_recipient", false);
+        const counts = {};
+        for (const m of data || []) {
+          counts[m.recipient_staff_id] = (counts[m.recipient_staff_id] || 0) + 1;
+        }
+        setUnreadByStaff(counts);
+      } catch (err) {
+        console.error("Unread counts load failed:", err);
+      }
+    };
+    loadUnread();
+  }, [authChecked, currentPharmacyId]);
+
+  // ── Leave request status updates (status changed, not yet seen by staff) ──
+  useEffect(() => {
+    if (!authChecked || !currentPharmacyId) return;
+    const loadLeaveUpdates = async () => {
+      try {
+        const { data } = await supabase
+          .from("leave_requests")
+          .select("staff_id, status, staff_seen_status")
+          .eq("pharmacy_id", currentPharmacyId)
+          .neq("status", "pending");
+        const ids = new Set();
+        for (const lr of data || []) {
+          if (lr.status !== lr.staff_seen_status) ids.add(lr.staff_id);
+        }
+        setLeaveUpdateIds(ids);
+      } catch (err) {
+        console.error("Leave update load failed:", err);
+      }
+    };
+    loadLeaveUpdates();
   }, [authChecked, currentPharmacyId]);
 
   // ── Leaderboard ──
@@ -1524,6 +1572,14 @@ export default function HomePage() {
                   >
                     {approvalReminderIds.has(s.id) && (
                       <span className="absolute -top-1 -right-1 z-10 text-base" title="Approve your timesheet">⚠️</span>
+                    )}
+                    {unreadByStaff[s.id] > 0 && (
+                      <span className="absolute -top-1 -left-1 z-10 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] font-semibold ring-2 ring-white" title="Unread messages">
+                        {unreadByStaff[s.id]}
+                      </span>
+                    )}
+                    {leaveUpdateIds.has(s.id) && (
+                      <span className="absolute -bottom-1 -right-1 z-10 text-base" title="Leave request update">🗓️</span>
                     )}
                     <img
                       src={s.photo_url || "/placeholder.png"}
