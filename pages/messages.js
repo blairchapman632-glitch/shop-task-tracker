@@ -59,7 +59,7 @@ export default function MessagesPage() {
   // Load active staff
   useEffect(() => {
     supabase.from("staff").select("id, name, photo_url, pin, role").eq("pharmacy_id", PHARMACY_ID).eq("active", true).order("name")
-      .then(({ data }) => setStaffList(data || []));
+      .then(({ data }) => setStaffList((data || []).filter((s) => s.role !== "Locum")));
   }, []);
 
   const handleSelectStaff = (s) => {

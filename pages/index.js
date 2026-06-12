@@ -1631,7 +1631,7 @@ export default function HomePage() {
                   className="mt-1 block w-full max-w-xs border rounded-lg px-3 py-2 text-sm"
                 >
                   <option value="">Select your name…</option>
-                  {staff.map((s) => (
+                  {staff.filter((s) => s.role !== "Locum").map((s) => (
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
                 </select>
