@@ -1047,37 +1047,44 @@ function LoginScreen({ onLoggedIn }) {
     return true;
   };
 
-  const handleLogin = async () => {
+  // One flow: try to log in; if no account yet, create it (email must be on file).
+  const handleContinue = async () => {
     if (!email.trim() || !password) { setErr("Enter your email and password."); return; }
-    setBusy(true); setErr("");
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim(), password,
-    });
-    if (error) { setErr(error.message); setBusy(false); return; }
-    await linkAndFinish(data.user.email);
-    setBusy(false);
-  };
-
-  const handleSignup = async () => {
-    if (!email.trim() || !password) { setErr("Enter your email and a password."); return; }
     if (password.length < 6) { setErr("Password must be at least 6 characters."); return; }
     setBusy(true); setErr("");
-    // Must match a staff email we have on file
+
+    // Try logging in first.
+    const login = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    if (!login.error) {
+      await linkAndFinish(login.data.user.email);
+      setBusy(false);
+      return;
+    }
+
+    // Login failed. If it's because the account doesn't exist, create it.
+    const msg = (login.error.message || "").toLowerCase();
+    const noAccount = msg.includes("invalid login credentials");
+    if (!noAccount) { setErr(login.error.message); setBusy(false); return; }
+
+    // Account may not exist yet — confirm email is on file, then sign up.
     const { data: staffRow } = await supabase
       .from("staff").select("id, active").ilike("email", email.trim()).maybeSingle();
     if (!staffRow) { setErr("That email isn't on file. Ask your manager to add it first."); setBusy(false); return; }
     if (staffRow.active === false) { setErr("This account is no longer active."); setBusy(false); return; }
 
-    const { data, error } = await supabase.auth.signUp({
-      email: email.trim(), password,
-    });
-    if (error) { setErr(error.message); setBusy(false); return; }
-    // Confirmation is off, so a session exists immediately.
-    if (data.session) {
-      await linkAndFinish(data.user.email);
+    const signup = await supabase.auth.signUp({ email: email.trim(), password });
+    if (signup.error) {
+      // If it already existed, the password was just wrong.
+      const smsg = (signup.error.message || "").toLowerCase();
+      if (smsg.includes("already registered")) setErr("Incorrect password.");
+      else setErr(signup.error.message);
+      setBusy(false);
+      return;
+    }
+    if (signup.data.session) {
+      await linkAndFinish(signup.data.user.email);
     } else {
-      setErr("Account created. Please log in.");
-      setMode("login");
+      setErr("Account created. Please enter your password again to log in.");
     }
     setBusy(false);
   };
@@ -1087,10 +1094,8 @@ function LoginScreen({ onLoggedIn }) {
       <div className="bg-white rounded-2xl shadow-sm border p-8 w-full max-w-sm">
         <div className="text-center mb-6">
           <img src="/icons/icon-192.png" alt="" className="w-14 h-14 rounded-xl mx-auto mb-3" />
-          <h1 className="text-lg font-bold text-gray-800">{mode === "login" ? "Log in" : "Set up your account"}</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            {mode === "login" ? "Welcome back." : "Use the email your manager has on file."}
-          </p>
+          <h1 className="text-lg font-bold text-gray-800">Byford Pharmacy</h1>
+          <p className="text-sm text-gray-500 mt-1">Log in with your work email.</p>
         </div>
 
         <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
@@ -1113,19 +1118,16 @@ function LoginScreen({ onLoggedIn }) {
         {err && <p className="text-sm text-red-500 mb-3">{err}</p>}
 
         <button
-          onClick={mode === "login" ? handleLogin : handleSignup}
+          onClick={handleContinue}
           disabled={busy}
           className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium disabled:opacity-40"
         >
-          {busy ? "Please wait…" : mode === "login" ? "Log in" : "Create account"}
+          {busy ? "Please wait…" : "Continue"}
         </button>
 
-        <button
-          onClick={() => { setMode(mode === "login" ? "signup" : "login"); setErr(""); }}
-          className="w-full text-center text-xs text-blue-600 mt-4 hover:underline"
-        >
-          {mode === "login" ? "First time? Set up your account" : "Already set up? Log in"}
-        </button>
+        <p className="text-center text-[11px] text-gray-400 mt-4">
+          First time logging in? Just enter your work email and choose a password.
+        </p>
       </div>
     </div>
   );
