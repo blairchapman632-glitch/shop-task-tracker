@@ -1036,6 +1036,52 @@ export default function MePage() {
   const [staff, setStaff] = useState(null);
   const [error, setError] = useState("");
 
+  // ── PWA install banner ──
+  const [installEvent, setInstallEvent] = useState(null); // Android/Chrome prompt
+  const [showIosHint, setShowIosHint] = useState(false);   // iOS instructions
+  const [installDismissed, setInstallDismissed] = useState(false);
+
+  useEffect(() => {
+    // Already installed / running as app → never show the banner
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true;
+    if (standalone) return;
+    if (sessionStorage.getItem("cb_install_dismissed") === "1") {
+      setInstallDismissed(true);
+      return;
+    }
+
+    // Android/Chrome: capture the install prompt for a custom button
+    const onPrompt = (e) => {
+      e.preventDefault();
+      setInstallEvent(e);
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+
+    // iOS Safari: no prompt event exists — detect and show manual hint
+    const ua = window.navigator.userAgent.toLowerCase();
+    const isIos = /iphone|ipad|ipod/.test(ua);
+    const isSafari = /safari/.test(ua) && !/crios|fxios|edgios/.test(ua);
+    if (isIos && isSafari) setShowIosHint(true);
+
+    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installEvent) return;
+    installEvent.prompt();
+    await installEvent.userChoice;
+    setInstallEvent(null);
+  };
+
+  const dismissInstall = () => {
+    sessionStorage.setItem("cb_install_dismissed", "1");
+    setInstallDismissed(true);
+    setInstallEvent(null);
+    setShowIosHint(false);
+  };
+
   // PIN gate
   const [unlocked, setUnlocked] = useState(false);
   const [pin, setPin] = useState("");
@@ -1212,6 +1258,39 @@ export default function MePage() {
           <div className="text-xs text-gray-400 truncate">{staff.role || ""}</div>
         </div>
       </header>
+
+      {/* Install app banner */}
+      {!installDismissed && (installEvent || showIosHint) && (
+        <div className="bg-[#12282c] text-white px-4 py-3 flex items-start gap-3">
+          <img src="/icons/icon-192.png" alt="" className="w-9 h-9 rounded-lg shrink-0" />
+          <div className="min-w-0 flex-1">
+            {installEvent ? (
+              <>
+                <div className="text-sm font-semibold">Add Chalkboard to your phone</div>
+                <div className="text-xs text-gray-300">Open it like an app, straight from your home screen.</div>
+                <div className="mt-2 flex gap-2">
+                  <button onClick={handleInstallClick} className="bg-white text-[#12282c] rounded-lg px-3 py-1.5 text-xs font-semibold">
+                    Install
+                  </button>
+                  <button onClick={dismissInstall} className="text-gray-300 text-xs px-2">
+                    Not now
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-semibold">Add Chalkboard to your phone</div>
+                <div className="text-xs text-gray-300 mt-0.5">
+                  Tap the Share button <span className="inline-block">⬆️</span> below, then choose <span className="font-medium">“Add to Home Screen”</span>.
+                </div>
+                <button onClick={dismissInstall} className="mt-2 text-gray-300 text-xs underline">
+                  Got it
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Tab bar */}
       <nav className="bg-white border-b flex overflow-x-auto sticky top-[57px] z-10">
