@@ -1143,7 +1143,14 @@ export default function MePage() {
   // Look up staff by token
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const t = params.get("token");
+    // Token comes from the URL on first visit; remember it so the installed
+    // app (which launches at /me with no token) can still identify the staff member.
+    let t = params.get("token");
+    if (t) {
+      try { localStorage.setItem("cb_me_token", t); } catch (e) {}
+    } else {
+      try { t = localStorage.getItem("cb_me_token"); } catch (e) {}
+    }
     if (!t) { setError("no_token"); setLoading(false); return; }
     setToken(t);
     supabase
