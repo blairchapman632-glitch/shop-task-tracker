@@ -1351,7 +1351,10 @@ export default function MePage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
-      <header className="bg-white border-b px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
+      <header
+        className="bg-white border-b px-4 py-3 flex items-center gap-3 sticky top-0 z-10"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+      >
         <img
           src={staff.photo_url || "/placeholder.png"}
           alt={staff.name}
@@ -1396,34 +1399,10 @@ export default function MePage() {
         </div>
       )}
 
-      {/* Tab bar */}
-      <nav className="bg-white border-b flex overflow-x-auto sticky top-[57px] z-10">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`relative flex-1 min-w-[72px] py-2.5 text-xs font-medium flex flex-col items-center gap-0.5 ${
-              tab === t.key ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400"
-            }`}
-          >
-            <span className="relative text-base">
-              {t.icon}
-              {t.key === "messages" && unreadCount > 0 && (
-                <span className="absolute -top-1.5 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none">
-                  {unreadCount}
-                </span>
-              )}
-              {t.key === "timeoff" && leaveUpdate && (
-                <span className="absolute -top-1.5 -right-2 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" title="Leave request update" />
-              )}
-            </span>
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      
 
       {/* Content */}
-      <main className="flex-1 p-4">
+      <main className="flex-1 p-4" style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}>
         {tab === "shifts" ? (
           <ShiftsTab staff={staff} />
         ) : tab === "roster" ? (
@@ -1438,6 +1417,35 @@ export default function MePage() {
           </div>
         )}
       </main>
+
+      {/* Bottom tab bar */}
+      <nav
+        className="bg-white border-t flex fixed bottom-0 left-0 right-0 z-20"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`relative flex-1 py-2 text-[11px] font-medium flex flex-col items-center gap-0.5 ${
+              tab === t.key ? "text-blue-600" : "text-gray-400"
+            }`}
+          >
+            <span className="relative text-xl">
+              {t.icon}
+              {t.key === "messages" && unreadCount > 0 && (
+                <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none">
+                  {unreadCount}
+                </span>
+              )}
+              {t.key === "timeoff" && leaveUpdate && (
+                <span className="absolute -top-1 -right-2 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" title="Leave request update" />
+              )}
+            </span>
+            {t.label}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
