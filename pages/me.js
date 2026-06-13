@@ -1030,6 +1030,107 @@ function RosterTab({ staff }) {
   );
 }
 
+function LoginScreen({ onLoggedIn }) {
+  const [mode, setMode] = useState("login"); // "login" | "signup"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Match the authenticated email to a staff row and hand it back up.
+  const linkAndFinish = async (authEmail) => {
+    const { data, error } = await supabase
+      .from("staff").select("*").ilike("email", authEmail).maybeSingle();
+    if (error || !data) { setErr("No staff record found for this email. Ask your manager to add it."); return false; }
+    if (data.active === false) { setErr("This account is no longer active."); return false; }
+    onLoggedIn(data);
+    return true;
+  };
+
+  const handleLogin = async () => {
+    if (!email.trim() || !password) { setErr("Enter your email and password."); return; }
+    setBusy(true); setErr("");
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(), password,
+    });
+    if (error) { setErr(error.message); setBusy(false); return; }
+    await linkAndFinish(data.user.email);
+    setBusy(false);
+  };
+
+  const handleSignup = async () => {
+    if (!email.trim() || !password) { setErr("Enter your email and a password."); return; }
+    if (password.length < 6) { setErr("Password must be at least 6 characters."); return; }
+    setBusy(true); setErr("");
+    // Must match a staff email we have on file
+    const { data: staffRow } = await supabase
+      .from("staff").select("id, active").ilike("email", email.trim()).maybeSingle();
+    if (!staffRow) { setErr("That email isn't on file. Ask your manager to add it first."); setBusy(false); return; }
+    if (staffRow.active === false) { setErr("This account is no longer active."); setBusy(false); return; }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(), password,
+    });
+    if (error) { setErr(error.message); setBusy(false); return; }
+    // Confirmation is off, so a session exists immediately.
+    if (data.session) {
+      await linkAndFinish(data.user.email);
+    } else {
+      setErr("Account created. Please log in.");
+      setMode("login");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="flex h-screen items-center justify-center bg-gray-50 px-6">
+      <div className="bg-white rounded-2xl shadow-sm border p-8 w-full max-w-sm">
+        <div className="text-center mb-6">
+          <img src="/icons/icon-192.png" alt="" className="w-14 h-14 rounded-xl mx-auto mb-3" />
+          <h1 className="text-lg font-bold text-gray-800">{mode === "login" ? "Log in" : "Set up your account"}</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {mode === "login" ? "Welcome back." : "Use the email your manager has on file."}
+          </p>
+        </div>
+
+        <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+        <input
+          type="email" autoComplete="email" value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full border rounded-lg px-3 py-2.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          placeholder="email@example.com"
+        />
+
+        <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
+        <input
+          type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && (mode === "login" ? handleLogin() : handleSignup())}
+          className="w-full border rounded-lg px-3 py-2.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          placeholder="••••••••"
+        />
+
+        {err && <p className="text-sm text-red-500 mb-3">{err}</p>}
+
+        <button
+          onClick={mode === "login" ? handleLogin : handleSignup}
+          disabled={busy}
+          className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium disabled:opacity-40"
+        >
+          {busy ? "Please wait…" : mode === "login" ? "Log in" : "Create account"}
+        </button>
+
+        <button
+          onClick={() => { setMode(mode === "login" ? "signup" : "login"); setErr(""); }}
+          className="w-full text-center text-xs text-blue-600 mt-4 hover:underline"
+        >
+          {mode === "login" ? "First time? Set up your account" : "Already set up? Log in"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MePage() {
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(null);
@@ -1140,31 +1241,55 @@ export default function MePage() {
     markSeen();
   }, [staff?.id, tab]);
 
-  // Look up staff by token
+  // Identity resolution: Auth session first, then legacy ?token= fallback.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    // Token comes from the URL on first visit; remember it so the installed
-    // app (which launches at /me with no token) can still identify the staff member.
-    let t = params.get("token");
-    if (t) {
-      try { localStorage.setItem("cb_me_token", t); } catch (e) {}
-    } else {
-      try { t = localStorage.getItem("cb_me_token"); } catch (e) {}
-    }
-    if (!t) { setError("no_token"); setLoading(false); return; }
-    setToken(t);
-    supabase
-      .from("staff")
-      .select("*")
-      .eq("pharmacy_id", PHARMACY_ID)
-      .eq("staff_token", t)
-      .maybeSingle()
-      .then(({ data, error: err }) => {
-        if (err || !data) { setError("invalid_token"); }
-        else if (data.active === false) { setError("inactive"); }
-        else { setStaff(data); }
+    const resolve = async () => {
+      const params = new URLSearchParams(window.location.search);
+
+      // ── Legacy path: ?token=xxx still works exactly as before ──
+      let t = params.get("token");
+      if (t) {
+        setToken(t);
+        const { data, error: err } = await supabase
+          .from("staff").select("*").eq("staff_token", t).maybeSingle();
+        if (err || !data) setError("invalid_token");
+        else if (data.active === false) setError("inactive");
+        else { setStaff(data); setUnlocked(true); } // token already proves identity
         setLoading(false);
-      });
+        return;
+      }
+
+      // ── Auth path ──
+      // Remember which pharmacy this device belongs to (from ?p= slug).
+      const slug = params.get("p");
+      if (slug) {
+        const { data: ph } = await supabase
+          .from("pharmacies").select("id, slug").eq("slug", slug).maybeSingle();
+        if (ph) { try { localStorage.setItem("cb_pharmacy_id", ph.id); } catch (e) {} }
+      }
+
+      // Is someone already logged in?
+      const { data: sessionData } = await supabase.auth.getSession();
+      const authUser = sessionData?.session?.user || null;
+
+      if (authUser) {
+        await linkStaff(authUser.email);
+      } else {
+        setLoading(false); // show login screen
+      }
+    };
+
+    // Match the logged-in email to a staff row and load it.
+    const linkStaff = async (email) => {
+      const { data, error: err } = await supabase
+        .from("staff").select("*").ilike("email", email).maybeSingle();
+      if (err || !data) { setError("no_staff_match"); }
+      else if (data.active === false) { setError("inactive"); }
+      else { setStaff(data); setUnlocked(true); } // Auth already proves identity
+      setLoading(false);
+    };
+
+    resolve();
   }, []);
 
   const handlePinSubmit = () => {
@@ -1201,45 +1326,15 @@ export default function MePage() {
         <div className="bg-white rounded-2xl shadow-sm border p-8 max-w-sm text-center">
           <div className="text-3xl mb-3">🔒</div>
           <p className="text-sm text-gray-600">{messages[error] || "Something went wrong."}</p>
+          <p className="text-xs text-gray-400 mt-2">code: {error}</p>
         </div>
       </div>
     );
   }
 
-  // ─── PIN gate ───
+  // ─── Email + password login (Auth) ───
   if (!unlocked) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-50 px-6">
-        <div className="bg-white rounded-2xl shadow-sm border p-8 w-full max-w-sm text-center">
-          <img
-            src={staff.photo_url || "/placeholder.png"}
-            alt={staff.name}
-            className="w-16 h-16 rounded-full object-cover mx-auto mb-3 border"
-          />
-          <h1 className="text-lg font-bold text-gray-800 mb-1">Hi {staff.name.split(" ")[0]}</h1>
-          <p className="text-sm text-gray-500 mb-6">Enter your PIN to continue</p>
-          <input
-            type="password"
-            inputMode="numeric"
-            maxLength={4}
-            value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-            onKeyDown={(e) => e.key === "Enter" && handlePinSubmit()}
-            placeholder="••••"
-            className="w-full border rounded-lg px-4 py-3 text-center text-2xl tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            autoFocus
-          />
-          {pinError && <p className="text-sm text-red-500 mb-3">{pinError}</p>}
-          <button
-            onClick={handlePinSubmit}
-            disabled={pin.length !== 4 || checking}
-            className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium disabled:opacity-40"
-          >
-            {checking ? "Checking…" : "Unlock"}
-          </button>
-        </div>
-      </div>
-    );
+    return <LoginScreen onLoggedIn={(s) => { setStaff(s); setUnlocked(true); }} />;
   }
 
   // ─── Main portal ───

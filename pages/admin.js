@@ -180,6 +180,7 @@ function StaffForm({ member, onSave, onCancel }) {
   const isNew = !member?.id;
   const [form, setForm] = useState({
     name: member?.name || "",
+    email: member?.email || "",
     role: member?.role || "",
     employment_type: member?.employment_type || "",
     contracted_hours: member?.contracted_hours || "",
@@ -251,6 +252,7 @@ function StaffForm({ member, onSave, onCancel }) {
     setError("");
     const payload = {
       name: form.name.trim(),
+      email: form.email.trim() || null,
       role: form.role || null,
       employment_type: form.employment_type || null,
       contracted_hours: showHours && form.contracted_hours ? Number(form.contracted_hours) : null,
@@ -313,6 +315,19 @@ function StaffForm({ member, onSave, onCancel }) {
             className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
             placeholder="Full name"
           />
+        </div>
+
+        {/* Email */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+          <input
+            type="email"
+            value={form.email}
+            onChange={(e) => set("email", e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            placeholder="email@example.com"
+          />
+          <p className="text-[11px] text-gray-400 mt-1">Used for app login. Must match the email they sign up with.</p>
         </div>
 
         {/* Role */}
