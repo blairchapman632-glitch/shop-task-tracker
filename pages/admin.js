@@ -1039,8 +1039,11 @@ function SettingsTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [slug, setSlug] = useState("");
 
   useEffect(() => {
+    supabase.from("pharmacies").select("slug").eq("id", PHARMACY_ID).maybeSingle()
+      .then(({ data }) => setSlug(data?.slug || ""));
     const load = async () => {
       const { data } = await supabase
         .from("pharmacy_settings")
@@ -1125,6 +1128,31 @@ function SettingsTab() {
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 max-w-2xl">
+
+        {/* Staff app link */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Staff App Link</h3>
+          <p className="text-xs text-gray-400 mb-3">Send this link to all staff. They log in with their work email and can add the app to their phone's home screen.</p>
+          {slug ? (
+            <div className="border rounded-lg p-3 bg-blue-50 border-blue-100">
+              <div className="text-[11px] text-blue-600 break-all mb-2">
+                {typeof window !== "undefined" ? `${window.location.origin}/me?p=${slug}` : ""}
+              </div>
+              <button
+                onClick={() => {
+                  const url = `${window.location.origin}/me?p=${slug}`;
+                  navigator.clipboard.writeText(url);
+                  alert("Staff link copied to clipboard!");
+                }}
+                className="text-[11px] px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Copy link
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">No pharmacy link set up yet.</p>
+          )}
+        </div>
 
         {/* Pharmacy details */}
         <div>
