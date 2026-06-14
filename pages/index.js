@@ -1123,7 +1123,7 @@ export default function HomePage() {
       if (mine === reaction) {
         await supabase.from("kiosk_note_reactions").delete().eq("note_id", Number(noteId)).eq("staff_id", Number(selectedStaffId));
       } else {
-        await supabase.from("kiosk_note_reactions").upsert({ note_id: Number(noteId), staff_id: Number(selectedStaffId), reaction }, { onConflict: "note_id,staff_id" });
+        await supabase.from("kiosk_note_reactions").upsert({ note_id: Number(noteId), staff_id: Number(selectedStaffId), reaction, pharmacy_id: currentPharmacyId }, { onConflict: "note_id,staff_id" });
       }
       setReactionsByNote((prev) => {
         const next = { ...prev };
