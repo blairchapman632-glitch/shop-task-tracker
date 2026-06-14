@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
+import { toISO, buildWageRows, fmt as wageFmt } from "../lib/wageCalc";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -895,10 +896,279 @@ function MessagesTab({ staff }) {
   );
 }
 
-function WagesTab({ staff }) {
+function MeEditShiftModal({ shift, staff, onClose, onSaved }) {
+  const [noLunch, setNoLunch] = useState(shift.edit?.no_lunch || false);
+  const [adjustMins, setAdjustMins] = useState(shift.edit?.adjust_minutes ? String(shift.edit.adjust_minutes) : "");
+  const [reason, setReason] = useState(shift.edit?.reason || "");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const adjNum = Number(adjustMins) || 0;
+  const timesChanged = adjNum !== 0;
+  const anyChange = noLunch || timesChanged;
+
+  const handleSave = async () => {
+    setError("");
+    if (!anyChange) { setError("Tick 'no lunch' or change a time to make an edit."); return; }
+    if (timesChanged && !reason.trim()) { setError("A reason is required when changing times."); return; }
+    setSaving(true);
+    const { error: upErr } = await supabase.from("shift_edits").upsert({
+      roster_shift_id: shift.id,
+      adjust_minutes: adjNum,
+      no_lunch: noLunch,
+      reason: reason.trim(),
+      edited_by_staff_id: staff.id,
+      edited_at: new Date().toISOString(),
+      pharmacy_id: PHARMACY_ID,
+    }, { onConflict: "roster_shift_id" });
+    setSaving(false);
+    if (upErr) { setError(upErr.message); return; }
+    onSaved();
+  };
+
+  const handleRemove = async () => {
+    if (!shift.edit) { onClose(); return; }
+    if (!window.confirm("Remove this edit and revert to rostered hours?")) return;
+    setSaving(true);
+    const { error: delErr } = await supabase.from("shift_edits").delete().eq("roster_shift_id", shift.id);
+    setSaving(false);
+    if (delErr) { setError(delErr.message); return; }
+    onSaved();
+  };
+
   return (
-    <div className="max-w-lg mx-auto text-sm text-gray-400 text-center mt-10">
-      Wages — coming next.
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+        <h2 className="font-semibold text-gray-800 mb-1">Edit shift</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          {new Date(shift.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "short" })}
+          {shift.start ? ` · rostered ${String(shift.start).slice(0,5)}–${String(shift.end).slice(0,5)}` : ""}
+        </p>
+
+        {!shift.neverDeductsLunch && (
+          <label className="flex items-center gap-2 text-sm mb-4 cursor-pointer">
+            <input type="checkbox" checked={noLunch} onChange={(e) => setNoLunch(e.target.checked)} className="h-4 w-4 rounded border-gray-300" />
+            <span className="text-gray-700">No lunch break taken (adds 30 min back)</span>
+          </label>
+        )}
+
+        <div className="text-xs font-medium text-gray-600 mb-1">Adjust time (optional)</div>
+        <div className="flex items-center gap-2 mb-1">
+          <input type="number" step="5" value={adjustMins} onChange={(e) => setAdjustMins(e.target.value)} placeholder="0" className="w-28 border rounded-lg px-3 py-1.5 text-sm" />
+          <span className="text-sm text-gray-500">minutes</span>
+        </div>
+        <p className="text-[11px] text-gray-400 mb-4">e.g. <span className="font-medium">30</span> if you stayed late, <span className="font-medium">−30</span> if you left early.</p>
+
+        <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-4">
+          ⓘ Any edits are reviewed by management before pay is finalised.
+        </div>
+
+        <div className="text-xs font-medium text-gray-600 mb-1">Reason {timesChanged ? "*" : "(optional)"}</div>
+        <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="e.g. stayed back to finish DAA packing" className="w-full border rounded-lg px-3 py-2 text-sm resize-none mb-4" />
+
+        {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 border border-gray-300 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+          {shift.edit && <button onClick={handleRemove} disabled={saving} className="px-3 border border-red-200 text-red-600 rounded-lg py-2 text-sm hover:bg-red-50">Remove</button>}
+          <button onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
+            {saving ? "Saving…" : "Save edit"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WagesTab({ staff }) {
+  const [loading, setLoading] = useState(true);
+  const [payrollStart, setPayrollStart] = useState(null);
+  const [periodOffset, setPeriodOffset] = useState(0);
+  const [row, setRow] = useState(null);
+  const [approved, setApproved] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [editShift, setEditShift] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", PHARMACY_ID).single()
+      .then(({ data }) => setPayrollStart(data?.payroll_start_date || null));
+  }, []);
+
+  const getPeriod = () => {
+    if (!payrollStart) return null;
+    const start = new Date(payrollStart + "T00:00:00");
+    const today = new Date();
+    let cur = new Date(start);
+    while (cur.getTime() + 14 * 86400000 <= today.getTime()) cur.setDate(cur.getDate() + 14);
+    cur.setDate(cur.getDate() + periodOffset * 14);
+    const end = new Date(cur);
+    end.setDate(end.getDate() + 13);
+    return { start: cur, end };
+  };
+  const period = payrollStart ? getPeriod() : null;
+
+  useEffect(() => {
+    if (!period) return;
+    const load = async () => {
+      setLoading(true);
+      const startISO = toISO(period.start);
+      const endISO = toISO(period.end);
+
+      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: leaveData }] = await Promise.all([
+        supabase.from("roster_shifts").select("id, shift_date, start_time, end_time, role, staff_id, staff_name").gte("shift_date", startISO).lte("shift_date", endISO),
+        supabase.from("staff").select("id, name, role, employment_type, contracted_hours, active, schedule_type, weekly_schedule, week_ab_schedule, no_lunch_deduction").eq("pharmacy_id", PHARMACY_ID),
+        supabase.from("public_holidays").select("date, name").eq("pharmacy_id", PHARMACY_ID).gte("date", startISO).lte("date", endISO),
+        supabase.from("wage_approvals").select("staff_id").eq("pharmacy_id", PHARMACY_ID).eq("period_start", startISO).eq("staff_id", staff.id),
+        supabase.from("leave_requests").select("*").eq("status", "approved").lte("from_date", endISO).gte("to_date", startISO),
+      ]);
+
+      const shiftIds = (shifts || []).map((s) => s.id);
+      let editsByShift = {}, sickByShift = {};
+      if (shiftIds.length) {
+        const [{ data: editData }, { data: sickData }] = await Promise.all([
+          supabase.from("shift_edits").select("*").in("roster_shift_id", shiftIds),
+          supabase.from("sick_days").select("roster_shift_id, leave_type").in("roster_shift_id", shiftIds),
+        ]);
+        editsByShift = Object.fromEntries((editData || []).map((e) => [e.roster_shift_id, e]));
+        sickByShift = Object.fromEntries((sickData || []).map((s) => [s.roster_shift_id, s]));
+      }
+
+      const built = buildWageRows({ period, staffData, shifts, holidays, editsByShift, sickByShift, leaveData });
+      const mine = built.find((r) => r.staffId === staff.id) || null;
+      setRow(mine);
+      setApproved((appr || []).length > 0);
+      setLoading(false);
+    };
+    load();
+  }, [payrollStart, periodOffset, reloadKey, staff.id]);
+
+  const handleConfirm = async () => {
+    if (!period) return;
+    setConfirming(true);
+    const { error } = await supabase.from("wage_approvals").upsert(
+      { staff_id: staff.id, period_start: toISO(period.start), approved_at: new Date().toISOString(), approved_by_staff_id: staff.id, pharmacy_id: PHARMACY_ID },
+      { onConflict: "staff_id,period_start" }
+    );
+    setConfirming(false);
+    if (error) { alert("Couldn't confirm: " + error.message); return; }
+    setApproved(true);
+  };
+
+  const periodLabel = period
+    ? `${period.start.toLocaleDateString("en-AU", { day: "numeric", month: "short" })} – ${period.end.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}`
+    : "—";
+  const dayLabel = { weekday: "Weekday", sat: "Saturday", sun: "Sunday", ph: "Public Holiday" };
+  const neverDeductsLunch = staff.no_lunch_deduction === true;
+
+  return (
+    <div className="max-w-lg mx-auto space-y-4">
+      {/* Period nav */}
+      <div className="flex items-center justify-between">
+        <button onClick={() => setPeriodOffset((o) => o - 1)} className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-50">←</button>
+        <div className="text-sm font-semibold text-gray-700 text-center">
+          {periodLabel}
+          {periodOffset === 0 && <span className="block text-[11px] text-blue-600">Current period</span>}
+        </div>
+        <button onClick={() => setPeriodOffset((o) => o + 1)} className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-50">→</button>
+      </div>
+
+      {!payrollStart ? (
+        <div className="text-sm text-gray-400 text-center mt-10">Payroll not set up yet.</div>
+      ) : loading ? (
+        <div className="text-sm text-gray-400 text-center mt-10">Loading…</div>
+      ) : !row ? (
+        <div className="bg-white rounded-2xl shadow-sm border p-5 text-sm text-gray-400 text-center">No hours in this pay period.</div>
+      ) : (
+        <>
+          {/* Hours summary */}
+          <div className="bg-white rounded-2xl shadow-sm border p-5">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Your hours this fortnight</div>
+            {row.isSalary ? (
+              <div className="flex justify-between text-sm py-1">
+                <span className="text-gray-600">Contracted</span>
+                <span className="font-semibold text-gray-800 tabular-nums">{wageFmt(row.contracted)} hrs</span>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {[["Weekday", row.weekday], ["Saturday", row.sat], ["Sunday", row.sun], ["Public holiday", row.ph], ["Overtime", row.ot]].map(([label, val]) => (
+                  val > 0 && (
+                    <div key={label} className="flex justify-between text-sm">
+                      <span className="text-gray-600">{label}</span>
+                      <span className="tabular-nums text-gray-800">{wageFmt(val)} hrs</span>
+                    </div>
+                  )
+                ))}
+                {(row.sick > 0) && <div className="flex justify-between text-sm"><span className="text-gray-500">Sick / carer's</span><span className="tabular-nums text-gray-500">{wageFmt(row.sick)} hrs</span></div>}
+                {(row.compassionate > 0) && <div className="flex justify-between text-sm"><span className="text-gray-500">Compassionate</span><span className="tabular-nums text-gray-500">{wageFmt(row.compassionate)} hrs</span></div>}
+                {(row.annual > 0) && <div className="flex justify-between text-sm"><span className="text-gray-500">Annual leave</span><span className="tabular-nums text-gray-500">{wageFmt(row.annual)} hrs</span></div>}
+              </div>
+            )}
+            <div className="flex justify-between text-sm font-bold text-gray-900 border-t mt-3 pt-3">
+              <span>Total</span>
+              <span className="tabular-nums">{wageFmt(row.total)} hrs</span>
+            </div>
+          </div>
+
+          {/* Shifts list */}
+          {!row.isSalary && (
+            <div className="bg-white rounded-2xl shadow-sm border p-5">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Shifts this period</div>
+              {row.shifts.length === 0 ? (
+                <p className="text-xs text-gray-400">No shifts.</p>
+              ) : (
+                <div className="space-y-2">
+                  {[...row.shifts].sort((a, b) => a.date.localeCompare(b.date)).map((sh) => {
+                    const edited = !!sh.edit;
+                    const canEdit = !sh.isPublicHoliday && !sh.isSick && !sh.isLeave;
+                    return (
+                      <div key={sh.id} className="flex items-center gap-2 text-sm border-b border-gray-50 pb-2 last:border-0">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-gray-800">{new Date(sh.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })}</div>
+                          <div className="text-[11px] text-gray-400">
+                            {sh.isPublicHoliday ? "Public holiday" : sh.isLeave ? sh.leaveType : sh.isSick ? "Sick / carer's" : `${String(sh.start).slice(0,5)}–${String(sh.end).slice(0,5)}`}
+                            {sh.breakDeducted && !sh.isSick && !sh.isLeave ? " · −30 min lunch" : ""}
+                            {edited ? ` · ✏️ edited${sh.adjustMins ? ` ${sh.adjustMins > 0 ? "+" : ""}${sh.adjustMins} min` : ""}${sh.edit.no_lunch ? " · no lunch" : ""}` : ""}
+                          </div>
+                        </div>
+                        <span className="tabular-nums text-gray-700 shrink-0">{sh.isSick && !sh.paidSick ? "—" : `${wageFmt(sh.paidHrs)} hrs`}</span>
+                        {canEdit && !approved && (
+                          <button onClick={() => setEditShift({ ...sh, neverDeductsLunch })} className="text-[11px] text-blue-600 hover:underline shrink-0">
+                            {edited ? "Edit" : "Adjust"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Confirm */}
+          {!row.isSalary && (
+            approved ? (
+              <div className="rounded-xl bg-green-50 border border-green-200 px-4 py-4 text-center">
+                <div className="text-2xl mb-1">✅</div>
+                <div className="text-sm font-semibold text-green-700">Hours confirmed for this period.</div>
+              </div>
+            ) : (
+              <button onClick={handleConfirm} disabled={confirming} className="w-full bg-green-600 text-white rounded-xl py-3 text-sm font-medium disabled:opacity-40">
+                {confirming ? "Confirming…" : "Confirm my hours"}
+              </button>
+            )
+          )}
+        </>
+      )}
+
+      {editShift && (
+        <MeEditShiftModal
+          shift={editShift}
+          staff={staff}
+          onClose={() => setEditShift(null)}
+          onSaved={() => { setEditShift(null); setReloadKey((k) => k + 1); }}
+        />
+      )}
     </div>
   );
 }
@@ -1135,7 +1405,7 @@ function LoginScreen({ onLoggedIn }) {
         <input
           type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password}
           onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && (mode === "login" ? handleLogin() : handleSignup())}
+          onKeyDown={(e) => e.key === "Enter" && handleContinue()}
           className="w-full border rounded-lg px-3 py-2.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
           placeholder="••••••••"
         />
