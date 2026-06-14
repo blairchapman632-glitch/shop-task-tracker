@@ -14,7 +14,7 @@ export default function App({ Component, pageProps }) {
         <title>Byford Pharmacy Chalkboard</title>
         <link rel="icon" href="/favicon.png" />
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#12282c" />
+        <meta name="theme-color" content="#0ea5e9" />
         <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
