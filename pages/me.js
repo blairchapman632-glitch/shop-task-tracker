@@ -895,7 +895,32 @@ function MessagesTab({ staff }) {
   );
 }
 
-function RosterTab({ staff }) {
+function WagesTab({ staff }) {
+  return (
+    <div className="max-w-lg mx-auto text-sm text-gray-400 text-center mt-10">
+      Wages — coming next.
+    </div>
+  );
+}
+
+function RosterCombinedTab({ staff }) {
+  const [sub, setSub] = useState("shifts"); // "shifts" | "full"
+  return (
+    <div className="max-w-lg mx-auto space-y-4">
+      <div className="flex gap-1">
+        {[{ key: "shifts", label: "📅 My shifts" }, { key: "full", label: "🗓️ Full roster" }].map((t) => (
+          <button key={t.key} onClick={() => setSub(t.key)}
+            className={`flex-1 text-sm rounded-lg py-2 font-medium ${sub === t.key ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {sub === "shifts" ? <ShiftsTab staff={staff} /> : <FullRosterTab staff={staff} />}
+    </div>
+  );
+}
+
+function FullRosterTab({ staff }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [shiftsByDate, setShiftsByDate] = useState({});
@@ -1191,7 +1216,7 @@ export default function MePage() {
   const [pinError, setPinError] = useState("");
   const [checking, setChecking] = useState(false);
 
-  const [tab, setTab] = useState("shifts");
+  const [tab, setTab] = useState("roster");
   const [unreadCount, setUnreadCount] = useState(0);
   const [leaveUpdate, setLeaveUpdate] = useState(false);
 
@@ -1341,9 +1366,9 @@ export default function MePage() {
 
   // ─── Main portal ───
   const TABS = [
-    { key: "shifts", label: "Shifts", icon: "📅" },
-    { key: "roster", label: "Roster", icon: "🗓️" },
+    { key: "roster", label: "Roster", icon: "📅" },
     { key: "timeoff", label: "Time off", icon: "✅" },
+    { key: "wages", label: "Wages", icon: "💰" },
     { key: "messages", label: "Messages", icon: "💬" },
     { key: "details", label: "Details", icon: "👤" },
   ];
@@ -1403,12 +1428,12 @@ export default function MePage() {
 
       {/* Content */}
       <main className="flex-1 p-4" style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}>
-        {tab === "shifts" ? (
-          <ShiftsTab staff={staff} />
-        ) : tab === "roster" ? (
-          <RosterTab staff={staff} />
+        {tab === "roster" ? (
+          <RosterCombinedTab staff={staff} />
         ) : tab === "timeoff" ? (
           <TimeOffTab staff={staff} />
+        ) : tab === "wages" ? (
+          <WagesTab staff={staff} />
         ) : tab === "messages" ? (
           <MessagesTab staff={staff} />
         ) : (

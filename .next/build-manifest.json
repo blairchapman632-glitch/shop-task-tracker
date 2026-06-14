@@ -27,10 +27,15 @@
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/wages": [
+    "/me": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/wages.js"
+      "static/chunks/pages/me.js"
+    ],
+    "/messages": [
+      "static/chunks/webpack.js",
+      "static/chunks/main.js",
+      "static/chunks/pages/messages.js"
     ]
   },
   "ampFirstPages": []
