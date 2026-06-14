@@ -980,6 +980,53 @@ function MeEditShiftModal({ shift, staff, onClose, onSaved }) {
   );
 }
 
+function DetailsTab({ staff }) {
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (!window.confirm("Log out of Chalkboard Pocket?")) return;
+    setLoggingOut(true);
+    try {
+      await supabase.auth.signOut();
+      try { localStorage.removeItem("cb_pharmacy_id"); } catch (e) {}
+      window.location.href = "/me?p=byford";
+    } catch (err) {
+      setLoggingOut(false);
+      alert("Couldn't log out: " + (err?.message || String(err)));
+    }
+  };
+
+  return (
+    <div className="max-w-lg mx-auto space-y-4">
+      <div className="bg-white rounded-2xl shadow-sm border p-5">
+        <div className="flex items-center gap-3">
+          <img src={staff.photo_url || "/placeholder.png"} alt={staff.name} className="w-14 h-14 rounded-full object-cover border" />
+          <div className="min-w-0">
+            <div className="text-base font-semibold text-gray-800 truncate">{staff.name}</div>
+            <div className="text-sm text-gray-500 truncate">{staff.role || ""}</div>
+          </div>
+        </div>
+        {staff.email && (
+          <div className="mt-4 pt-4 border-t text-sm">
+            <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-0.5">Email</div>
+            <div className="text-gray-700 break-words">{staff.email}</div>
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={handleLogout}
+        disabled={loggingOut}
+        className="w-full border border-red-200 text-red-600 rounded-xl py-3 text-sm font-medium hover:bg-red-50 disabled:opacity-40"
+      >
+        {loggingOut ? "Logging out…" : "Log out"}
+      </button>
+
+      <p className="text-center text-[11px] text-gray-400">More profile details coming soon.</p>
+    </div>
+  );
+}
+
 function WagesTab({ staff }) {
   const [loading, setLoading] = useState(true);
   const [payrollStart, setPayrollStart] = useState(null);
@@ -1331,6 +1378,19 @@ function LoginScreen({ onLoggedIn }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [resetMode, setResetMode] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+
+  const handleSendReset = async () => {
+    if (!email.trim()) { setErr("Enter your email first."); return; }
+    setBusy(true); setErr("");
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/reset`,
+    });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setResetSent(true);
+  };
 
   // Match the authenticated email to a staff row and hand it back up.
   const linkAndFinish = async (authEmail) => {
@@ -1401,28 +1461,64 @@ function LoginScreen({ onLoggedIn }) {
           placeholder="email@example.com"
         />
 
-        <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
-        <input
-          type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleContinue()}
-          className="w-full border rounded-lg px-3 py-2.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
-          placeholder="••••••••"
-        />
+        {!resetMode && (
+          <>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
+            <input
+              type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleContinue()}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              placeholder="••••••••"
+            />
+          </>
+        )}
+
+        {resetMode && !resetSent && (
+          <p className="text-xs text-gray-500 mb-3">Enter your email and we'll send you a link to reset your password.</p>
+        )}
 
         {err && <p className="text-sm text-red-500 mb-3">{err}</p>}
 
-        <button
-          onClick={handleContinue}
-          disabled={busy}
-          className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium disabled:opacity-40"
-        >
-          {busy ? "Please wait…" : "Continue"}
-        </button>
+        {resetMode ? (
+          resetSent ? (
+            <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-3 text-center text-sm text-green-700">
+              ✅ If that email is on file, a reset link is on its way. Check your inbox.
+              <button onClick={() => { setResetMode(false); setResetSent(false); }} className="block mx-auto mt-2 text-xs text-green-700 underline">Back to login</button>
+            </div>
+          ) : (
+            <>
+              <button
+                onClick={handleSendReset}
+                disabled={busy}
+                className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium disabled:opacity-40"
+              >
+                {busy ? "Sending…" : "Send reset link"}
+              </button>
+              <button onClick={() => { setResetMode(false); setErr(""); }} className="block mx-auto mt-3 text-xs text-gray-500 underline">
+                Back to login
+              </button>
+            </>
+          )
+        ) : (
+          <>
+            <button
+              onClick={handleContinue}
+              disabled={busy}
+              className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium disabled:opacity-40"
+            >
+              {busy ? "Please wait…" : "Continue"}
+            </button>
 
-        <p className="text-center text-[11px] text-gray-400 mt-4">
-          First time logging in? Just enter your work email and choose a password.
-        </p>
+            <button onClick={() => { setResetMode(true); setErr(""); }} className="block mx-auto mt-3 text-xs text-blue-600 underline">
+              Forgot password?
+            </button>
+
+            <p className="text-center text-[11px] text-gray-400 mt-4">
+              First time logging in? Just enter your work email and choose a password.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1706,6 +1802,8 @@ export default function MePage() {
           <WagesTab staff={staff} />
         ) : tab === "messages" ? (
           <MessagesTab staff={staff} />
+        ) : tab === "details" ? (
+          <DetailsTab staff={staff} />
         ) : (
           <div className="text-sm text-gray-400 text-center mt-10">
             {TABS.find((t) => t.key === tab)?.label} tab — coming next.
