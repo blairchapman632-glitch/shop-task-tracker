@@ -565,14 +565,14 @@ function TimeOffTab({ staff }) {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
-                <input type="date" value={leaveFrom} onChange={(e) => setLeaveFrom(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                <input type="date" value={leaveFrom} onChange={(e) => setLeaveFrom(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white min-w-0" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
-                <input type="date" value={leaveTo} onChange={(e) => setLeaveTo(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                <input type="date" value={leaveTo} onChange={(e) => setLeaveTo(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white min-w-0" />
               </div>
             </div>
 
@@ -583,14 +583,14 @@ function TimeOffTab({ staff }) {
                   <span className="text-gray-700">All day</span>
                 </label>
                 {!leaveAllDay && (
-                  <div className="grid grid-cols-2 gap-3 mt-2">
+                  <div className="grid grid-cols-2 gap-4 mt-2">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">Start</label>
-                      <input type="time" value={leaveStart} onChange={(e) => setLeaveStart(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                      <input type="time" value={leaveStart} onChange={(e) => setLeaveStart(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white min-w-0" />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">End</label>
-                      <input type="time" value={leaveEnd} onChange={(e) => setLeaveEnd(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                      <input type="time" value={leaveEnd} onChange={(e) => setLeaveEnd(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white min-w-0" />
                     </div>
                   </div>
                 )}
@@ -1306,8 +1306,8 @@ function FullRosterTab({ staff }) {
                         const isMe = s.staff_id && String(s.staff_id) === String(staff.id);
                         return (
                           <div key={s.id} className="flex items-center justify-between gap-2 text-xs">
-                            <span className={`truncate ${absence === "compassionate" ? "text-purple-400 line-through" : absence ? "text-red-400 line-through" : isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isMe ? "font-bold" : ""}`}>
-                              {absence === "compassionate" ? "🕊️ " : absence ? "🤒 " : ""}{isTBC ? `TBC ${s.role}` : name}{isMe ? " (you)" : ""}
+                            <span className={`truncate ${absence === "compassionate" ? "text-purple-400 line-through" : absence ? "text-red-400 line-through" : isTBC ? "text-red-500 font-medium" : "text-gray-700"} ${isMe ? "font-bold" : ""}`}>
+                              {absence === "compassionate" ? "🕊️ " : absence ? "🤒 " : ""}{isTBC ? `TBC ${s.role}` : name}
                             </span>
                             <span className="text-gray-500 shrink-0">{formatTime(s.start_time)}–{formatTime(s.end_time)}</span>
                           </div>
