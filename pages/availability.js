@@ -574,6 +574,8 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                   {saving ? "Saving…" : (fromDate || toDate) ? "Save this range" : "Save availability"}
                 </button>
               )}
+            </>
+            )}
             </div>
 
             {/* Add a specific date — saves immediately */}
@@ -601,8 +603,6 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                 <div className="text-sm font-semibold text-green-700">Saved.</div>
                 <button onClick={() => setSaved(false)} className="mt-2 text-xs text-green-700 underline">Dismiss</button>
               </div>
-            )}
-            </>
             )}
             </>
             )}
