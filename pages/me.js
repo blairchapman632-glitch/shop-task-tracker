@@ -700,13 +700,23 @@ const meFmtWhen = (d) =>
 
 const NOTE_REACTIONS = ["👍", "❤️", "🙂"];
 
-function MessagesCombinedTab({ staff }) {
-  const [sub, setSub] = useState("direct"); // "direct" | "notes"
+function MessagesCombinedTab({ staff, onBoardSeen }) {
+  const [sub, setSub] = useState("direct");
+
+  const handleSubTab = (key) => {
+    setSub(key);
+    if (key === "notes") {
+      supabase.from("staff").update({ board_last_seen_at: new Date().toISOString() }).eq("id", staff.id).then(() => {
+        if (onBoardSeen) onBoardSeen();
+      });
+    }
+  };
+
   return (
     <div className="max-w-lg mx-auto space-y-4">
       <div className="flex gap-1">
-        {[{ key: "direct", label: "💬 Direct" }, { key: "notes", label: "📌 Notes" }].map((t) => (
-          <button key={t.key} onClick={() => setSub(t.key)}
+        {[{ key: "direct", label: "💬 Messages" }, { key: "notes", label: "📌 Wall" }].map((t) => (
+          <button key={t.key} onClick={() => handleSubTab(t.key)}
             className={`flex-1 text-sm rounded-lg py-2 font-medium ${sub === t.key ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
             {t.label}
           </button>
@@ -1926,9 +1936,10 @@ export default function MePage() {
 
   const [tab, setTab] = useState("roster");
   const [unreadCount, setUnreadCount] = useState(0);
+  const [newBoardCount, setNewBoardCount] = useState(0);
   const [leaveUpdate, setLeaveUpdate] = useState(false);
 
-  // Unread message count for the tab badge (count only)
+  // Unread message count + new board posts for the tab badge
   useEffect(() => {
     if (!staff?.id) return;
     supabase
@@ -1938,6 +1949,17 @@ export default function MePage() {
       .is("read_at", null)
       .eq("deleted_by_recipient", false)
       .then(({ data }) => setUnreadCount((data || []).length));
+
+    // New board posts since last viewed
+    const lastSeen = staff.board_last_seen_at;
+    let query = supabase
+      .from("kiosk_notes")
+      .select("id", { count: "exact", head: true })
+      .eq("pharmacy_id", PHARMACY_ID)
+      .or("deleted.is.null,deleted.eq.false")
+      .neq("staff_id", staff.id); // don't count own posts
+    if (lastSeen) query = query.gt("created_at", lastSeen);
+    query.then(({ count }) => setNewBoardCount(count || 0));
   }, [staff?.id, tab]);
 
   // Register this device for push notifications once logged in.
@@ -2149,7 +2171,7 @@ export default function MePage() {
         ) : tab === "wages" ? (
           <WagesTab staff={staff} />
         ) : tab === "messages" ? (
-          <MessagesCombinedTab staff={staff} />
+          <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} />
         ) : tab === "details" ? (
           <DetailsTab staff={staff} />
         ) : (
@@ -2174,9 +2196,9 @@ export default function MePage() {
           >
             <span className="relative text-xl">
               {t.icon}
-              {t.key === "messages" && unreadCount > 0 && (
+              {t.key === "messages" && (unreadCount + newBoardCount) > 0 && (
                 <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none">
-                  {unreadCount}
+                  {unreadCount + newBoardCount}
                 </span>
               )}
               {t.key === "timeoff" && leaveUpdate && (
