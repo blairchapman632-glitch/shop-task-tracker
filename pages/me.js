@@ -218,6 +218,7 @@ function TimeOffTab({ staff }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showAvailability, setShowAvailability] = useState(false);
 
   // Leave state
   const [leaveType, setLeaveType] = useState("Annual Leave");
@@ -510,6 +511,17 @@ function TimeOffTab({ staff }) {
               </select>
             </div>
 
+            {["Permanent", "Salary"].includes(staff.employment_type) && (
+              <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">
+                <p className="mb-2">ℹ️ Your contracted hours are already set in the roster. Use availability to flag any changes to your usual pattern — e.g. a period when you can't work certain days.</p>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={showAvailability} onChange={(e) => setShowAvailability(e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-300" />
+                  <span>Show availability settings</span>
+                </label>
+              </div>
+            )}
+            {(showAvailability || !["Permanent", "Salary"].includes(staff.employment_type)) && (
+            <>
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Add availability</div>
             <p className="text-xs text-gray-400 mb-3">Set your weekly pattern, optionally limit it to a date range, then save.</p>
 
@@ -565,9 +577,11 @@ function TimeOffTab({ staff }) {
                 {saving ? "Saving…" : (fromDate || toDate) ? "Save this range" : "Save availability"}
               </button>
             )}
+            </>
+            )}
           </div>
 
-          {/* Add a specific date */}
+          {(showAvailability || !["Permanent", "Salary"].includes(staff.employment_type)) && (
           <div className="bg-white rounded-2xl shadow-sm border p-5">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Add a specific date</div>
             <p className="text-xs text-gray-400 mb-3">One-off exception. Saves straight away.</p>
@@ -584,6 +598,7 @@ function TimeOffTab({ staff }) {
               <button onClick={addOverride} disabled={!newOverrideDate} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-40">Save date</button>
             </div>
           </div>
+          )}
 
           {saved && (
             <div className="rounded-xl bg-green-50 border border-green-200 px-4 py-4 text-center">

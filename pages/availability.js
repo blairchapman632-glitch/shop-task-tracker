@@ -64,6 +64,7 @@ export default function AvailabilityPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [publishedMonths, setPublishedMonths] = useState(new Set());
+  const [showAvailability, setShowAvailability] = useState(false);
 
   // ── Leave tab ──
   const [activeTab, setActiveTab] = useState("availability"); // availability | leave
@@ -501,6 +502,17 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                 <p className="text-[11px] text-gray-400 mt-1">Changing month loads that month's availability. Your current month is not affected.</p>
               </div>
 
+              {["Permanent", "Salary"].includes(selectedStaff.employment_type) && (
+                <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">
+                  <p className="mb-2">ℹ️ Your contracted hours are already set in the roster. Use availability to flag any changes to your usual pattern — e.g. a period when you can't work certain days.</p>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={showAvailability} onChange={(e) => setShowAvailability(e.target.checked)} className="h-3.5 w-3.5 rounded border-gray-300" />
+                    <span>Show availability settings</span>
+                  </label>
+                </div>
+              )}
+              {(showAvailability || !["Permanent", "Salary"].includes(selectedStaff.employment_type)) && (
+              <>
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Add availability</div>
               <p className="text-xs text-gray-400 mb-3">Set your weekly pattern, optionally limit it to a date range, then save. Add more ranges for periods that differ.</p>
 
@@ -589,6 +601,8 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                 <div className="text-sm font-semibold text-green-700">Saved.</div>
                 <button onClick={() => setSaved(false)} className="mt-2 text-xs text-green-700 underline">Dismiss</button>
               </div>
+            )}
+            </>
             )}
             </>
             )}
