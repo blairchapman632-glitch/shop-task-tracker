@@ -698,6 +698,284 @@ function TimeOffTab({ staff }) {
 const meFmtWhen = (d) =>
   new Date(d).toLocaleString("en-AU", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
+const NOTE_REACTIONS = ["👍", "❤️", "🙂"];
+
+function MessagesCombinedTab({ staff }) {
+  const [sub, setSub] = useState("direct"); // "direct" | "notes"
+  return (
+    <div className="max-w-lg mx-auto space-y-4">
+      <div className="flex gap-1">
+        {[{ key: "direct", label: "💬 Direct" }, { key: "notes", label: "📌 Notes" }].map((t) => (
+          <button key={t.key} onClick={() => setSub(t.key)}
+            className={`flex-1 text-sm rounded-lg py-2 font-medium ${sub === t.key ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {sub === "direct" ? <MessagesTab staff={staff} /> : <NotesTab staff={staff} />}
+    </div>
+  );
+}
+
+function NotesTab({ staff }) {
+  const me = staff;
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [noteText, setNoteText] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [staffById, setStaffById] = useState({});
+  const [repliesByNote, setRepliesByNote] = useState({});
+  const [replyText, setReplyText] = useState({});
+  const [replySaving, setReplySaving] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [reactionsByNote, setReactionsByNote] = useState({});
+  const [showResolved, setShowResolved] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data: staffData } = await supabase
+        .from("staff").select("id, name, photo_url").eq("pharmacy_id", PHARMACY_ID);
+      setStaffById(Object.fromEntries((staffData || []).map((s) => [s.id, s])));
+
+      const { data, error } = await supabase
+        .from("kiosk_notes")
+        .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id")
+        .eq("pharmacy_id", PHARMACY_ID)
+        .or("deleted.is.null,deleted.eq.false")
+        .order("pinned", { ascending: false })
+        .order("last_activity_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      setNotes(data || []);
+
+      const ids = (data || []).map((n) => n.id);
+      if (ids.length) {
+        const [{ data: reps }, { data: rx }] = await Promise.all([
+          supabase.from("kiosk_note_replies").select("id, note_id, staff_id, body, created_at").eq("pharmacy_id", PHARMACY_ID).in("note_id", ids).order("created_at", { ascending: true }),
+          supabase.from("kiosk_note_reactions").select("note_id, staff_id, reaction").eq("pharmacy_id", PHARMACY_ID).in("note_id", ids),
+        ]);
+        const grouped = {};
+        for (const r of reps || []) { (grouped[r.note_id] ||= []).push(r); }
+        setRepliesByNote(grouped);
+        const by = {};
+        for (const row of rx || []) {
+          if (!by[row.note_id]) by[row.note_id] = { counts: {}, mine: null };
+          by[row.note_id].counts[row.reaction] = (by[row.note_id].counts[row.reaction] || 0) + 1;
+          if (Number(row.staff_id) === Number(me.id)) by[row.note_id].mine = row.reaction;
+        }
+        setReactionsByNote(by);
+      } else {
+        setRepliesByNote({});
+        setReactionsByNote({});
+      }
+    } catch (err) {
+      console.error("Notes load failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [me.id]);
+
+  const postNote = async () => {
+    const body = noteText.trim();
+    if (!body) return;
+    setPosting(true);
+    try {
+      const { data, error } = await supabase.from("kiosk_notes")
+        .insert({ body, staff_id: Number(me.id), deleted: false, pharmacy_id: PHARMACY_ID })
+        .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved").single();
+      if (error) throw error;
+      setNotes((prev) => [data, ...prev]);
+      setNoteText("");
+    } catch (err) {
+      alert("Couldn't post note: " + (err?.message || String(err)));
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const postReply = async (noteId) => {
+    const body = String(replyText[noteId] || "").trim();
+    if (!body) return;
+    setReplySaving(noteId);
+    try {
+      const { data, error } = await supabase.from("kiosk_note_replies")
+        .insert({ note_id: Number(noteId), staff_id: Number(me.id), body, pharmacy_id: PHARMACY_ID })
+        .select("id, note_id, staff_id, body, created_at").single();
+      if (error) throw error;
+      setRepliesByNote((prev) => { const next = { ...prev }; next[noteId] = [...(next[noteId] || []), data]; return next; });
+      setReplyText((prev) => ({ ...prev, [noteId]: "" }));
+    } catch (err) {
+      alert("Couldn't reply: " + (err?.message || String(err)));
+    } finally {
+      setReplySaving(null);
+    }
+  };
+
+  const toggleReaction = async (noteId, reaction) => {
+    const mine = reactionsByNote[noteId]?.mine || null;
+    try {
+      if (mine === reaction) {
+        await supabase.from("kiosk_note_reactions").delete().eq("note_id", Number(noteId)).eq("staff_id", Number(me.id));
+      } else {
+        await supabase.from("kiosk_note_reactions").upsert({ note_id: Number(noteId), staff_id: Number(me.id), reaction, pharmacy_id: PHARMACY_ID }, { onConflict: "note_id,staff_id" });
+      }
+      setReactionsByNote((prev) => {
+        const next = { ...prev };
+        const entry = next[noteId] || { counts: {}, mine: null };
+        const counts = { ...entry.counts };
+        const mineNow = entry.mine;
+        if (mine === reaction) { counts[reaction] = Math.max(0, (counts[reaction] || 0) - 1); next[noteId] = { counts, mine: null }; return next; }
+        if (mineNow && mineNow !== reaction) counts[mineNow] = Math.max(0, (counts[mineNow] || 0) - 1);
+        counts[reaction] = (counts[reaction] || 0) + 1;
+        next[noteId] = { counts, mine: reaction };
+        return next;
+      });
+    } catch (err) {
+      alert("Couldn't react: " + (err?.message || String(err)));
+    }
+  };
+
+  const noteTrunc = (text, max = 160) => {
+    const s = String(text || "").trim();
+    return s.length <= max ? s : s.slice(0, max - 1) + "…";
+  };
+
+  const renderNote = (n) => {
+    const author = staffById[n.staff_id];
+    const when = new Date(n.created_at).toLocaleString("en-AU", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const reps = repliesByNote[n.id] || [];
+    const rx = reactionsByNote[n.id] || { counts: {}, mine: null };
+    const isOpen = expandedId === n.id;
+    return (
+      <div key={n.id} className={`rounded-xl border p-3 ${n.resolved ? "bg-gray-50 border-gray-200" : "bg-white border-gray-100"}`}>
+        <div className="flex items-start gap-2">
+          <img src={author?.photo_url || "/placeholder.png"} alt={author?.name || "Staff"} className="w-8 h-8 rounded-full object-cover mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              {n.pinned && <span title="Pinned" className="text-red-500 text-xs">📌</span>}
+              <span className="text-sm font-medium text-gray-800">{author?.name || "Someone"}</span>
+              <span className="text-[11px] text-gray-400">{when}</span>
+              {n.resolved && <span className="text-[11px] rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">✅ Resolved</span>}
+            </div>
+            <div className="text-sm text-gray-800 whitespace-pre-wrap break-words mt-1" onClick={() => setExpandedId(isOpen ? null : n.id)}>
+              {isOpen ? n.body : noteTrunc(n.body)}
+            </div>
+
+            {/* Footer actions */}
+            <div className="mt-2 flex items-center gap-1 flex-wrap">
+              <button onClick={() => setExpandedId(isOpen ? null : n.id)} className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${isOpen ? "border-blue-600 bg-blue-50 text-blue-700" : "border-gray-200 bg-white text-gray-600"}`}>
+                💬 <span>{reps.length}</span>
+              </button>
+              {!n.resolved && NOTE_REACTIONS.map((r) => {
+                const active = rx.mine === r;
+                return (
+                  <button key={r} onClick={() => toggleReaction(n.id, r)} className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"}`}>
+                    {r} <span className="tabular-nums text-gray-600">{rx.counts[r] || 0}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Replies */}
+            {isOpen && (
+              <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
+                <div className="text-[11px] font-medium text-gray-600 mb-1">Replies</div>
+                {reps.length === 0 ? (
+                  <div className="text-xs text-gray-500">No replies yet.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {reps.map((r) => {
+                      const who = staffById[r.staff_id];
+                      return (
+                        <div key={r.id} className="flex items-start gap-2">
+                          <img src={who?.photo_url || "/placeholder.png"} alt={who?.name || "Staff"} className="w-6 h-6 rounded-full object-cover mt-0.5" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[12px] font-medium">{who?.name || "Someone"}</span>
+                              <span className="text-[11px] text-gray-400">{new Date(r.created_at).toLocaleString("en-AU", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                            </div>
+                            <div className="text-sm whitespace-pre-wrap break-words">{r.body}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {n.resolved ? (
+                  <div className="mt-2 border-t pt-2 text-xs text-gray-500">This note is resolved.</div>
+                ) : (
+                  <div className="mt-2 border-t pt-2">
+                    <textarea
+                      value={replyText[n.id] || ""}
+                      onChange={(e) => setReplyText((prev) => ({ ...prev, [n.id]: e.target.value }))}
+                      rows={2}
+                      maxLength={500}
+                      placeholder="Reply…"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none"
+                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postReply(n.id); } }}
+                    />
+                    <div className="mt-2 flex justify-end">
+                      <button onClick={() => postReply(n.id)} disabled={!String(replyText[n.id] || "").trim() || replySaving === n.id} className="rounded-lg px-3 py-1.5 text-sm bg-blue-600 text-white disabled:opacity-40">
+                        {replySaving === n.id ? "Posting…" : "Reply"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const openNotes = notes.filter((n) => n.resolved !== true);
+  const resolvedNotes = notes.filter((n) => n.resolved === true);
+
+  return (
+    <div className="max-w-lg mx-auto space-y-3">
+      {/* Composer */}
+      <div className="bg-white rounded-2xl shadow-sm border p-3 flex gap-2 items-end">
+        <textarea
+          value={noteText}
+          onChange={(e) => setNoteText(e.target.value)}
+          maxLength={500}
+          rows={2}
+          placeholder="Post a note to the team…"
+          className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
+        />
+        <button onClick={postNote} disabled={!noteText.trim() || posting} className="rounded-lg px-3 py-2 text-sm font-medium bg-blue-600 text-white disabled:opacity-40">
+          {posting ? "…" : "Post"}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-gray-400 text-center mt-6">Loading notes…</div>
+      ) : (
+        <>
+          {openNotes.length === 0 && resolvedNotes.length === 0 && (
+            <p className="text-sm text-gray-400 text-center mt-6">No notes yet.</p>
+          )}
+          <div className="space-y-2">{openNotes.map(renderNote)}</div>
+          {resolvedNotes.length > 0 && (
+            <div className="pt-2">
+              <button onClick={() => setShowResolved((v) => !v)} className="w-full text-xs rounded-lg border border-gray-200 px-3 py-2 text-gray-600 hover:bg-gray-50">
+                {showResolved ? "Hide resolved" : `Resolved (${resolvedNotes.length})`}
+              </button>
+              {showResolved && <div className="space-y-2 mt-2">{resolvedNotes.map(renderNote)}</div>}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function MessagesTab({ staff }) {
   const [staffList, setStaffList] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -1077,26 +1355,6 @@ function DetailsTab({ staff }) {
           </div>
         )}
       </div>
-
-      <button
-        onClick={async () => {
-          const res = await fetch("/api/push", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              staff_ids: [staff.id],
-              title: "Chalkboard Pocket",
-              body: "Push notifications are working 🎉",
-              url: "/me?p=byford",
-            }),
-          });
-          const json = await res.json();
-          alert("Sent: " + JSON.stringify(json));
-        }}
-        className="w-full border border-blue-200 text-blue-600 rounded-xl py-3 text-sm font-medium hover:bg-blue-50"
-      >
-        Send test notification
-      </button>
 
       <button
         onClick={handleLogout}
@@ -1891,7 +2149,7 @@ export default function MePage() {
         ) : tab === "wages" ? (
           <WagesTab staff={staff} />
         ) : tab === "messages" ? (
-          <MessagesTab staff={staff} />
+          <MessagesCombinedTab staff={staff} />
         ) : tab === "details" ? (
           <DetailsTab staff={staff} />
         ) : (

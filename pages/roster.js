@@ -1011,6 +1011,20 @@ const handleLeaveDecision = async (lr, decision) => {
       }).eq("id", lr.id);
       if (error) throw error;
       await refreshLeave();
+
+      // Notify the staff member of the decision (not when reset to pending)
+      if (lr.staff_id && (decision === "approved" || decision === "declined")) {
+        fetch("/api/push", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            staff_ids: [lr.staff_id],
+            title: decision === "approved" ? "Leave approved" : "Leave request declined",
+            body: `Your ${lr.leave_type} request was ${decision}.`,
+            url: "/me?p=byford",
+          }),
+        }).catch(() => {});
+      }
     } catch (err) {
       alert("Couldn't update request: " + (err?.message || String(err)));
     } finally {
