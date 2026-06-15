@@ -4,6 +4,48 @@ import { toISO, buildWageRows, fmt as wageFmt } from "../lib/wageCalc";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
+// Convert a base64 VAPID key to the Uint8Array the browser needs.
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+// Ask permission and save this device's push subscription for the staff member.
+async function subscribeToPush(staffMember) {
+  try {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+    if (!vapid) return;
+
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") return;
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapid),
+      });
+    }
+
+    const json = sub.toJSON();
+    await supabase.from("push_subscriptions").upsert({
+      staff_id: staffMember.id,
+      pharmacy_id: PHARMACY_ID,
+      endpoint: sub.endpoint,
+      p256dh: json.keys.p256dh,
+      auth: json.keys.auth,
+    }, { onConflict: "endpoint" });
+  } catch (err) {
+    console.error("Push subscribe failed:", err);
+  }
+}
+
 const formatTime = (time) => {
   if (!time) return "";
   const [hourStr, minuteStr] = String(time).split(":");
@@ -1015,6 +1057,26 @@ function DetailsTab({ staff }) {
       </div>
 
       <button
+        onClick={async () => {
+          const res = await fetch("/api/push", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              staff_ids: [staff.id],
+              title: "Chalkboard Pocket",
+              body: "Push notifications are working 🎉",
+              url: "/me?p=byford",
+            }),
+          });
+          const json = await res.json();
+          alert("Sent: " + JSON.stringify(json));
+        }}
+        className="w-full border border-blue-200 text-blue-600 rounded-xl py-3 text-sm font-medium hover:bg-blue-50"
+      >
+        Send test notification
+      </button>
+
+      <button
         onClick={handleLogout}
         disabled={loggingOut}
         className="w-full border border-red-200 text-red-600 rounded-xl py-3 text-sm font-medium hover:bg-red-50 disabled:opacity-40"
@@ -1597,6 +1659,12 @@ export default function MePage() {
       .eq("deleted_by_recipient", false)
       .then(({ data }) => setUnreadCount((data || []).length));
   }, [staff?.id, tab]);
+
+  // Register this device for push notifications once logged in.
+  useEffect(() => {
+    if (!staff?.id) return;
+    subscribeToPush(staff);
+  }, [staff?.id]);
 
   // Leave status update indicator for the Time off tab
   useEffect(() => {
