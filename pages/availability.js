@@ -322,7 +322,7 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
         <div className="text-center mb-6">
           <div className="text-3xl mb-1">📅</div>
           <h1 className="text-xl font-bold text-gray-800">Byford Pharmacy</h1>
-          <p className="text-sm text-gray-500">My Availability</p>
+          <p className="text-sm text-gray-500">Availability & Leave</p>
         </div>
 
         {/* Step: select staff */}
