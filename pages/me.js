@@ -700,7 +700,7 @@ const meFmtWhen = (d) =>
 
 const NOTE_REACTIONS = ["👍", "❤️", "🙂"];
 
-function MessagesCombinedTab({ staff, onBoardSeen }) {
+function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount }) {
   const [sub, setSub] = useState("direct");
 
   const handleSubTab = (key) => {
@@ -2171,7 +2171,7 @@ export default function MePage() {
         ) : tab === "wages" ? (
           <WagesTab staff={staff} />
         ) : tab === "messages" ? (
-          <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} />
+          <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} newBoardCount={newBoardCount} />
         ) : tab === "details" ? (
           <DetailsTab staff={staff} />
         ) : (
@@ -2196,10 +2196,13 @@ export default function MePage() {
           >
             <span className="relative text-xl">
               {t.icon}
-              {t.key === "messages" && (unreadCount + newBoardCount) > 0 && (
+              {t.key === "messages" && unreadCount > 0 && (
                 <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none">
-                  {unreadCount + newBoardCount}
+                  {unreadCount}
                 </span>
+              )}
+              {t.key === "messages" && unreadCount === 0 && newBoardCount > 0 && (
+                <span className="absolute -top-1 -right-1 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
               )}
               {t.key === "timeoff" && leaveUpdate && (
                 <span className="absolute -top-1 -right-2 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" title="Leave request update" />
