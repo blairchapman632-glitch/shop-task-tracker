@@ -49,6 +49,17 @@ export default function MessagesPage() {
       }).select("*").single();
       if (error) throw error;
       setMessages((prev) => [...prev, data]);
+      // Notify the recipient
+      fetch("/api/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          staff_ids: [activeStaffId],
+          title: `Message from ${me.name}`,
+          body: "📷 Sent a photo",
+          url: "/me?p=byford",
+        }),
+      }).catch(() => {});
     } catch (err) {
       alert("Couldn't send image: " + (err?.message || String(err)));
     } finally {
@@ -127,6 +138,17 @@ export default function MessagesPage() {
       if (error) throw error;
       setMessages((prev) => [...prev, data]);
       setComposeText("");
+      // Notify the recipient
+      fetch("/api/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          staff_ids: [activeStaffId],
+          title: `Message from ${me.name}`,
+          body: body.length > 80 ? body.slice(0, 80) + "…" : body,
+          url: "/me?p=byford",
+        }),
+      }).catch(() => {});
     } catch (err) {
       alert("Couldn't send: " + (err?.message || String(err)));
     } finally {
