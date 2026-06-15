@@ -105,8 +105,7 @@ export default function AvailabilityPage() {
     if (error || !data) { setPinError("Incorrect PIN."); setPin(""); return; }
     await loadExisting(selectedStaff.id, selectedMonth);
     await loadMyLeave(selectedStaff.id);
-    const leaveOnly = ["Permanent", "Salary"].includes(selectedStaff.employment_type);
-    setActiveTab(leaveOnly ? "leave" : "availability");
+    setActiveTab("availability");
     setStep("form");
   };
 
@@ -374,10 +373,7 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
               </div>
 
               <div className="flex gap-1 mb-4">
-                {(["Permanent", "Salary"].includes(selectedStaff.employment_type)
-                  ? [{ key: "leave", label: "🏖️ Leave" }]
-                  : [{ key: "availability", label: "📅 Availability" }, { key: "leave", label: "🏖️ Leave" }]
-                ).map((tab) => (
+                {[{ key: "availability", label: "📅 Availability" }, { key: "leave", label: "🏖️ Leave" }].map((tab) => (
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}

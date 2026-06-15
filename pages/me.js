@@ -185,7 +185,7 @@ const toFmtDate = (d) =>
   new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 
 function TimeOffTab({ staff }) {
-  const leaveOnly = ["Permanent", "Salary"].includes(staff.employment_type);
+  const leaveOnly = false;
 
   const [activeTab, setActiveTab] = useState(leaveOnly ? "leave" : "availability");
 
