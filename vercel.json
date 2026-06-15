@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/wage-reminder",
+      "schedule": "0 1 * * 1"
+    }
+  ]
+}
