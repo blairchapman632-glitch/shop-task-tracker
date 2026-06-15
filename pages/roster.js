@@ -729,6 +729,29 @@ const refreshLeave = useCallback(async () => {
         await supabase.from("roster_months").insert([{ month: monthDate, status: "published", published_at: new Date().toISOString(), pharmacy_id: pharmacyId }]);
       }
       setMonthStatus(isPublished ? "draft" : "published");
+
+      // Notify all staff when publishing (not when unpublishing)
+      if (!isPublished) {
+        const { data: allStaff } = await supabase
+          .from("staff")
+          .select("id")
+          .eq("pharmacy_id", "81ab394f-d642-4246-b896-e71938b25671")
+          .eq("active", true)
+          .neq("role", "Locum");
+        const ids = (allStaff || []).map((s) => s.id);
+        if (ids.length) {
+          fetch("/api/push", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              staff_ids: ids,
+              title: "Roster published",
+              body: `The ${monthLabel} roster is now available.`,
+              url: "/me?p=byford",
+            }),
+          }).catch(() => {});
+        }
+      }
     } catch (err) {
       alert("Couldn't update roster status: " + (err?.message || String(err)));
     } finally {
