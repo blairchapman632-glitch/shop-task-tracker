@@ -187,7 +187,7 @@ const toFmtDate = (d) =>
 function TimeOffTab({ staff }) {
   const leaveOnly = false;
 
-  const [activeTab, setActiveTab] = useState(leaveOnly ? "leave" : "availability");
+  const [activeTab, setActiveTab] = useState(["Permanent", "Salary"].includes(staff.employment_type) ? "leave" : "availability");
 
   // Month selector (next 12 months, starting next month)
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -716,7 +716,7 @@ const meFmtWhen = (d) =>
 const NOTE_REACTIONS = ["👍", "❤️", "🙂"];
 
 function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount }) {
-  const [sub, setSub] = useState("direct");
+  const [sub, setSub] = useState("notes");
 
   const handleSubTab = (key) => {
     setSub(key);

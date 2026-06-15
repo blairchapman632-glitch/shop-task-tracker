@@ -106,7 +106,7 @@ export default function AvailabilityPage() {
     if (error || !data) { setPinError("Incorrect PIN."); setPin(""); return; }
     await loadExisting(selectedStaff.id, selectedMonth);
     await loadMyLeave(selectedStaff.id);
-    setActiveTab("availability");
+    setActiveTab(["Permanent", "Salary"].includes(selectedStaff.employment_type) ? "leave" : "availability");
     setStep("form");
   };
 
