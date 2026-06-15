@@ -1573,14 +1573,8 @@ export default function HomePage() {
                     {approvalReminderIds.has(s.id) && (
                       <span className="absolute -top-1 -right-1 z-10 text-base" title="Approve your timesheet">⚠️</span>
                     )}
-                    {unreadByStaff[s.id] > 0 && (
-                      <span className="absolute -top-1 -left-1 z-10 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-blue-600 text-white text-[11px] font-semibold ring-2 ring-white" title="Unread messages">
-                        {unreadByStaff[s.id]}
-                      </span>
-                    )}
-                    {leaveUpdateIds.has(s.id) && (
-                      <span className="absolute -bottom-1 -right-1 z-10 text-base" title="Leave request update">🗓️</span>
-                    )}
+                    
+                    
                     <img
                       src={s.photo_url || "/placeholder.png"}
                       alt={s.name}
