@@ -761,6 +761,9 @@ function NotesTab({ staff }) {
   const [expandedId, setExpandedId] = useState(null);
   const [reactionsByNote, setReactionsByNote] = useState({});
   const [showResolved, setShowResolved] = useState(false);
+  const [pollsByNote, setPollsByNote] = useState({});
+  const [customOptDraft, setCustomOptDraft] = useState({});
+  const [customOptSaving, setCustomOptSaving] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -771,7 +774,7 @@ function NotesTab({ staff }) {
 
       const { data, error } = await supabase
         .from("kiosk_notes")
-        .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id")
+        .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, type, poll_question, allow_custom_options")
         .eq("pharmacy_id", PHARMACY_ID)
         .or("deleted.is.null,deleted.eq.false")
         .order("pinned", { ascending: false })
@@ -780,6 +783,26 @@ function NotesTab({ staff }) {
         .limit(200);
       if (error) throw error;
       setNotes(data || []);
+
+      const pollNoteIds = (data || []).filter((n) => n.type === "poll").map((n) => n.id);
+      if (pollNoteIds.length) {
+        const [{ data: optData }, { data: voteData }] = await Promise.all([
+          supabase.from("poll_options").select("id, kiosk_note_id, label, display_order, added_by_staff_id").eq("pharmacy_id", PHARMACY_ID).in("kiosk_note_id", pollNoteIds).order("display_order", { ascending: true }),
+          supabase.from("poll_votes").select("poll_option_id, kiosk_note_id, staff_id").eq("pharmacy_id", PHARMACY_ID).in("kiosk_note_id", pollNoteIds),
+        ]);
+        const polls = {};
+        for (const o of optData || []) {
+          if (!polls[o.kiosk_note_id]) polls[o.kiosk_note_id] = { options: [], votes: [] };
+          polls[o.kiosk_note_id].options.push(o);
+        }
+        for (const v of voteData || []) {
+          if (!polls[v.kiosk_note_id]) polls[v.kiosk_note_id] = { options: [], votes: [] };
+          polls[v.kiosk_note_id].votes.push(v);
+        }
+        setPollsByNote(polls);
+      } else {
+        setPollsByNote({});
+      }
 
       const ids = (data || []).map((n) => n.id);
       if (ids.length) {
@@ -870,6 +893,58 @@ function NotesTab({ staff }) {
     }
   };
 
+  const castVote = async (noteId, optionId) => {
+    const sid = Number(me.id);
+    const poll = pollsByNote[noteId];
+    if (!poll) return;
+    const existing = poll.votes.find((v) => Number(v.staff_id) === sid);
+    try {
+      if (existing && Number(existing.poll_option_id) === Number(optionId)) return;
+      if (existing) await supabase.from("poll_votes").delete().eq("kiosk_note_id", noteId).eq("staff_id", sid);
+      await supabase.from("poll_votes").insert({ poll_option_id: optionId, kiosk_note_id: noteId, staff_id: sid, pharmacy_id: PHARMACY_ID });
+      setPollsByNote((prev) => {
+        const next = { ...prev };
+        const p = next[noteId] ? { ...next[noteId], votes: [...next[noteId].votes] } : { options: [], votes: [] };
+        p.votes = p.votes.filter((v) => Number(v.staff_id) !== sid);
+        p.votes.push({ poll_option_id: optionId, kiosk_note_id: noteId, staff_id: sid });
+        next[noteId] = p;
+        return next;
+      });
+    } catch (err) {
+      alert("Couldn't vote: " + (err?.message || String(err)));
+    }
+  };
+
+  const addCustomOption = async (noteId) => {
+    const label = String(customOptDraft[noteId] || "").trim();
+    if (!label) return;
+    const sid = Number(me.id);
+    const poll = pollsByNote[noteId] || { options: [], votes: [] };
+    if (poll.options.some((o) => o.label.toLowerCase() === label.toLowerCase())) { alert("That option already exists."); return; }
+    setCustomOptSaving(noteId);
+    try {
+      const { data: opt, error: optErr } = await supabase.from("poll_options").insert({ kiosk_note_id: noteId, pharmacy_id: PHARMACY_ID, label, display_order: poll.options.length, added_by_staff_id: sid }).select("id, kiosk_note_id, label, display_order, added_by_staff_id").single();
+      if (optErr) throw optErr;
+      const existing = poll.votes.find((v) => Number(v.staff_id) === sid);
+      if (existing) await supabase.from("poll_votes").delete().eq("kiosk_note_id", noteId).eq("staff_id", sid);
+      await supabase.from("poll_votes").insert({ poll_option_id: opt.id, kiosk_note_id: noteId, staff_id: sid, pharmacy_id: PHARMACY_ID });
+      setPollsByNote((prev) => {
+        const next = { ...prev };
+        const p = next[noteId] ? { options: [...next[noteId].options], votes: [...next[noteId].votes] } : { options: [], votes: [] };
+        p.options.push(opt);
+        p.votes = p.votes.filter((v) => Number(v.staff_id) !== sid);
+        p.votes.push({ poll_option_id: opt.id, kiosk_note_id: noteId, staff_id: sid });
+        next[noteId] = p;
+        return next;
+      });
+      setCustomOptDraft((prev) => ({ ...prev, [noteId]: "" }));
+    } catch (err) {
+      alert("Couldn't add option: " + (err?.message || String(err)));
+    } finally {
+      setCustomOptSaving(null);
+    }
+  };
+
   const noteTrunc = (text, max = 160) => {
     const s = String(text || "").trim();
     return s.length <= max ? s : s.slice(0, max - 1) + "…";
@@ -892,9 +967,65 @@ function NotesTab({ staff }) {
               <span className="text-[11px] text-gray-400">{when}</span>
               {n.resolved && <span className="text-[11px] rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">✅ Resolved</span>}
             </div>
-            <div className="text-sm text-gray-800 whitespace-pre-wrap break-words mt-1" onClick={() => setExpandedId(isOpen ? null : n.id)}>
-              {isOpen ? n.body : noteTrunc(n.body)}
-            </div>
+            {n.type === "poll" ? (
+              <div className="mt-1">
+                <div className="text-sm font-semibold text-gray-800 mb-2">📊 {n.poll_question || n.body}</div>
+                {(() => {
+                  const poll = pollsByNote[n.id] || { options: [], votes: [] };
+                  const total = poll.votes.length;
+                  const sid = Number(me.id);
+                  const myVote = poll.votes.find((v) => Number(v.staff_id) === sid);
+                  return (
+                    <div className="space-y-1.5">
+                      {poll.options.map((opt) => {
+                        const count = poll.votes.filter((v) => Number(v.poll_option_id) === Number(opt.id)).length;
+                        const pct = total ? Math.round((count / total) * 100) : 0;
+                        const mine = myVote && Number(myVote.poll_option_id) === Number(opt.id);
+                        return (
+                          <button
+                            key={opt.id}
+                            onClick={() => castVote(n.id, opt.id)}
+                            disabled={n.resolved}
+                            className={`relative w-full text-left rounded-lg border overflow-hidden disabled:cursor-default ${mine ? "border-purple-500" : "border-gray-200"}`}
+                          >
+                            <div className="absolute inset-0 bg-purple-100" style={{ width: `${pct}%` }} />
+                            <div className="relative flex items-center justify-between px-3 py-2 text-sm">
+                              <span className={`font-medium ${mine ? "text-purple-800" : "text-gray-700"}`}>{mine && "✓ "}{opt.label}</span>
+                              <span className="tabular-nums text-xs text-gray-500">{count} · {pct}%</span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                      {n.allow_custom_options && !n.resolved && (
+                        <div className="flex gap-2 items-center pt-1">
+                          <input
+                            type="text"
+                            value={customOptDraft[n.id] || ""}
+                            onChange={(e) => setCustomOptDraft((prev) => ({ ...prev, [n.id]: e.target.value }))}
+                            maxLength={100}
+                            placeholder="Add your own option…"
+                            className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-300"
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomOption(n.id); } }}
+                          />
+                          <button
+                            onClick={() => addCustomOption(n.id)}
+                            disabled={customOptSaving === n.id || !(customOptDraft[n.id] || "").trim()}
+                            className="rounded-lg px-3 py-1.5 text-xs font-medium bg-purple-600 text-white disabled:opacity-40"
+                          >
+                            {customOptSaving === n.id ? "…" : "Add"}
+                          </button>
+                        </div>
+                      )}
+                      <div className="text-[11px] text-gray-400">{total} vote{total === 1 ? "" : "s"}{n.resolved ? " · closed" : ""}</div>
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-800 whitespace-pre-wrap break-words mt-1" onClick={() => setExpandedId(isOpen ? null : n.id)}>
+                {isOpen ? n.body : noteTrunc(n.body)}
+              </div>
+            )}
 
             {/* Footer actions */}
             <div className="mt-2 flex items-center gap-1 flex-wrap">
