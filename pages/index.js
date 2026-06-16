@@ -596,6 +596,16 @@ export default function HomePage() {
   const [reactionsByNote, setReactionsByNote] = useState({});
   const noteItemRefs = useRef({});
 
+  // ── Polls ──
+  const [showPollComposer, setShowPollComposer] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState("");
+  const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [pollAllowCustom, setPollAllowCustom] = useState(false);
+  const [pollSaving, setPollSaving] = useState(false);
+  const [pollsByNote, setPollsByNote] = useState({}); // noteId -> { options: [{id, label}], votes: [{poll_option_id, staff_id}], allowCustom }
+  const [customOptDraft, setCustomOptDraft] = useState({}); // noteId -> draft string
+  const [customOptSaving, setCustomOptSaving] = useState(null); // noteId being saved
+
   // ── UI ──
   const [infoOpenId, setInfoOpenId] = useState(null);
   const [showConfetti, setShowConfetti] = useState(false);
@@ -971,7 +981,7 @@ export default function HomePage() {
     if (!authChecked || !currentPharmacyId) return;
     const loadNotes = async () => {
       try {
-        const { data, error } = await supabase.from("kiosk_notes").select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, pharmacy_id").eq("pharmacy_id", currentPharmacyId).or("deleted.is.null,deleted.eq.false").order("pinned", { ascending: false }).order("last_activity_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(200);
+        const { data, error } = await supabase.from("kiosk_notes").select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, pharmacy_id, type, poll_question, allow_custom_options").eq("pharmacy_id", currentPharmacyId).or("deleted.is.null,deleted.eq.false").order("pinned", { ascending: false }).order("last_activity_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(200);
         if (error) throw error;
         setNotes(data || []);
 
@@ -994,6 +1004,24 @@ export default function HomePage() {
             if (selectedStaffId && Number(row.staff_id) === Number(selectedStaffId)) by[row.note_id].mine = row.reaction;
           }
           setReactionsByNote(by);
+
+          const pollNoteIds = (data || []).filter((n) => n.type === "poll").map((n) => n.id);
+          if (pollNoteIds.length) {
+            const [{ data: optData }, { data: voteData }] = await Promise.all([
+              supabase.from("poll_options").select("id, kiosk_note_id, label, display_order, added_by_staff_id").eq("pharmacy_id", currentPharmacyId).in("kiosk_note_id", pollNoteIds).order("display_order", { ascending: true }),
+              supabase.from("poll_votes").select("poll_option_id, kiosk_note_id, staff_id").eq("pharmacy_id", currentPharmacyId).in("kiosk_note_id", pollNoteIds),
+            ]);
+            const polls = {};
+            for (const o of optData || []) {
+              if (!polls[o.kiosk_note_id]) polls[o.kiosk_note_id] = { options: [], votes: [] };
+              polls[o.kiosk_note_id].options.push(o);
+            }
+            for (const v of voteData || []) {
+              if (!polls[v.kiosk_note_id]) polls[v.kiosk_note_id] = { options: [], votes: [] };
+              polls[v.kiosk_note_id].votes.push(v);
+            }
+            setPollsByNote(polls);
+          }
         }
       } catch (err) {
         console.error("Notes load failed:", err);
@@ -1068,6 +1096,90 @@ export default function HomePage() {
       alert("Couldn't post note: " + (err?.message || String(err)));
     } finally {
       setNotesSaving(false);
+    }
+  };
+
+  const createPoll = async () => {
+    const q = pollQuestion.trim();
+    const opts = pollOptions.map((o) => o.trim()).filter(Boolean);
+    if (!q) { alert("Enter a poll question."); return; }
+    if (opts.length < 2) { alert("Add at least 2 options."); return; }
+    if (!selectedStaffId) { alert("Tap your photo first."); return; }
+    setPollSaving(true);
+    try {
+      const { data: note, error: noteErr } = await supabase.from("kiosk_notes").insert({ body: q, poll_question: q, type: "poll", allow_custom_options: pollAllowCustom, staff_id: Number(selectedStaffId), deleted: false, last_activity_at: new Date().toISOString(), pharmacy_id: currentPharmacyId }).select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, type, poll_question, allow_custom_options").single();
+      if (noteErr) throw noteErr;
+      const optRows = opts.map((label, i) => ({ kiosk_note_id: note.id, pharmacy_id: currentPharmacyId, label, display_order: i }));
+      const { data: savedOpts, error: optErr } = await supabase.from("poll_options").insert(optRows).select("id, kiosk_note_id, label, display_order, added_by_staff_id");
+      if (optErr) throw optErr;
+      setNotes((prev) => [note, ...prev]);
+      setPollsByNote((prev) => ({ ...prev, [note.id]: { options: savedOpts || [], votes: [] } }));
+      setPollQuestion("");
+      setPollOptions(["", ""]);
+      setPollAllowCustom(false);
+      setShowPollComposer(false);
+    } catch (err) {
+      alert("Couldn't create poll: " + (err?.message || String(err)));
+    } finally {
+      setPollSaving(false);
+    }
+  };
+
+  const castVote = async (noteId, optionId) => {
+    if (!selectedStaffId) { alert("Tap your photo first to vote."); return; }
+    const sid = Number(selectedStaffId);
+    const poll = pollsByNote[noteId];
+    if (!poll) return;
+    const existing = poll.votes.find((v) => Number(v.staff_id) === sid);
+    try {
+      if (existing && Number(existing.poll_option_id) === Number(optionId)) return; // already voted this option
+      if (existing) {
+        await supabase.from("poll_votes").delete().eq("kiosk_note_id", noteId).eq("staff_id", sid);
+      }
+      await supabase.from("poll_votes").insert({ poll_option_id: optionId, kiosk_note_id: noteId, staff_id: sid, pharmacy_id: currentPharmacyId });
+      setPollsByNote((prev) => {
+        const next = { ...prev };
+        const p = next[noteId] ? { ...next[noteId], votes: [...next[noteId].votes] } : { options: [], votes: [] };
+        p.votes = p.votes.filter((v) => Number(v.staff_id) !== sid);
+        p.votes.push({ poll_option_id: optionId, kiosk_note_id: noteId, staff_id: sid });
+        next[noteId] = p;
+        return next;
+      });
+    } catch (err) {
+      alert("Couldn't vote: " + (err?.message || String(err)));
+    }
+  };
+
+  const addCustomOption = async (noteId) => {
+    if (!selectedStaffId) { alert("Tap your photo first."); return; }
+    const label = String(customOptDraft[noteId] || "").trim();
+    if (!label) return;
+    const sid = Number(selectedStaffId);
+    const poll = pollsByNote[noteId] || { options: [], votes: [] };
+    if (poll.options.some((o) => o.label.toLowerCase() === label.toLowerCase())) { alert("That option already exists."); return; }
+    setCustomOptSaving(noteId);
+    try {
+      const nextOrder = poll.options.length;
+      const { data: opt, error: optErr } = await supabase.from("poll_options").insert({ kiosk_note_id: noteId, pharmacy_id: currentPharmacyId, label, display_order: nextOrder, added_by_staff_id: sid }).select("id, kiosk_note_id, label, display_order, added_by_staff_id").single();
+      if (optErr) throw optErr;
+      // auto-cast this person's vote for their new option (move from existing if any)
+      const existing = poll.votes.find((v) => Number(v.staff_id) === sid);
+      if (existing) await supabase.from("poll_votes").delete().eq("kiosk_note_id", noteId).eq("staff_id", sid);
+      await supabase.from("poll_votes").insert({ poll_option_id: opt.id, kiosk_note_id: noteId, staff_id: sid, pharmacy_id: currentPharmacyId });
+      setPollsByNote((prev) => {
+        const next = { ...prev };
+        const p = next[noteId] ? { options: [...next[noteId].options], votes: [...next[noteId].votes] } : { options: [], votes: [] };
+        p.options.push(opt);
+        p.votes = p.votes.filter((v) => Number(v.staff_id) !== sid);
+        p.votes.push({ poll_option_id: opt.id, kiosk_note_id: noteId, staff_id: sid });
+        next[noteId] = p;
+        return next;
+      });
+      setCustomOptDraft((prev) => ({ ...prev, [noteId]: "" }));
+    } catch (err) {
+      alert("Couldn't add option: " + (err?.message || String(err)));
+    } finally {
+      setCustomOptSaving(null);
     }
   };
 
@@ -1650,14 +1762,77 @@ export default function HomePage() {
                 className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
               />
-              <button
-                onClick={postNote}
-                disabled={!noteText.trim() || notesSaving || !selectedStaffId}
-                className="rounded-lg px-3 py-1.5 text-xs font-medium border border-blue-500 bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                {notesSaving ? "..." : "Post"}
-              </button>
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={postNote}
+                  disabled={!noteText.trim() || notesSaving || !selectedStaffId}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium border border-blue-500 bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {notesSaving ? "..." : "Post"}
+                </button>
+                {selectedStaff?.can_access_admin && (
+                  <button
+                    onClick={() => setShowPollComposer((o) => !o)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${showPollComposer ? "border-purple-600 bg-purple-600 text-white" : "border-purple-300 bg-white text-purple-700 hover:bg-purple-50"}`}
+                  >
+                    📊 Poll
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* Poll composer */}
+            {showPollComposer && (
+              <div className="mb-3 shrink-0 max-h-[45vh] overflow-y-auto rounded-lg border border-purple-200 bg-purple-50 p-3 space-y-2">
+                <input
+                  type="text"
+                  value={pollQuestion}
+                  onChange={(e) => setPollQuestion(e.target.value)}
+                  maxLength={200}
+                  placeholder="Poll question…"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-300"
+                />
+                {pollOptions.map((opt, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      value={opt}
+                      onChange={(e) => setPollOptions((prev) => prev.map((o, idx) => idx === i ? e.target.value : o))}
+                      maxLength={100}
+                      placeholder={`Option ${i + 1}`}
+                      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-300"
+                    />
+                    {pollOptions.length > 2 && (
+                      <button
+                        onClick={() => setPollOptions((prev) => prev.filter((_, idx) => idx !== i))}
+                        className="h-7 w-7 inline-flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-200"
+                      >✕</button>
+                    )}
+                  </div>
+                ))}
+                <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pollAllowCustom}
+                    onChange={(e) => setPollAllowCustom(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-gray-300"
+                  />
+                  Let staff add their own options
+                </label>
+                <div className="flex items-center justify-between">
+                  {pollOptions.length < 4 ? (
+                    <button onClick={() => setPollOptions((prev) => [...prev, ""])} className="text-xs text-purple-700 hover:underline">+ Add option</button>
+                  ) : <span />}
+                  <button
+                    onClick={createPoll}
+                    disabled={pollSaving || !pollQuestion.trim() || pollOptions.filter((o) => o.trim()).length < 2}
+                    className="rounded-lg px-4 py-1.5 text-xs font-medium bg-purple-600 text-white disabled:opacity-40"
+                  >
+                    {pollSaving ? "Creating…" : "Create poll"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Notes list */}
             <div className="flex-1 overflow-y-auto space-y-2 nice-scroll">
@@ -1690,9 +1865,65 @@ export default function HomePage() {
                           onKeyDown={(e) => { if (e?.target?.closest?.("textarea, input, button")) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedNoteId((prev) => prev === n.id ? null : n.id); } }}
                           className={`cursor-pointer ${expandedNoteId === n.id ? "mt-1 rounded-lg border border-gray-100 bg-gray-50 p-2" : ""}`}
                         >
-                          <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">
-                            {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
-                          </div>
+                          {n.type === "poll" ? (
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <div className="text-sm font-semibold text-gray-800 mb-2">📊 {n.poll_question || n.body}</div>
+                              {(() => {
+                                const poll = pollsByNote[n.id] || { options: [], votes: [] };
+                                const total = poll.votes.length;
+                                const sid = selectedStaffId ? Number(selectedStaffId) : null;
+                                const myVote = sid ? poll.votes.find((v) => Number(v.staff_id) === sid) : null;
+                                return (
+                                  <div className="space-y-1.5">
+                                    {poll.options.map((opt) => {
+                                      const count = poll.votes.filter((v) => Number(v.poll_option_id) === Number(opt.id)).length;
+                                      const pct = total ? Math.round((count / total) * 100) : 0;
+                                      const mine = myVote && Number(myVote.poll_option_id) === Number(opt.id);
+                                      return (
+                                        <button
+                                          key={opt.id}
+                                          onClick={() => castVote(n.id, opt.id)}
+                                          disabled={n.resolved}
+                                          className={`relative w-full text-left rounded-lg border overflow-hidden disabled:cursor-default ${mine ? "border-purple-500" : "border-gray-200 hover:border-purple-300"}`}
+                                        >
+                                          <div className="absolute inset-0 bg-purple-100" style={{ width: `${pct}%` }} />
+                                          <div className="relative flex items-center justify-between px-3 py-2 text-sm">
+                                            <span className={`font-medium ${mine ? "text-purple-800" : "text-gray-700"}`}>{mine && "✓ "}{opt.label}</span>
+                                            <span className="tabular-nums text-xs text-gray-500">{count} · {pct}%</span>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                    {n.allow_custom_options && !n.resolved && (
+                                      <div className="flex gap-2 items-center pt-1">
+                                        <input
+                                          type="text"
+                                          value={customOptDraft[n.id] || ""}
+                                          onChange={(e) => setCustomOptDraft((prev) => ({ ...prev, [n.id]: e.target.value }))}
+                                          maxLength={100}
+                                          placeholder="Add your own option…"
+                                          className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-300"
+                                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomOption(n.id); } }}
+                                        />
+                                        <button
+                                          onClick={() => addCustomOption(n.id)}
+                                          disabled={customOptSaving === n.id || !(customOptDraft[n.id] || "").trim() || !selectedStaffId}
+                                          className="rounded-lg px-3 py-1.5 text-xs font-medium bg-purple-600 text-white disabled:opacity-40"
+                                        >
+                                          {customOptSaving === n.id ? "…" : "Add"}
+                                        </button>
+                                      </div>
+                                    )}
+                                    <div className="text-[11px] text-gray-400">{total} vote{total === 1 ? "" : "s"}{n.resolved ? " · closed" : ""}</div>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">
+                              {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
+                            </div>
+                          )}
 
                           {expandedNoteId === n.id && (
                             <div className="mt-2 rounded-lg border border-gray-200 bg-white p-2">
