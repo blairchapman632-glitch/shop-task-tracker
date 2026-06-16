@@ -715,7 +715,7 @@ const meFmtWhen = (d) =>
 
 const NOTE_REACTIONS = ["👍", "❤️", "🙂"];
 
-function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount }) {
+function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount, unreadCount }) {
   const [sub, setSub] = useState("notes");
 
   const handleSubTab = (key) => {
@@ -735,6 +735,9 @@ function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount }) {
             className={`relative flex-1 text-sm rounded-lg py-2 font-medium ${sub === t.key ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
             {t.label}
             {t.key === "notes" && newBoardCount > 0 && sub !== "notes" && (
+              <span className="absolute top-1 right-2 inline-flex items-center justify-center h-2 w-2 rounded-full bg-red-500" />
+            )}
+            {t.key === "direct" && unreadCount > 0 && sub !== "direct" && (
               <span className="absolute top-1 right-2 inline-flex items-center justify-center h-2 w-2 rounded-full bg-red-500" />
             )}
           </button>
@@ -2189,7 +2192,7 @@ export default function MePage() {
         ) : tab === "wages" ? (
           <WagesTab staff={staff} />
         ) : tab === "messages" ? (
-          <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} newBoardCount={newBoardCount} />
+          <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} newBoardCount={newBoardCount} unreadCount={unreadCount} />
         ) : tab === "details" ? (
           <DetailsTab staff={staff} />
         ) : (
