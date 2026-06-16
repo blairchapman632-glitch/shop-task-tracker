@@ -978,9 +978,9 @@ function NotesTab({ staff }) {
                   return (
                     <div className="space-y-1.5">
                       {poll.options.map((opt) => {
-                        const count = poll.votes.filter((v) => Number(v.poll_option_id) === Number(opt.id)).length;
+                        const count = poll.votes.filter((v) => String(v.poll_option_id) === String(opt.id)).length;
                         const pct = total ? Math.round((count / total) * 100) : 0;
-                        const mine = myVote && Number(myVote.poll_option_id) === Number(opt.id);
+                        const mine = myVote && String(myVote.poll_option_id) === String(opt.id);
                         return (
                           <button
                             key={opt.id}

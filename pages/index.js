@@ -1136,7 +1136,9 @@ export default function HomePage() {
       if (existing) {
         await supabase.from("poll_votes").delete().eq("kiosk_note_id", noteId).eq("staff_id", sid);
       }
-      await supabase.from("poll_votes").insert({ poll_option_id: optionId, kiosk_note_id: noteId, staff_id: sid, pharmacy_id: currentPharmacyId });
+      const { error: insErr } = await supabase.from("poll_votes").insert({ poll_option_id: optionId, kiosk_note_id: noteId, staff_id: sid, pharmacy_id: currentPharmacyId });
+      console.log("vote insert error:", insErr);
+      if (insErr) throw insErr;
       setPollsByNote((prev) => {
         const next = { ...prev };
         const p = next[noteId] ? { ...next[noteId], votes: [...next[noteId].votes] } : { options: [], votes: [] };
@@ -1859,11 +1861,11 @@ export default function HomePage() {
                         </div>
 
                         <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => { if (e?.target?.closest?.("button, textarea, input")) return; setExpandedNoteId((prev) => prev === n.id ? null : n.id); }}
-                          onKeyDown={(e) => { if (e?.target?.closest?.("textarea, input, button")) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedNoteId((prev) => prev === n.id ? null : n.id); } }}
-                          className={`cursor-pointer ${expandedNoteId === n.id ? "mt-1 rounded-lg border border-gray-100 bg-gray-50 p-2" : ""}`}
+                          role={n.type === "poll" ? undefined : "button"}
+                          tabIndex={n.type === "poll" ? undefined : 0}
+                          onClick={(e) => { if (n.type === "poll") return; if (e?.target?.closest?.("button, textarea, input")) return; setExpandedNoteId((prev) => prev === n.id ? null : n.id); }}
+                          onKeyDown={(e) => { if (n.type === "poll") return; if (e?.target?.closest?.("textarea, input, button")) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedNoteId((prev) => prev === n.id ? null : n.id); } }}
+                          className={`${n.type === "poll" ? "" : "cursor-pointer"} ${expandedNoteId === n.id ? "mt-1 rounded-lg border border-gray-100 bg-gray-50 p-2" : ""}`}
                         >
                           {n.type === "poll" ? (
                             <div onClick={(e) => e.stopPropagation()}>
@@ -1876,22 +1878,23 @@ export default function HomePage() {
                                 return (
                                   <div className="space-y-1.5">
                                     {poll.options.map((opt) => {
-                                      const count = poll.votes.filter((v) => Number(v.poll_option_id) === Number(opt.id)).length;
+                                      const count = poll.votes.filter((v) => String(v.poll_option_id) === String(opt.id)).length;
                                       const pct = total ? Math.round((count / total) * 100) : 0;
-                                      const mine = myVote && Number(myVote.poll_option_id) === Number(opt.id);
+                                      const mine = myVote && String(myVote.poll_option_id) === String(opt.id);
                                       return (
-                                        <button
+                                        <div
                                           key={opt.id}
-                                          onClick={() => castVote(n.id, opt.id)}
-                                          disabled={n.resolved}
-                                          className={`relative w-full text-left rounded-lg border overflow-hidden disabled:cursor-default ${mine ? "border-purple-500" : "border-gray-200 hover:border-purple-300"}`}
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={() => { if (!n.resolved) castVote(n.id, opt.id); }}
+                                          className={`relative w-full text-left rounded-lg border overflow-hidden ${n.resolved ? "cursor-default" : "cursor-pointer"} ${mine ? "border-purple-500" : "border-gray-200 hover:border-purple-300"}`}
                                         >
                                           <div className="absolute inset-0 bg-purple-100" style={{ width: `${pct}%` }} />
                                           <div className="relative flex items-center justify-between px-3 py-2 text-sm">
                                             <span className={`font-medium ${mine ? "text-purple-800" : "text-gray-700"}`}>{mine && "✓ "}{opt.label}</span>
                                             <span className="tabular-nums text-xs text-gray-500">{count} · {pct}%</span>
                                           </div>
-                                        </button>
+                                        </div>
                                       );
                                     })}
                                     {n.allow_custom_options && !n.resolved && (
