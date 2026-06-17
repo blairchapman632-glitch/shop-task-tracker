@@ -332,6 +332,10 @@ function TimeOffTab({ staff }) {
       await loadExisting(selectedMonth);
       setEditingRangeKey(null);
       setSaved(true);
+      await notifyRosterManagers(
+        `Availability update from ${staff.name}`,
+        `${staff.name} updated their availability for ${selectedMonth}`
+      );
     } catch (err) {
       alert("Couldn't save: " + (err?.message || String(err)));
     } finally {
@@ -366,6 +370,26 @@ function TimeOffTab({ staff }) {
     }
   };
 
+  const notifyRosterManagers = async (title, body) => {
+    try {
+      const { data: managers } = await supabase
+        .from("staff")
+        .select("id")
+        .eq("pharmacy_id", PHARMACY_ID)
+        .eq("is_roster_manager", true)
+        .eq("active", true);
+      const ids = (managers || []).map((m) => m.id);
+      if (!ids.length) return;
+      fetch("/api/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ staff_ids: ids, title, body }),
+      }).catch(() => {});
+    } catch (err) {
+      console.error("Notify roster managers failed:", err);
+    }
+  };
+
   const handleSubmitLeave = async () => {
     if (!leaveFrom || !leaveTo) { alert("Please choose dates."); return; }
     if (leaveTo < leaveFrom) { alert("End date can't be before start date."); return; }
@@ -382,6 +406,11 @@ function TimeOffTab({ staff }) {
       }]);
       if (error) throw error;
       await loadMyLeave();
+      const dateLabel = leaveFrom === leaveTo ? leaveFrom : `${leaveFrom} – ${leaveTo}`;
+      await notifyRosterManagers(
+        `Leave request from ${staff.name}`,
+        `${staff.name} has requested ${leaveType} (${dateLabel})`
+      );
       setLeaveFrom(""); setLeaveTo(""); setLeaveAllDay(true);
       setLeaveStart("09:00"); setLeaveEnd("17:00"); setLeaveNote(""); setLeaveType("Annual Leave");
       setLeaveSaved(true);

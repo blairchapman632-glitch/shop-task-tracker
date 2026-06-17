@@ -190,6 +190,7 @@ function StaffForm({ member, onSave, onCancel }) {
     can_access_admin: member?.can_access_admin ?? false,
     can_access_wages: member?.can_access_wages ?? false,
     no_lunch_deduction: member?.no_lunch_deduction ?? false,
+    is_roster_manager: member?.is_roster_manager ?? false,
     pin: member?.pin || "",
     photo_url: member?.photo_url || "",
     weekly_schedule: member?.weekly_schedule || defaultSchedule(),
@@ -266,6 +267,7 @@ function StaffForm({ member, onSave, onCancel }) {
       can_access_admin: form.can_access_admin,
       can_access_wages: form.can_access_wages,
       no_lunch_deduction: form.no_lunch_deduction,
+      is_roster_manager: form.is_roster_manager,
       pin: form.pin || null,
       photo_url: form.photo_url || null,
       pharmacy_id: PHARMACY_ID,
@@ -459,6 +461,7 @@ function StaffForm({ member, onSave, onCancel }) {
             { field: "can_access_admin", label: "Can access admin", desc: "PIN unlocks this admin page" },
             { field: "can_access_wages", label: "Can access wages", desc: "PIN unlocks the full wages table for all staff" },
             { field: "no_lunch_deduction", label: "Never deduct lunch break", desc: "Skip the 30-min lunch deduction on all shifts and public holidays" },
+            { field: "is_roster_manager", label: "Roster manager", desc: "Receives push notifications for leave requests and availability changes" },
           ].map(({ field, label, desc }) => (
             <div key={field} className="flex items-center justify-between">
               <div>
