@@ -626,14 +626,17 @@ const refreshLeave = useCallback(async () => {
       const findDate = (weekday, occurrence) => {
         const days = new Date(currentYear, currentMonth + 1, 0).getDate();
         let count = 0;
+        let lastFound = null;
         for (let day = 1; day <= days; day++) {
           const c = new Date(currentYear, currentMonth, day);
           if (getWeekday(c) === weekday) {
             count++;
-            if (count === occurrence) return `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            lastFound = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+            if (count === occurrence) return lastFound;
           }
         }
-        return null;
+        // Occurrence doesn't exist in target month — use last available occurrence of that weekday
+        return lastFound;
       };
 
       const copied = prevShifts.map((s) => {
@@ -922,6 +925,19 @@ const refreshLeave = useCallback(async () => {
     setAvailEditingKey(key);
   };
 
+  const refreshAvailability = useCallback(async () => {
+    const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+    const startDate = `${monthStr}-01`;
+    const monthLast = `${monthStr}-${String(new Date(currentYear, currentMonth + 1, 0).getDate()).padStart(2, "0")}`;
+    const [{ data: patData }, { data: ovrData }] = await Promise.all([
+      supabase.from("availability_patterns").select("staff_id, day_of_week, status, from_date, to_date, created_at")
+        .or(`and(from_date.lte.${monthLast},to_date.gte.${startDate}),and(from_date.lte.${monthLast},to_date.is.null)`),
+      supabase.from("availability_overrides").select("staff_id, override_date, status"),
+    ]);
+    setAllPatterns(patData || []);
+    setAllOverrides(ovrData || []);
+  }, [currentYear, currentMonth]);
+
   const availSaveRange = async () => {
     if (!availStaffId) return;
     setAvailSavingRange(true);
@@ -951,6 +967,7 @@ const refreshLeave = useCallback(async () => {
       if (error) throw error;
       setAvailEditingKey(null);
       await loadStaffAvailability(availStaffId);
+      await refreshAvailability();
     } catch (err) {
       alert("Couldn't save range: " + (err?.message || String(err)));
     } finally {
@@ -967,6 +984,7 @@ const refreshLeave = useCallback(async () => {
       if (error) throw error;
       if (availEditingKey === `${range.from_date || ""}|${range.to_date || ""}`) setAvailEditingKey(null);
       await loadStaffAvailability(availStaffId);
+      await refreshAvailability();
     } catch (err) {
       alert("Couldn't delete range: " + (err?.message || String(err)));
     }
@@ -988,6 +1006,7 @@ const refreshLeave = useCallback(async () => {
       setAvailNewOvrStatus("unavailable");
       setAvailNewOvrNote("");
       await loadStaffAvailability(availStaffId);
+      await refreshAvailability();
     } catch (err) {
       alert("Couldn't add date: " + (err?.message || String(err)));
     }
@@ -998,6 +1017,7 @@ const refreshLeave = useCallback(async () => {
       const { error } = await supabase.from("availability_overrides").delete().eq("id", override.id);
       if (error) throw error;
       await loadStaffAvailability(availStaffId);
+      await refreshAvailability();
     } catch (err) {
       alert("Couldn't remove date: " + (err?.message || String(err)));
     }
@@ -1160,11 +1180,29 @@ const handleLeaveDecision = async (lr, decision) => {
       <div className="border-t my-1" />
 
       {/* New features */}
-      <button onClick={() => { setShowAvailability(true); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
+      <button onClick={() => { setAvailMonthOffset(monthOffset); setShowAvailability(true); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
         👥 Availability
       </button>
       <button onClick={() => { setShowIssues(true); setShowAvailability(false); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
         ⚠️ Issues
+        {(() => {
+          const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+          const monthShifts = shifts.filter((s) => s.shift_date?.startsWith(monthStr));
+          const holidayDates = new Set(holidays.map((h) => h.date));
+          let count = 0;
+          for (const s of monthShifts) { if (getShiftConflict(s)) count++; }
+          for (const s of monthShifts) { if (!s.staff_id && !s.staff_name) count++; }
+          for (const s of monthShifts) { if (holidayDates.has(s.shift_date)) count++; }
+          for (let d = 1; d <= daysInMonth; d++) {
+            const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+            const dayShifts = monthShifts.filter((s) => s.shift_date === dateStr);
+            if (dayShifts.length === 0) { count++; }
+            else if (!dayShifts.some((s) => s.role === "Pharmacist" || s.role === "Locum")) { count++; }
+          }
+          return count > 0 ? (
+            <span className="ml-auto text-[10px] bg-red-500 text-white rounded-full px-1.5 py-0.5 font-semibold">{count}</span>
+          ) : null;
+        })()}
       </button>
       <button onClick={() => { setShowRequests(true); setShowIssues(false); setShowAvailability(false); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
         📨 Requests
@@ -1864,16 +1902,32 @@ const handleLeaveDecision = async (lr, decision) => {
           }
         }
 
+        // 4. Days with no staff rostered
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          const dayShifts = monthShifts.filter((s) => s.shift_date === dateStr);
+          if (dayShifts.length === 0) {
+            issues.push({ type: "nostaff", date: dateStr, shift: null, label: "No staff rostered", sub: new Date(dateStr + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long" }) });
+          } else {
+            const hasPharmacist = dayShifts.some((s) => s.role === "Pharmacist" || s.role === "Locum");
+            if (!hasPharmacist) {
+              issues.push({ type: "nopharmacist", date: dateStr, shift: null, label: "No pharmacist rostered", sub: `${dayShifts.length} shift${dayShifts.length !== 1 ? "s" : ""} — no Pharmacist or Locum` });
+            }
+          }
+        }
+
         // Sort by date
         issues.sort((a, b) => a.date.localeCompare(b.date));
 
-        const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday" };
+        const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday", nostaff: "No staff rostered", nopharmacist: "No pharmacist" };
         const typeStyle = {
           availability: "bg-amber-50 border-amber-200 text-amber-800",
           tbc: "bg-red-50 border-red-200 text-red-700",
           ph: "bg-orange-50 border-orange-200 text-orange-700",
+          nostaff: "bg-gray-50 border-gray-300 text-gray-700",
+          nopharmacist: "bg-red-50 border-red-200 text-red-700",
         };
-        const typeIcon = { availability: "⚠️", tbc: "❓", ph: "🏖️" };
+        const typeIcon = { availability: "⚠️", tbc: "❓", ph: "🏖️", nostaff: "📭", nopharmacist: "💊" };
 
         return (
           <div className="no-print fixed inset-0 z-50 flex">
