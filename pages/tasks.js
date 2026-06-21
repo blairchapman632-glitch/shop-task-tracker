@@ -217,6 +217,8 @@ const handlePinSubmit = async () => {
   const [newSectionNotes, setNewSectionNotes] = useState("");
   const [newSectionPoints, setNewSectionPoints] = useState(3);
   const [savingNewSection, setSavingNewSection] = useState(false);
+  const [dragItem, setDragItem] = useState(null); // { scheduleId, sectionId, fromMonth, fromStaffId, sectionName }
+  const [dragOverCell, setDragOverCell] = useState(null); // { month, staffId }
 
   const MONTHS = [
     { label: "Jan", value: "2026-01-01" },
@@ -259,6 +261,100 @@ const handlePinSubmit = async () => {
   const isCompleted = (sectionId, month) =>
     schedule.some((s) => s.section_id === sectionId && s.month === month && s.completed_at);
 
+  const handleDrop = async (toMonth, toStaffId) => {
+    if (!dragItem) return;
+    const { scheduleId, sectionId, fromMonth, fromStaffId, sectionName } = dragItem;
+    setDragItem(null);
+    setDragOverCell(null);
+    if (toMonth === fromMonth && toStaffId === fromStaffId) return;
+
+    const changingStaff = toStaffId !== fromStaffId;
+    if (changingStaff) {
+      const toStaff = staffOptions.find((s) => s.id === toStaffId);
+      const fromStaff = staffOptions.find((s) => s.id === fromStaffId);
+      const ok = window.confirm(
+        `Move "${sectionName}" from ${fromStaff?.name || "current staff"} to ${toStaff?.name || "new staff"}?\n\nThis will also change who the section is assigned to.`
+      );
+      if (!ok) return;
+    }
+
+    try {
+      // Update the schedule row's month
+      await supabase.from("section_clean_schedule").update({ month: toMonth }).eq("id", scheduleId);
+
+      // If changing staff, update the section's assigned_staff_id too
+      if (changingStaff) {
+        await supabase.from("sections").update({ assigned_staff_id: toStaffId }).eq("id", sectionId);
+      }
+
+      await loadSections(currentPharmacyId);
+    } catch (err) {
+      alert("Couldn't move section: " + (err?.message || String(err)));
+    }
+  };
+const handleAutoBalance = async (staffId, staffName) => {
+    const staffSchedule = schedule.filter((sch) => {
+      const section = sections.find((sec) => sec.id === sch.section_id);
+      return section && section.assigned_staff_id === staffId;
+    });
+    if (staffSchedule.length === 0) {
+      alert(`${staffName} has no scheduled sections to balance.`);
+      return;
+    }
+    if (!window.confirm(`Spread ${staffName}'s ${staffSchedule.length} section(s) evenly across the year?\n\nThis will reschedule their existing section cleans. Completed ones won't move.`)) return;
+
+    const movable = staffSchedule.filter((sch) => !sch.completed_at);
+    if (movable.length === 0) {
+      alert("All of this staff member's sections are already completed — nothing to move.");
+      return;
+    }
+
+    // Months already locked by completed cleans (can't reuse those slots)
+    const lockedMonths = new Set(
+      staffSchedule.filter((sch) => sch.completed_at).map((sch) => sch.month)
+    );
+
+    // Group movable cleans by section so the same section gets spread apart
+    const bySection = {};
+    for (const sch of movable) {
+      if (!bySection[sch.section_id]) bySection[sch.section_id] = [];
+      bySection[sch.section_id].push(sch);
+    }
+
+    // Available month slots (exclude months locked by completed cleans)
+    const openMonths = MONTHS.map((m) => m.value).filter((mv) => !lockedMonths.has(mv));
+
+    // Round-robin assign: walk months in even strides, giving each successive
+    // clean the next slot, so repeats of one section land far apart.
+    const ordered = [];
+    const sectionIds = Object.keys(bySection);
+    let more = true;
+    while (more) {
+      more = false;
+      for (const sid of sectionIds) {
+        if (bySection[sid].length) {
+          ordered.push(bySection[sid].shift());
+          more = true;
+        }
+      }
+    }
+
+    const slotCount = openMonths.length || 1;
+    const step = slotCount / ordered.length;
+    const assignments = ordered.map((sch, i) => ({
+      id: sch.id,
+      month: openMonths[Math.min(slotCount - 1, Math.floor(i * step))],
+    }));
+
+    try {
+      for (const a of assignments) {
+        await supabase.from("section_clean_schedule").update({ month: a.month }).eq("id", a.id);
+      }
+      await loadSections(currentPharmacyId);
+    } catch (err) {
+      alert("Couldn't balance: " + (err?.message || String(err)));
+    }
+  };
   const handleToggleSchedule = async (sectionId, month) => {
     const key = `${sectionId}-${month}`;
     setTogglingCell(key);
@@ -614,11 +710,19 @@ const handlePinSubmit = async () => {
                 )}
               </div>
 
-              {/* Per-staff monthly count grid — for even planning */}
+              {/* Staff-first distribution grid */}
               <div className="bg-white rounded-xl border overflow-hidden">
-                <div className="px-4 py-3 border-b">
-                  <div className="text-sm font-semibold text-gray-700">Sections per staff member — 2026</div>
-                  <div className="text-xs text-gray-400 mt-0.5">Count of assigned sections each month — use to balance the load</div>
+                <div className="px-4 py-3 border-b flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-700">Distribution by staff — 2026</div>
+                    <div className="text-xs text-gray-400 mt-0.5">Shows which sections each person is cleaning each month. Bottom row = total sections due that month.</div>
+                  </div>
+                  <button
+                    onClick={() => { setShowAddSection((v) => !v); setNewSectionName(""); setNewSectionStaffId(""); setNewSectionNotes(""); }}
+                    className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700"
+                  >
+                    + Add Section
+                  </button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -626,7 +730,7 @@ const handlePinSubmit = async () => {
                       <tr>
                         <th className="px-3 py-2 text-left font-semibold text-gray-600 w-40">Staff</th>
                         {MONTHS.map((m) => (
-                          <th key={m.value} className={`px-1 py-2 text-center font-semibold w-10 ${m.value === thisMonth ? "text-blue-600" : "text-gray-500"}`}>
+                          <th key={m.value} className={`px-2 py-2 text-center font-semibold min-w-[72px] ${m.value === thisMonth ? "text-blue-600" : "text-gray-500"}`}>
                             {m.label}
                           </th>
                         ))}
@@ -635,34 +739,108 @@ const handlePinSubmit = async () => {
                     </thead>
                     <tbody>
                       {(() => {
-                        // Build: staffId -> { name, perMonth: {monthValue: count}, total }
+                        // Build: staffId -> { name, perMonth: {monthValue: [sectionName,...]}, total }
                         const rows = {};
+                        const ALL_STAFF_KEY = "__all__";
                         for (const sch of schedule) {
                           const section = sections.find((sec) => sec.id === sch.section_id);
-                          if (!section || !section.assigned_staff_id) continue; // skip unassigned
-                          const sid = section.assigned_staff_id;
-                          if (!rows[sid]) rows[sid] = { name: section.staff?.name || `#${sid}`, perMonth: {}, total: 0 };
-                          rows[sid].perMonth[sch.month] = (rows[sid].perMonth[sch.month] || 0) + 1;
+                          if (!section) continue;
+                          const sid = section.assigned_staff_id || ALL_STAFF_KEY;
+                          const sname = section.assigned_staff_id ? (section.staff?.name || `#${sid}`) : "All staff";
+                          if (!rows[sid]) rows[sid] = { staffId: section.assigned_staff_id || null, name: sname, perMonth: {}, total: 0 };
+                          if (!rows[sid].perMonth[sch.month]) rows[sid].perMonth[sch.month] = [];
+                          rows[sid].perMonth[sch.month].push({ name: section.name, completed: !!sch.completed_at, scheduleId: sch.id, sectionId: section.id });
                           rows[sid].total += 1;
                         }
                         const ordered = Object.values(rows).sort((a, b) => a.name.localeCompare(b.name));
+
+                        // Month totals across all staff
+                        const monthTotals = {};
+                        for (const m of MONTHS) {
+                          monthTotals[m.value] = Object.values(rows).reduce((sum, r) => sum + (r.perMonth[m.value]?.length || 0), 0);
+                        }
+                        const maxTotal = Math.max(...Object.values(monthTotals), 1);
+
                         if (!ordered.length) {
                           return <tr><td colSpan={MONTHS.length + 2} className="px-3 py-6 text-center text-gray-400">No sections assigned to staff yet.</td></tr>;
                         }
-                        return ordered.map((r) => (
-                          <tr key={r.name} className="border-t hover:bg-gray-50">
-                            <td className="px-3 py-1.5 font-medium text-gray-800">{r.name}</td>
-                            {MONTHS.map((m) => {
-                              const count = r.perMonth[m.value] || 0;
-                              return (
-                                <td key={m.value} className={`px-1 py-1.5 text-center tabular-nums ${m.value === thisMonth ? "bg-blue-50" : ""} ${count === 0 ? "text-gray-300" : "text-gray-800 font-medium"}`}>
-                                  {count || "·"}
+
+                        return (
+                          <>
+                            {ordered.map((r) => (
+                              <tr key={r.name} className="border-t hover:bg-gray-50">
+                                <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">
+                                  <div className="flex items-center gap-2">
+                                    <span>{r.name} <span className="text-gray-400 font-normal">({new Set(Object.values(r.perMonth).flat().map((it) => it.sectionId)).size})</span></span>
+                                    <button
+                                      onClick={() => handleAutoBalance(r.staffId, r.name)}
+                                      title="Spread evenly across the year"
+                                      className="text-[10px] px-1.5 py-0.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50"
+                                    >
+                                      Balance
+                                    </button>
+                                  </div>
                                 </td>
-                              );
-                            })}
-                            <td className="px-2 py-1.5 text-center font-semibold text-gray-600 tabular-nums">{r.total}</td>
-                          </tr>
-                        ));
+                                {MONTHS.map((m) => {
+                                  const items = r.perMonth[m.value] || [];
+                                  const isOver = dragOverCell?.month === m.value && dragOverCell?.staffId === r.staffId;
+                                  return (
+                                    <td
+                                      key={m.value}
+                                      className={`px-2 py-1.5 text-center align-top transition-colors ${m.value === thisMonth ? "bg-blue-50" : ""} ${isOver ? "bg-yellow-50 ring-2 ring-inset ring-yellow-300" : ""}`}
+                                      onDragOver={(e) => { e.preventDefault(); setDragOverCell({ month: m.value, staffId: r.staffId }); }}
+                                      onDragLeave={() => setDragOverCell(null)}
+                                      onDrop={() => handleDrop(m.value, r.staffId)}
+                                    >
+                                      {items.length === 0 ? (
+                                        <span className="text-gray-200">·</span>
+                                      ) : (
+                                        <div className="flex flex-col gap-0.5">
+                                          {items.map((item, i) => (
+                                            <span
+                                              key={i}
+                                              draggable
+                                              onDragStart={() => setDragItem({
+                                                scheduleId: item.scheduleId,
+                                                sectionId: item.sectionId,
+                                                fromMonth: m.value,
+                                                fromStaffId: r.staffId,
+                                                sectionName: item.name,
+                                              })}
+                                              onDragEnd={() => { setDragItem(null); setDragOverCell(null); }}
+                                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium cursor-grab active:cursor-grabbing ${item.completed ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}
+                                            >
+                                              <span className="opacity-40 select-none">⠿</span>
+                                              {item.name}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-2 py-2 text-center font-semibold text-gray-600 tabular-nums">{r.total}</td>
+                              </tr>
+                            ))}
+                            {/* Totals row */}
+                            <tr className="border-t-2 border-gray-200 bg-gray-50">
+                              <td className="px-3 py-2 font-semibold text-gray-600 text-[11px] uppercase tracking-wide">Total/month</td>
+                              {MONTHS.map((m) => {
+                                const count = monthTotals[m.value] || 0;
+                                const ratio = count / maxTotal;
+                                const bg = count === 0 ? "" : ratio <= 0.4 ? "bg-green-100 text-green-700" : ratio <= 0.7 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
+                                return (
+                                  <td key={m.value} className={`px-2 py-2 text-center font-bold tabular-nums ${m.value === thisMonth ? "ring-1 ring-inset ring-blue-300" : ""} ${bg}`}>
+                                    {count || <span className="text-gray-300 font-normal">·</span>}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-2 py-2 text-center font-bold text-gray-600 tabular-nums">
+                                {Object.values(monthTotals).reduce((a, b) => a + b, 0)}
+                              </td>
+                            </tr>
+                          </>
+                        );
                       })()}
                     </tbody>
                   </table>

@@ -1635,21 +1635,27 @@ export default function HomePage() {
                             .sort((a, b) => (a.completed_at ? 1 : -1) - (b.completed_at ? 1 : -1))
                             .map((sc) => {
                               const isDone = Boolean(sc.completed_at);
+                              const overdue = sc.isOverdue && !isDone;
                               const completedBy = isDone ? staffById[sc.completed_by_staff_id]?.name : null;
+                              const overdueMonth = overdue ? new Date(sc.month).toLocaleString("en-AU", { month: "long" }) : null;
                               return (
                                 <button
                                   key={sc.id}
                                   onClick={() => handleSectionComplete(sc)}
                                   disabled={completingSection === sc.id}
-                                  className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${isDone ? "border-l-green-500" : "border-l-blue-400"} text-left bg-white shadow-sm hover:shadow-md transition-shadow`}
+                                  className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${isDone ? "border-l-green-500 bg-white" : overdue ? "border-l-red-400 bg-red-50" : "border-l-blue-400 bg-white"} text-left shadow-sm hover:shadow-md transition-shadow`}
                                 >
                                   <div className="flex items-start justify-between gap-1">
-                                    <div className="font-medium text-[11px] leading-tight text-gray-800 line-clamp-2 flex-1">{sc.section?.name}</div>
+                                    <div className="font-medium text-[11px] leading-tight text-gray-800 line-clamp-2 flex-1">{overdue && "⚠️ "}{sc.section?.name}</div>
                                     {isDone && <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>}
                                   </div>
-                                  <div className="text-[10px] text-blue-600 mt-0.5">{sc.section?.staff?.name || "All staff"}</div>
+                                  <div className={`text-[10px] mt-0.5 ${overdue ? "text-red-500" : "text-blue-600"}`}>{sc.section?.staff?.name || "All staff"}</div>
                                   <div className="mt-1 text-[10px] text-gray-400">
-                                    {isDone ? <span className="text-green-600">by {completedBy || "staff"}</span> : <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">Section</span>}
+                                    {isDone
+                                      ? <span className="text-green-600">by {completedBy || "staff"}</span>
+                                      : overdue
+                                      ? <span className="text-[9px] px-1 py-0.5 rounded-full bg-red-100 text-red-600">Overdue — {overdueMonth}</span>
+                                      : <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">Section</span>}
                                   </div>
                                 </button>
                               );
