@@ -1274,6 +1274,9 @@ const handleLeaveDecision = async (lr, decision) => {
       <Link href="/admin" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100">
         ⚙️ Admin
       </Link>
+      <Link href="/wages" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100">
+        💰 Wages
+      </Link>
     </aside>
   );
   // ── Inline Edit Popup ──

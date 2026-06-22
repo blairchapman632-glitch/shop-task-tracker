@@ -27,15 +27,10 @@
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/tasks": [
+    "/roster": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/tasks.js"
-    ],
-    "/wages": [
-      "static/chunks/webpack.js",
-      "static/chunks/main.js",
-      "static/chunks/pages/wages.js"
+      "static/chunks/pages/roster.js"
     ]
   },
   "ampFirstPages": []
