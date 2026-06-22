@@ -1022,6 +1022,39 @@ const refreshLeave = useCallback(async () => {
       alert("Couldn't remove date: " + (err?.message || String(err)));
     }
   };
+
+  const availAddLeave = async () => {
+    if (!availStaffId) return;
+    if (!availLeaveFrom || !availLeaveTo) { alert("Please choose from and to dates."); return; }
+    if (availLeaveTo < availLeaveFrom) { alert("'To' can't be before 'From'."); return; }
+    setAvailSavingLeave(true);
+    try {
+      const { error } = await supabase.from("leave_requests").insert([{
+        staff_id: Number(availStaffId),
+        pharmacy_id: pharmacyId,
+        leave_type: availLeaveType,
+        from_date: availLeaveFrom,
+        to_date: availLeaveTo,
+        all_day: true,
+        start_time: null,
+        end_time: null,
+        note: availLeaveNote.trim() || null,
+        status: "approved",
+        staff_seen_status: "approved",
+      }]);
+      if (error) throw error;
+      setAvailLeaveType("Annual Leave");
+      setAvailLeaveFrom("");
+      setAvailLeaveTo("");
+      setAvailLeaveNote("");
+      await loadStaffAvailability(availStaffId);
+      await refreshLeave();
+    } catch (err) {
+      alert("Couldn't add leave: " + (err?.message || String(err)));
+    } finally {
+      setAvailSavingLeave(false);
+    }
+  };
 const handleLeaveDecision = async (lr, decision) => {
     setProcessingLeaveId(lr.id);
     try {
@@ -1097,6 +1130,12 @@ const handleLeaveDecision = async (lr, decision) => {
   const [availNewOvrDate, setAvailNewOvrDate] = useState("");
   const [availNewOvrStatus, setAvailNewOvrStatus] = useState("unavailable");
   const [availNewOvrNote, setAvailNewOvrNote] = useState("");
+  // Manager-add leave
+  const [availLeaveType, setAvailLeaveType] = useState("Annual Leave");
+  const [availLeaveFrom, setAvailLeaveFrom] = useState("");
+  const [availLeaveTo, setAvailLeaveTo] = useState("");
+  const [availLeaveNote, setAvailLeaveNote] = useState("");
+  const [availSavingLeave, setAvailSavingLeave] = useState(false);
 
   // ── Inline edit state ──
   const [inlineEdit, setInlineEdit] = useState(null); // { shift, rect }
@@ -2240,6 +2279,30 @@ const handleLeaveDecision = async (lr, decision) => {
                           })}
                         </div>
                       )}
+
+                      {/* Add leave (manager) */}
+                      <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                        <div className="text-[11px] font-semibold text-gray-600">Add leave for {selectedStaff?.name || "this staff member"}</div>
+                        <select value={availLeaveType} onChange={(e) => setAvailLeaveType(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs">
+                          <option value="Annual Leave">Annual Leave</option>
+                          <option value="Personal/Carer's Leave">Personal/Carer's Leave</option>
+                          <option value="Unpaid Leave">Unpaid Leave</option>
+                        </select>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-medium text-gray-600 mb-1">From</label>
+                            <input type="date" value={availLeaveFrom} onChange={(e) => setAvailLeaveFrom(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-medium text-gray-600 mb-1">To</label>
+                            <input type="date" value={availLeaveTo} onChange={(e) => setAvailLeaveTo(e.target.value)} className="w-full border rounded px-2 py-1.5 text-xs" />
+                          </div>
+                        </div>
+                        <input value={availLeaveNote} onChange={(e) => setAvailLeaveNote(e.target.value)} placeholder="Note (optional)" className="w-full border rounded px-2 py-1.5 text-xs" />
+                        <button onClick={availAddLeave} disabled={availSavingLeave} className="w-full bg-red-600 text-white rounded py-1.5 text-xs font-medium hover:bg-red-700 disabled:opacity-50">
+                          {availSavingLeave ? "Adding…" : "Add approved leave"}
+                        </button>
+                      </div>
                     </div>
 
                     {/* Manager note */}

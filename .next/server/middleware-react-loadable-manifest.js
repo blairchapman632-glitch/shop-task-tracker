@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{}"
+self.__REACT_LOADABLE_MANIFEST="{\"pages\\\\wages.js -> xlsx\":{\"id\":\"pages\\\\wages.js -> xlsx\",\"files\":[\"static/chunks/node_modules_xlsx_xlsx_mjs.js\"]}}"
