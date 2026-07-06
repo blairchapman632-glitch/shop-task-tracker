@@ -1236,7 +1236,18 @@ const handleLeaveDecision = async (lr, decision) => {
             const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
             const dayShifts = monthShifts.filter((s) => s.shift_date === dateStr);
             if (dayShifts.length === 0) { count++; }
-            else if (!dayShifts.some((s) => s.role === "Pharmacist" || s.role === "Locum")) { count++; }
+            else {
+              if (!dayShifts.some((s) => s.role === "Pharmacist" || s.role === "Locum")) { count++; }
+              if (!holidayDates.has(dateStr)) {
+                const dow = new Date(dateStr + "T00:00:00").getDay();
+                const closeTime = (dow === 0 || dow === 6) ? "17:00" : "18:30";
+                const assistants = dayShifts.filter((s) => s.role === "Pharmacy Assistant" || s.role === "DAA Coordinator");
+                const blairOpening = dow === 0 && dayShifts.some((s) => (s.staff?.name || s.staff_name || "").toLowerCase().includes("blair") && String(s.start_time).slice(0, 5) <= "08:00");
+                const openTime = blairOpening ? "09:00" : "08:00";
+                if (!assistants.some((s) => String(s.start_time).slice(0, 5) <= openTime)) { count++; }
+                if (!assistants.some((s) => String(s.end_time).slice(0, 5) >= closeTime)) { count++; }
+              }
+            }
           }
           return count > 0 ? (
             <span className="ml-auto text-[10px] bg-red-500 text-white rounded-full px-1.5 py-0.5 font-semibold">{count}</span>
@@ -1955,21 +1966,38 @@ const handleLeaveDecision = async (lr, decision) => {
             if (!hasPharmacist) {
               issues.push({ type: "nopharmacist", date: dateStr, shift: null, label: "No pharmacist rostered", sub: `${dayShifts.length} shift${dayShifts.length !== 1 ? "s" : ""} — no Pharmacist or Locum` });
             }
+            if (!holidayDates.has(dateStr)) {
+              const dow = new Date(dateStr + "T00:00:00").getDay();
+              const closeTime = (dow === 0 || dow === 6) ? "17:00" : "18:30";
+              const closeLabel = (dow === 0 || dow === 6) ? "5pm" : "6:30pm";
+              const assistants = dayShifts.filter((s) => s.role === "Pharmacy Assistant" || s.role === "DAA Coordinator");
+              const blairOpening = dow === 0 && dayShifts.some((s) => (s.staff?.name || s.staff_name || "").toLowerCase().includes("blair") && String(s.start_time).slice(0, 5) <= "08:00");
+              const openTime = blairOpening ? "09:00" : "08:00";
+              const openLabel = blairOpening ? "9am" : "8am";
+              if (!assistants.some((s) => String(s.start_time).slice(0, 5) <= openTime)) {
+                issues.push({ type: "noopener", date: dateStr, shift: null, label: `No opener at ${openLabel}`, sub: `No Pharmacy Assistant or DAA Coordinator starting by ${openLabel}` });
+              }
+              if (!assistants.some((s) => String(s.end_time).slice(0, 5) >= closeTime)) {
+                issues.push({ type: "nocloser", date: dateStr, shift: null, label: `No closer at ${closeLabel}`, sub: `No Pharmacy Assistant or DAA Coordinator until ${closeLabel}` });
+              }
+            }
           }
         }
 
         // Sort by date
         issues.sort((a, b) => a.date.localeCompare(b.date));
 
-        const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday", nostaff: "No staff rostered", nopharmacist: "No pharmacist" };
+        const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday", nostaff: "No staff rostered", nopharmacist: "No pharmacist", noopener: "No opener", nocloser: "No closer" };
         const typeStyle = {
           availability: "bg-amber-50 border-amber-200 text-amber-800",
           tbc: "bg-red-50 border-red-200 text-red-700",
           ph: "bg-orange-50 border-orange-200 text-orange-700",
           nostaff: "bg-gray-50 border-gray-300 text-gray-700",
           nopharmacist: "bg-red-50 border-red-200 text-red-700",
+          noopener: "bg-sky-50 border-sky-200 text-sky-700",
+          nocloser: "bg-indigo-50 border-indigo-200 text-indigo-700",
         };
-        const typeIcon = { availability: "⚠️", tbc: "❓", ph: "🏖️", nostaff: "📭", nopharmacist: "💊" };
+        const typeIcon = { availability: "⚠️", tbc: "❓", ph: "🏖️", nostaff: "📭", nopharmacist: "💊", noopener: "🔓", nocloser: "🔒" };
 
         return (
           <div className="no-print fixed inset-0 z-50 flex">
