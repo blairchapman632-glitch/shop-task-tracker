@@ -1584,7 +1584,11 @@ export default function AdminPage() {
             {["staff", "locums", "settings"].map((t) => (
               <button
                 key={t}
-                onClick={() => { setTab(t); setSelected(null); }}
+                onClick={() => {
+                  setTab(t);
+                  setSelected(null);
+                  if (t === "locums") setLocumFormKey((k) => k + 1);
+                }}
                 className={`mr-4 py-3 text-sm font-medium ${tab === t ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
               >
                 {t === "staff" ? "👥 Staff" : t === "locums" ? "💊 Locums" : "⚙️ Settings"}
