@@ -141,6 +141,9 @@ export default function RosterPage() {
   const [allOverrides, setAllOverrides] = useState([]);
   const [showIssues, setShowIssues] = useState(false);
 
+  // Dismissed (resolved) issues
+  const [dismissedIssues, setDismissedIssues] = useState(new Set());
+
   // Leave requests
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [approvedLeave, setApprovedLeave] = useState([]);
@@ -253,6 +256,71 @@ const selectedDayShifts = selectedDate
     return null;
   };
 
+  // ── Issue builder (shared by sidebar badge + Issues panel) ──
+  const buildIssues = () => {
+    const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+    const monthShifts = shifts.filter((s) => s.shift_date?.startsWith(monthStr));
+    const holidayDates = new Set(holidays.map((h) => h.date));
+    const issues = [];
+
+    // 1. Availability conflicts
+    for (const s of monthShifts) {
+      const conflict = getShiftConflict(s);
+      if (conflict) {
+        const name = s.staff?.name || s.staff_name || "?";
+        issues.push({ key: `availability:${s.id}`, type: "availability", date: s.shift_date, shift: s, label: `${name} — ${conflict}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
+      }
+    }
+
+    // 2. TBC shifts
+    for (const s of monthShifts) {
+      if (!s.staff_id && !s.staff_name) {
+        issues.push({ key: `tbc:${s.id}`, type: "tbc", date: s.shift_date, shift: s, label: `TBC shift — ${s.role}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
+      }
+    }
+
+    // 3. Public holiday shifts
+    for (const s of monthShifts) {
+      if (holidayDates.has(s.shift_date)) {
+        const name = s.staff?.name || s.staff_name || "TBC";
+        const hol = holidays.find((h) => h.date === s.shift_date);
+        issues.push({ key: `ph:${s.id}`, type: "ph", date: s.shift_date, shift: s, label: `${name} rostered on ${hol?.name || "public holiday"}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
+      }
+    }
+
+    // 4. Day-level coverage
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      const dayShifts = monthShifts.filter((s) => s.shift_date === dateStr);
+      if (dayShifts.length === 0) {
+        issues.push({ key: `nostaff:${dateStr}`, type: "nostaff", date: dateStr, shift: null, label: "No staff rostered", sub: new Date(dateStr + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long" }) });
+      } else {
+        const hasPharmacist = dayShifts.some((s) => s.role === "Pharmacist" || s.role === "Locum");
+        if (!hasPharmacist) {
+          issues.push({ key: `nopharmacist:${dateStr}`, type: "nopharmacist", date: dateStr, shift: null, label: "No pharmacist rostered", sub: `${dayShifts.length} shift${dayShifts.length !== 1 ? "s" : ""} — no Pharmacist or Locum` });
+        }
+        if (!holidayDates.has(dateStr)) {
+          const dow = new Date(dateStr + "T00:00:00").getDay();
+          const closeTime = (dow === 0 || dow === 6) ? "17:00" : "18:30";
+          const closeLabel = (dow === 0 || dow === 6) ? "5pm" : "6:30pm";
+          const assistants = dayShifts.filter((s) => s.role === "Pharmacy Assistant" || s.role === "DAA Coordinator");
+          const blairOpening = dow === 0 && dayShifts.some((s) => (s.staff?.name || s.staff_name || "").toLowerCase().includes("blair") && String(s.start_time).slice(0, 5) <= "08:00");
+          const openTime = blairOpening ? "09:00" : "08:00";
+          const openLabel = blairOpening ? "9am" : "8am";
+          if (!assistants.some((s) => String(s.start_time).slice(0, 5) <= openTime)) {
+            issues.push({ key: `noopener:${dateStr}`, type: "noopener", date: dateStr, shift: null, label: `No opener at ${openLabel}`, sub: `No Pharmacy Assistant or DAA Coordinator starting by ${openLabel}` });
+          }
+          if (!assistants.some((s) => String(s.end_time).slice(0, 5) >= closeTime)) {
+            issues.push({ key: `nocloser:${dateStr}`, type: "nocloser", date: dateStr, shift: null, label: `No closer at ${closeLabel}`, sub: `No Pharmacy Assistant or DAA Coordinator until ${closeLabel}` });
+          }
+        }
+      }
+    }
+
+    issues.sort((a, b) => a.date.localeCompare(b.date));
+    return issues;
+  };
+
   // ── Data loading ──
   const refreshDayNotes = useCallback(async () => {
     const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
@@ -269,6 +337,29 @@ const selectedDayShifts = selectedDate
     const { data } = await supabase.from("roster_month_notes").select("*").eq("month", monthDate).maybeSingle();
     setMonthNote(data?.note || "");
   }, [currentYear, currentMonth]);
+
+  const refreshDismissals = useCallback(async () => {
+    const { data } = await supabase.from("roster_issue_dismissals").select("issue_key");
+    setDismissedIssues(new Set((data || []).map((d) => d.issue_key)));
+  }, []);
+
+  const dismissIssue = async (key) => {
+    setDismissedIssues((prev) => new Set(prev).add(key));
+    const { error } = await supabase.from("roster_issue_dismissals").insert([{ issue_key: key, pharmacy_id: pharmacyId }]);
+    if (error) {
+      alert("Couldn't resolve issue: " + error.message);
+      await refreshDismissals();
+    }
+  };
+
+  const undismissIssue = async (key) => {
+    setDismissedIssues((prev) => { const n = new Set(prev); n.delete(key); return n; });
+    const { error } = await supabase.from("roster_issue_dismissals").delete().eq("issue_key", key);
+    if (error) {
+      alert("Couldn't reopen issue: " + error.message);
+      await refreshDismissals();
+    }
+  };
 
   const refreshSick = useCallback(async () => {
     const { data } = await supabase.from("sick_days").select("*");
@@ -343,6 +434,7 @@ const refreshLeave = useCallback(async () => {
 
       setShifts(shiftData || []);
       refreshSick();
+      refreshDismissals();
       setStaffOptions((staffData || []).filter((s) => s.active !== false));
       setTemplates(templateData || []);
       setHolidays(holidayData || []);
@@ -1225,30 +1317,7 @@ const handleLeaveDecision = async (lr, decision) => {
       <button onClick={() => { setShowIssues(true); setShowAvailability(false); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
         ⚠️ Issues
         {(() => {
-          const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
-          const monthShifts = shifts.filter((s) => s.shift_date?.startsWith(monthStr));
-          const holidayDates = new Set(holidays.map((h) => h.date));
-          let count = 0;
-          for (const s of monthShifts) { if (getShiftConflict(s)) count++; }
-          for (const s of monthShifts) { if (!s.staff_id && !s.staff_name) count++; }
-          for (const s of monthShifts) { if (holidayDates.has(s.shift_date)) count++; }
-          for (let d = 1; d <= daysInMonth; d++) {
-            const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-            const dayShifts = monthShifts.filter((s) => s.shift_date === dateStr);
-            if (dayShifts.length === 0) { count++; }
-            else {
-              if (!dayShifts.some((s) => s.role === "Pharmacist" || s.role === "Locum")) { count++; }
-              if (!holidayDates.has(dateStr)) {
-                const dow = new Date(dateStr + "T00:00:00").getDay();
-                const closeTime = (dow === 0 || dow === 6) ? "17:00" : "18:30";
-                const assistants = dayShifts.filter((s) => s.role === "Pharmacy Assistant" || s.role === "DAA Coordinator");
-                const blairOpening = dow === 0 && dayShifts.some((s) => (s.staff?.name || s.staff_name || "").toLowerCase().includes("blair") && String(s.start_time).slice(0, 5) <= "08:00");
-                const openTime = blairOpening ? "09:00" : "08:00";
-                if (!assistants.some((s) => String(s.start_time).slice(0, 5) <= openTime)) { count++; }
-                if (!assistants.some((s) => String(s.end_time).slice(0, 5) >= closeTime)) { count++; }
-              }
-            }
-          }
+          const count = buildIssues().filter((i) => !dismissedIssues.has(i.key)).length;
           return count > 0 ? (
             <span className="ml-auto text-[10px] bg-red-500 text-white rounded-full px-1.5 py-0.5 font-semibold">{count}</span>
           ) : null;
@@ -1923,69 +1992,9 @@ const handleLeaveDecision = async (lr, decision) => {
 
     {/* ── Issues panel ── */}
       {showIssues && (() => {
-        const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
-        const monthShifts = shifts.filter((s) => s.shift_date?.startsWith(monthStr));
-        const holidayDates = new Set(holidays.map((h) => h.date));
-
-        // Build issue list
-        const issues = [];
-
-        // 1. Availability conflicts
-        for (const s of monthShifts) {
-          const conflict = getShiftConflict(s);
-          if (conflict) {
-            const name = s.staff?.name || s.staff_name || "?";
-            issues.push({ type: "availability", date: s.shift_date, shift: s, label: `${name} — ${conflict}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
-          }
-        }
-
-        // 2. TBC shifts
-        for (const s of monthShifts) {
-          if (!s.staff_id && !s.staff_name) {
-            issues.push({ type: "tbc", date: s.shift_date, shift: s, label: `TBC shift — ${s.role}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
-          }
-        }
-
-        // 3. Public holiday shifts
-        for (const s of monthShifts) {
-          if (holidayDates.has(s.shift_date)) {
-            const name = s.staff?.name || s.staff_name || "TBC";
-            const hol = holidays.find((h) => h.date === s.shift_date);
-            issues.push({ type: "ph", date: s.shift_date, shift: s, label: `${name} rostered on ${hol?.name || "public holiday"}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
-          }
-        }
-
-        // 4. Days with no staff rostered
-        for (let d = 1; d <= daysInMonth; d++) {
-          const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-          const dayShifts = monthShifts.filter((s) => s.shift_date === dateStr);
-          if (dayShifts.length === 0) {
-            issues.push({ type: "nostaff", date: dateStr, shift: null, label: "No staff rostered", sub: new Date(dateStr + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long" }) });
-          } else {
-            const hasPharmacist = dayShifts.some((s) => s.role === "Pharmacist" || s.role === "Locum");
-            if (!hasPharmacist) {
-              issues.push({ type: "nopharmacist", date: dateStr, shift: null, label: "No pharmacist rostered", sub: `${dayShifts.length} shift${dayShifts.length !== 1 ? "s" : ""} — no Pharmacist or Locum` });
-            }
-            if (!holidayDates.has(dateStr)) {
-              const dow = new Date(dateStr + "T00:00:00").getDay();
-              const closeTime = (dow === 0 || dow === 6) ? "17:00" : "18:30";
-              const closeLabel = (dow === 0 || dow === 6) ? "5pm" : "6:30pm";
-              const assistants = dayShifts.filter((s) => s.role === "Pharmacy Assistant" || s.role === "DAA Coordinator");
-              const blairOpening = dow === 0 && dayShifts.some((s) => (s.staff?.name || s.staff_name || "").toLowerCase().includes("blair") && String(s.start_time).slice(0, 5) <= "08:00");
-              const openTime = blairOpening ? "09:00" : "08:00";
-              const openLabel = blairOpening ? "9am" : "8am";
-              if (!assistants.some((s) => String(s.start_time).slice(0, 5) <= openTime)) {
-                issues.push({ type: "noopener", date: dateStr, shift: null, label: `No opener at ${openLabel}`, sub: `No Pharmacy Assistant or DAA Coordinator starting by ${openLabel}` });
-              }
-              if (!assistants.some((s) => String(s.end_time).slice(0, 5) >= closeTime)) {
-                issues.push({ type: "nocloser", date: dateStr, shift: null, label: `No closer at ${closeLabel}`, sub: `No Pharmacy Assistant or DAA Coordinator until ${closeLabel}` });
-              }
-            }
-          }
-        }
-
-        // Sort by date
-        issues.sort((a, b) => a.date.localeCompare(b.date));
+        const allIssues = buildIssues();
+        const issues = allIssues.filter((i) => !dismissedIssues.has(i.key));
+        const resolved = allIssues.filter((i) => dismissedIssues.has(i.key));
 
         const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday", nostaff: "No staff rostered", nopharmacist: "No pharmacist", noopener: "No opener", nocloser: "No closer" };
         const typeStyle = {
@@ -2011,21 +2020,14 @@ const handleLeaveDecision = async (lr, decision) => {
                 {issues.length === 0 ? (
                   <div className="text-center py-12">
                     <div className="text-3xl mb-2">✅</div>
-                    <div className="text-sm font-medium text-gray-700">No issues this month</div>
+                    <div className="text-sm font-medium text-gray-700">No open issues this month</div>
                     <div className="text-xs text-gray-400 mt-1">All shifts look good.</div>
                   </div>
                 ) : (
                   <>
                     <div className="text-xs text-gray-500 mb-2">{issues.length} issue{issues.length !== 1 ? "s" : ""} found</div>
-                    {issues.map((issue, i) => (
-                      <button
-                        key={i}
-                        onClick={() => {
-                          setSelectedDate(issue.date);
-                          setShowIssues(false);
-                        }}
-                        className={`w-full text-left rounded-lg border px-3 py-2.5 ${typeStyle[issue.type]} hover:opacity-80 transition-opacity`}
-                      >
+                    {issues.map((issue) => (
+                      <div key={issue.key} className={`rounded-lg border px-3 py-2.5 ${typeStyle[issue.type]}`}>
                         <div className="flex items-start gap-2">
                           <span className="text-sm shrink-0">{typeIcon[issue.type]}</span>
                           <div className="min-w-0 flex-1">
@@ -2034,12 +2036,54 @@ const handleLeaveDecision = async (lr, decision) => {
                             <div className="text-[11px] opacity-70 mt-0.5">
                               {new Date(issue.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })} · {issue.sub}
                             </div>
-                            <div className="text-[11px] opacity-60 mt-0.5">Tap to open day →</div>
+                            <div className="flex gap-2 mt-1.5">
+                              <button
+                                onClick={() => { setSelectedDate(issue.date); setShowIssues(false); }}
+                                className="text-[11px] px-2 py-0.5 rounded border border-current/30 bg-white/60 hover:bg-white font-medium"
+                              >
+                                Open day →
+                              </button>
+                              <button
+                                onClick={() => dismissIssue(issue.key)}
+                                className="text-[11px] px-2 py-0.5 rounded border border-current/30 bg-white/60 hover:bg-white font-medium"
+                              >
+                                ✓ Resolve
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </>
+                )}
+
+                {resolved.length > 0 && (
+                  <div className="border-t pt-3 mt-3">
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                      Resolved ({resolved.length})
+                    </div>
+                    <div className="space-y-1.5">
+                      {resolved.map((issue) => (
+                        <div key={issue.key} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 opacity-70">
+                          <div className="flex items-start gap-2">
+                            <span className="text-sm shrink-0 grayscale">{typeIcon[issue.type]}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-medium text-gray-700 truncate">{issue.label}</div>
+                              <div className="text-[11px] text-gray-500 mt-0.5">
+                                {new Date(issue.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })} · {typeLabel[issue.type]}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => undismissIssue(issue.key)}
+                              className="text-[11px] text-gray-500 hover:text-gray-800 underline shrink-0"
+                            >
+                              Reopen
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

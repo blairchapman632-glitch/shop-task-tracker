@@ -576,6 +576,7 @@ function LocumForm({ member, onSave, onCancel }) {
   const [deletingBooking, setDeletingBooking] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [copiedBookings, setCopiedBookings] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -691,6 +692,14 @@ function LocumForm({ member, onSave, onCancel }) {
   };
 
   const fmtBookingDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+  const handleCopyBookings = () => {
+    const lines = bookings.map((b) => `${fmtBookingDate(b.shift_date)} · ${formatTime(b.start_time)} – ${formatTime(b.end_time)}`);
+    const text = `${form.name} — Upcoming Bookings\n\n${lines.join("\n")}\n\n${bookings.length} shift${bookings.length !== 1 ? "s" : ""}`;
+    navigator.clipboard.writeText(text);
+    setCopiedBookings(true);
+    setTimeout(() => setCopiedBookings(false), 2000);
+  };
 
   const handleDocUpload = async (file, type) => {
     if (!file || !member?.id) return;
@@ -941,7 +950,17 @@ function LocumForm({ member, onSave, onCancel }) {
         {/* Bookings */}
         {!isNew && (
           <div className="border-t pt-4">
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Upcoming Bookings</div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Upcoming Bookings</div>
+              {bookings.length > 0 && (
+                <button
+                  onClick={handleCopyBookings}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg border font-medium ${copiedBookings ? "bg-green-50 border-green-200 text-green-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+                >
+                  {copiedBookings ? "✓ Copied" : "📋 Copy bookings"}
+                </button>
+              )}
+            </div>
             {bookings.length === 0 ? (
               <p className="text-xs text-gray-400 mb-3">No upcoming bookings.</p>
             ) : (
@@ -1271,6 +1290,21 @@ function LocumsTab() {
   const [formKey, setFormKey] = useState(0);
   const [showInactive, setShowInactive] = useState(false);
   const [successId, setSuccessId] = useState(null);
+  const [allBookings, setAllBookings] = useState([]);
+  const [loadingBookings, setLoadingBookings] = useState(true);
+  const [copiedAll, setCopiedAll] = useState(false);
+
+  const loadAllBookings = async () => {
+    setLoadingBookings(true);
+    const { data } = await supabase
+      .from("roster_shifts")
+      .select("id, shift_date, start_time, end_time, staff:staff_id(id, name)")
+      .eq("role", "Locum")
+      .gte("shift_date", new Date().toISOString().slice(0, 10))
+      .order("shift_date");
+    setAllBookings(data || []);
+    setLoadingBookings(false);
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -1285,7 +1319,18 @@ function LocumsTab() {
       setLoading(false);
     };
     load();
+    loadAllBookings();
   }, []);
+
+  const fmtAllDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+  const handleCopyAll = () => {
+    const lines = allBookings.map((b) => `${fmtAllDate(b.shift_date)} · ${b.staff?.name || "?"} · ${formatTime(b.start_time)} – ${formatTime(b.end_time)}`);
+    const text = `Upcoming Locum Bookings\n\n${lines.join("\n")}\n\n${allBookings.length} shift${allBookings.length !== 1 ? "s" : ""}`;
+    navigator.clipboard.writeText(text);
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2000);
+  };
 
   const handleSave = (saved) => {
     setLocums((prev) => {
@@ -1366,15 +1411,47 @@ function LocumsTab() {
           </div>
         )}
         {!selected ? (
-          <div className="h-full flex items-center justify-center text-sm text-gray-400">
-            Select a locum to edit, or add a new one.
+          <div className="flex flex-col h-full overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+              <h2 className="font-semibold text-gray-800">
+                Upcoming Locum Bookings
+                {allBookings.length > 0 && <span className="text-gray-400 font-normal text-sm ml-2">({allBookings.length})</span>}
+              </h2>
+              {allBookings.length > 0 && (
+                <button
+                  onClick={handleCopyAll}
+                  className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${copiedAll ? "bg-green-50 border-green-200 text-green-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+                >
+                  {copiedAll ? "✓ Copied" : "📋 Copy list"}
+                </button>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {loadingBookings ? (
+                <div className="text-sm text-gray-400">Loading…</div>
+              ) : allBookings.length === 0 ? (
+                <div className="text-sm text-gray-400">No upcoming locum bookings.</div>
+              ) : (
+                <div className="space-y-1.5 max-w-2xl">
+                  {allBookings.map((b) => (
+                    <div key={b.id} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                      <span className="text-sm">💊</span>
+                      <div className="text-sm text-gray-700 w-48 shrink-0">{fmtAllDate(b.shift_date)}</div>
+                      <div className="text-sm font-medium text-gray-800 flex-1 min-w-0 truncate">{b.staff?.name || "?"}</div>
+                      <div className="text-xs text-gray-500 shrink-0">{formatTime(b.start_time)} – {formatTime(b.end_time)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-4">Select a locum on the left to edit, or add a new one.</p>
+            </div>
           </div>
         ) : (
           <LocumForm
             key={formKey}
             member={selected === "new" ? null : selected}
             onSave={handleSave}
-            onCancel={() => setSelected(null)}
+            onCancel={() => { setSelected(null); loadAllBookings(); }}
           />
         )}
       </div>

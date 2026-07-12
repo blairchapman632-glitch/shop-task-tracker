@@ -2,8 +2,7 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/roster": "pages/roster.js",
   "/admin": "pages/admin.js",
-  "/wages": "pages/wages.js",
-  "/": "pages/index.js"
+  "/": "pages/index.js",
+  "/roster": "pages/roster.js"
 }
