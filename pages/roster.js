@@ -2,6 +2,11 @@ import React, { useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import supabase from "../lib/supabaseClient";
+import {
+  getStaffAvailability as getStaffAvailabilityShared,
+  getShiftConflict as getShiftConflictShared,
+  getDayAvailability as getDayAvailabilityShared,
+} from "../lib/availability";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -216,45 +221,15 @@ const selectedDayShifts = selectedDate
     ? holidays.find((h) => h.date === selectedDate)
     : null;
 
-  // ── Availability conflict detection ──
-  const getShiftConflict = (shift) => {
-    if (!shift.staff_id) return null; // TBC handled separately
-    const date = shift.shift_date;
+  // ── Availability (thin wrappers over lib/availability.js) ──
+  const getStaffAvailability = (staffId, date) =>
+    getStaffAvailabilityShared({ staffId, date, patterns: allPatterns, overrides: allOverrides, approvedLeave });
 
-    // Approved leave covering this date takes top priority
-    const leave = approvedLeave.find((lr) =>
-      String(lr.staff_id) === String(shift.staff_id) &&
-      date >= lr.from_date && date <= lr.to_date
-    );
-    if (leave) return `On ${leave.leave_type}`;
+  const getShiftConflict = (shift) =>
+    getShiftConflictShared({ shift, patterns: allPatterns, overrides: allOverrides, approvedLeave });
 
-    // Override for this exact date takes priority
-    const ovr = allOverrides.find((o) => String(o.staff_id) === String(shift.staff_id) && o.override_date === date);
-    let status = null;
-    if (ovr) {
-      status = ovr.status;
-    } else {
-      const dow = new Date(date + "T00:00:00").getDay();
-      // Find all ranges for this staff/day that cover the shift date; latest-created wins
-      const covering = allPatterns
-        .filter((p) =>
-          String(p.staff_id) === String(shift.staff_id) &&
-          p.day_of_week === dow &&
-          (!p.from_date || p.from_date <= date) &&
-          (!p.to_date || p.to_date >= date)
-        )
-        .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
-      status = covering[0]?.status || null;
-    }
-    if (!status || status === "all_day") return null;
-    if (status === "unavailable") return "Marked unavailable";
-    const startMin = toMinutes(shift.start_time);
-    const endMin = toMinutes(shift.end_time);
-    const NOON = 12 * 60;
-    if (status === "am" && endMin > NOON) return "Available mornings only";
-    if (status === "pm" && startMin < NOON) return "Available afternoons only";
-    return null;
-  };
+  const getDayAvailability = (date) =>
+    getDayAvailabilityShared({ date, staffOptions, shifts, patterns: allPatterns, overrides: allOverrides, approvedLeave });
 
   // ── Issue builder (shared by sidebar badge + Issues panel) ──
   const buildIssues = () => {
@@ -1845,6 +1820,48 @@ const handleLeaveDecision = async (lr, decision) => {
 
               
 
+              {/* Availability */}
+              <div className="border-t pt-3">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Availability</div>
+                {(() => {
+                  const { available, unavailable, unsubmitted } = getDayAvailability(selectedDate);
+                  const pick = (st) => {
+                    setNewStaffId(String(st.id));
+                    if (st.role) setNewRole(st.role);
+                  };
+                  const Group = ({ icon, label, list, cls, clickable }) => (
+                    <div className="mb-2">
+                      <div className="text-[10px] font-medium text-gray-400 mb-1">{icon} {label} ({list.length})</div>
+                      {list.length === 0 ? (
+                        <div className="text-[11px] text-gray-300">None</div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {list.map((st) => (
+                            <button
+                              key={st.id}
+                              onClick={clickable ? () => pick(st) : undefined}
+                              disabled={!clickable}
+                              title={clickable ? `Add ${st.name} to this day` : undefined}
+                              className={`text-[11px] px-2 py-0.5 rounded-full border ${cls} ${clickable ? "hover:brightness-95 cursor-pointer" : "cursor-default"}`}
+                            >
+                              {st.name}{st.note ? ` · ${st.note}` : ""}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                  return (
+                    <>
+                      <Group icon="✅" label="Available" list={available} cls="bg-green-50 text-green-700 border-green-200" clickable />
+                      <Group icon="❓" label="Not submitted" list={unsubmitted} cls="bg-gray-50 text-gray-600 border-gray-200" clickable />
+                      <Group icon="❌" label="Unavailable" list={unavailable} cls="bg-red-50 text-red-600 border-red-200" clickable={false} />
+                      <div className="text-[10px] text-gray-400 mt-1">Already rostered today are hidden. Tap a name to pre-fill the add-shift form.</div>
+                    </>
+                  );
+                })()}
+              </div>
+
               {/* Day notes */}
               <div className="border-t pt-3">
                 <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Day notes</div>
@@ -2036,6 +2053,37 @@ const handleLeaveDecision = async (lr, decision) => {
                             <div className="text-[11px] opacity-70 mt-0.5">
                               {new Date(issue.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })} · {issue.sub}
                             </div>
+                            {["availability", "tbc", "noopener", "nocloser", "nopharmacist", "nostaff"].includes(issue.type) && (() => {
+                              const { available, unsubmitted } = getDayAvailability(issue.date);
+                              // For shift-specific issues, test am/pm against the actual shift times
+                              const fits = (st) => {
+                                if (!issue.shift) return true;
+                                const { status } = getStaffAvailability(st.id, issue.date);
+                                const NOON = 12 * 60;
+                                if (status === "am" && toMinutes(issue.shift.end_time) > NOON) return false;
+                                if (status === "pm" && toMinutes(issue.shift.start_time) < NOON) return false;
+                                return true;
+                              };
+                              const free = available.filter(fits);
+                              if (free.length === 0 && unsubmitted.length === 0) return null;
+                              return (
+                                <div className="mt-1.5 pt-1.5 border-t border-current/15">
+                                  <div className="text-[10px] font-medium opacity-70 mb-1">Free this day</div>
+                                  <div className="flex flex-wrap gap-1">
+                                    {free.map((st) => (
+                                      <span key={st.id} className="text-[11px] px-2 py-0.5 rounded-full bg-white/70 border border-current/20">
+                                        ✅ {st.name}{st.note ? ` · ${st.note}` : ""}
+                                      </span>
+                                    ))}
+                                    {unsubmitted.map((st) => (
+                                      <span key={st.id} className="text-[11px] px-2 py-0.5 rounded-full bg-white/40 border border-current/15 opacity-70">
+                                        ❓ {st.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             <div className="flex gap-2 mt-1.5">
                               <button
                                 onClick={() => { setSelectedDate(issue.date); setShowIssues(false); }}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { toISO, buildWageRows, fmt as wageFmt } from "../lib/wageCalc";
+import { getShiftConflict, getDayAvailability } from "../lib/availability";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -1770,12 +1771,359 @@ function RosterCombinedTab({ staff }) {
   );
 }
 
+const ME_ROLES = ["Pharmacist", "Locum", "DAA Coordinator", "Pharmacy Assistant", "Intern Pharmacist", "Manager"];
+
+const meRoleColour = {
+  Pharmacist: "text-purple-700",
+  Locum: "text-blue-700",
+  "DAA Coordinator": "text-orange-600",
+  "Pharmacy Assistant": "text-teal-700",
+  "Intern Pharmacist": "text-purple-500",
+  Manager: "text-gray-700",
+};
+
+const meHolidayEmoji = {
+  newyear: "🎆", australia: "🦘", easter: "🐣", anzac: "🌺", wa: "⚓", christmas: "🎅", default: "🏖️",
+};
+
+function DayEditSheet({ date, ctx, onClose, onChanged }) {
+  const { staffOptions, templates, holidays, patterns, overrides, approvedLeave, weekShifts, sickByShift, dayNote } = ctx;
+
+  const dayShifts = sortRosterShifts(weekShifts.filter((s) => s.shift_date === date));
+  const holiday = holidays.find((h) => h.date === date);
+
+  const [newStaffId, setNewStaffId] = useState("");
+  const [newStaffName, setNewStaffName] = useState("");
+  const [newRole, setNewRole] = useState("Pharmacy Assistant");
+  const [newStart, setNewStart] = useState("09:00");
+  const [newEnd, setNewEnd] = useState("17:00");
+  const [savingShift, setSavingShift] = useState(false);
+
+  const [editingId, setEditingId] = useState(null);
+  const [editStaffId, setEditStaffId] = useState("");
+  const [editStaffName, setEditStaffName] = useState("");
+  const [editRole, setEditRole] = useState("Pharmacy Assistant");
+  const [editStart, setEditStart] = useState("09:00");
+  const [editEnd, setEditEnd] = useState("17:00");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const [note, setNote] = useState(dayNote || "");
+  const [savingNote, setSavingNote] = useState(false);
+
+  const conflictOf = (s) => getShiftConflict({ shift: s, patterns, overrides, approvedLeave });
+
+  const getRosterMonthId = async () => {
+    const monthDate = `${date.slice(0, 7)}-01`;
+    const { data: existing } = await supabase.from("roster_months").select("id").eq("month", monthDate).maybeSingle();
+    if (existing?.id) return existing.id;
+    const { data: created, error } = await supabase.from("roster_months")
+      .insert([{ month: monthDate, status: "draft", pharmacy_id: PHARMACY_ID }]).select("id").single();
+    if (error) throw error;
+    return created.id;
+  };
+
+  const handleAdd = async () => {
+    if (!newStart || !newEnd) { alert("Enter start and end times."); return; }
+    setSavingShift(true);
+    try {
+      const rosterMonthId = await getRosterMonthId();
+      const { error } = await supabase.from("roster_shifts").insert([{
+        staff_id: newStaffId === "other" || newStaffId === "" ? null : Number(newStaffId),
+        staff_name: newStaffId === "other" ? newStaffName.trim() : null,
+        shift_date: date,
+        start_time: newStart,
+        end_time: newEnd,
+        role: newRole,
+        roster_month_id: rosterMonthId,
+      }]);
+      if (error) throw error;
+      setNewStaffId(""); setNewStaffName(""); setNewRole("Pharmacy Assistant");
+      setNewStart("09:00"); setNewEnd("17:00");
+      onChanged();
+    } catch (err) {
+      alert("Couldn't save shift: " + (err?.message || String(err)));
+    } finally {
+      setSavingShift(false);
+    }
+  };
+
+  const startEdit = (s) => {
+    setEditingId(s.id);
+    setEditStaffId(s.staff_id ? String(s.staff_id) : s.staff_name ? "other" : "");
+    setEditStaffName(s.staff_name || "");
+    setEditRole(s.role || "Pharmacy Assistant");
+    setEditStart(String(s.start_time || "09:00").slice(0, 5));
+    setEditEnd(String(s.end_time || "17:00").slice(0, 5));
+  };
+
+  const handleUpdate = async () => {
+    setSavingEdit(true);
+    try {
+      const { error } = await supabase.from("roster_shifts").update({
+        staff_id: editStaffId === "other" || editStaffId === "" ? null : Number(editStaffId),
+        staff_name: editStaffId === "other" ? editStaffName.trim() : null,
+        role: editRole,
+        start_time: editStart,
+        end_time: editEnd,
+      }).eq("id", editingId);
+      if (error) throw error;
+      setEditingId(null);
+      onChanged();
+    } catch (err) {
+      alert("Couldn't update shift: " + (err?.message || String(err)));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDelete = async (s, name) => {
+    if (!window.confirm(`Delete shift for ${name}?`)) return;
+    const { error } = await supabase.from("roster_shifts").delete().eq("id", s.id);
+    if (error) { alert("Couldn't delete: " + error.message); return; }
+    onChanged();
+  };
+
+  const handleMarkSick = async (s, name, leaveType) => {
+    const label = leaveType === "compassionate" ? "compassionate leave" : "sick / carer's leave";
+    const reason = window.prompt(`Mark ${name} as on ${label}?\n\nOptional reason:`, "");
+    if (reason === null) return;
+    const { error } = await supabase.from("sick_days").upsert({
+      roster_shift_id: s.id,
+      staff_id: s.staff_id || null,
+      sick_date: s.shift_date,
+      reason: reason.trim() || null,
+      leave_type: leaveType,
+      pharmacy_id: PHARMACY_ID,
+    }, { onConflict: "roster_shift_id" });
+    if (error) { alert("Couldn't mark absence: " + error.message); return; }
+    onChanged();
+  };
+
+  const handleUnmarkSick = async (s) => {
+    const { error } = await supabase.from("sick_days").delete().eq("roster_shift_id", s.id);
+    if (error) { alert("Couldn't unmark: " + error.message); return; }
+    onChanged();
+  };
+
+  const handleSaveNote = async () => {
+    setSavingNote(true);
+    try {
+      const { data: existing } = await supabase.from("roster_day_notes").select("id").eq("date", date).maybeSingle();
+      if (existing?.id) await supabase.from("roster_day_notes").update({ note }).eq("id", existing.id);
+      else await supabase.from("roster_day_notes").insert([{ date, note }]);
+      onChanged();
+    } catch (err) {
+      alert("Couldn't save note: " + (err?.message || String(err)));
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const { available, unavailable, unsubmitted } = getDayAvailability({
+    date, staffOptions, shifts: weekShifts, patterns, overrides, approvedLeave,
+  });
+
+  const Group = ({ icon, label, list, cls, clickable }) => (
+    <div className="mb-2">
+      <div className="text-[10px] font-medium text-gray-400 mb-1">{icon} {label} ({list.length})</div>
+      {list.length === 0 ? (
+        <div className="text-[11px] text-gray-300">None</div>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {list.map((st) => (
+            <button
+              key={st.id}
+              onClick={clickable ? () => { setNewStaffId(String(st.id)); if (st.role) setNewRole(st.role); } : undefined}
+              disabled={!clickable}
+              className={`text-[11px] px-2 py-1 rounded-full border ${cls} ${clickable ? "active:brightness-95" : ""}`}
+            >
+              {st.name}{st.note ? ` · ${st.note}` : ""}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end">
+      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-t-2xl shadow-xl flex flex-col" style={{ maxHeight: "90vh" }}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-gray-900 truncate">
+              {new Date(date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}
+            </div>
+            {holiday && (
+              <div className="text-xs text-red-600 font-medium mt-0.5">
+                {meHolidayEmoji[holiday.image_key] || "🏖️"} {holiday.name} — Public Holiday
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} className="text-gray-400 text-2xl leading-none px-2">×</button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4" style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}>
+
+          {/* Shifts */}
+          <div>
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Shifts</div>
+            {dayShifts.length === 0 ? (
+              <p className="text-xs text-gray-400">No shifts yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {dayShifts.map((s) => {
+                  const name = s.staff?.name || s.staff_name || "?";
+                  const absence = sickByShift[s.id];
+                  const conflict = conflictOf(s);
+                  const isEditing = editingId === s.id;
+                  return (
+                    <div key={s.id} className="rounded-lg border border-gray-200 p-2">
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <select value={editStaffId} onChange={(e) => {
+                            const v = e.target.value; setEditStaffId(v);
+                            if (v && v !== "other") { const f = staffOptions.find((st) => String(st.id) === v); if (f?.role) setEditRole(f.role); }
+                          }} className="w-full rounded border px-2 py-2 text-sm">
+                            <option value="">— TBC —</option>
+                            {staffOptions.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+                            <option value="other">+ Other (type name)</option>
+                          </select>
+                          {editStaffId === "other" && (
+                            <input value={editStaffName} onChange={(e) => setEditStaffName(e.target.value)} placeholder="Enter name" className="w-full rounded border px-2 py-2 text-sm" />
+                          )}
+                          <select value={editRole} onChange={(e) => setEditRole(e.target.value)} className="w-full rounded border px-2 py-2 text-sm">
+                            {ME_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                          <div className="flex gap-2">
+                            <input type="time" value={editStart} onChange={(e) => setEditStart(e.target.value)} className="flex-1 rounded border px-2 py-2 text-sm" />
+                            <input type="time" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} className="flex-1 rounded border px-2 py-2 text-sm" />
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => setEditingId(null)} className="flex-1 border rounded py-2 text-sm">Cancel</button>
+                            <button onClick={handleUpdate} disabled={savingEdit} className="flex-1 bg-blue-600 text-white rounded py-2 text-sm font-medium disabled:opacity-40">
+                              {savingEdit ? "Saving…" : "Save"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className={`text-sm font-medium truncate ${meRoleColour[s.role] || "text-gray-800"}`}>{name}</div>
+                              <div className="text-[11px] text-gray-500">{formatTime(s.start_time)}–{formatTime(s.end_time)} · {s.role}</div>
+                            </div>
+                          </div>
+                          {absence === "compassionate" && <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-600">🕊️ Compassionate</span>}
+                          {absence && absence !== "compassionate" && <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600">🤒 Sick / Carer's</span>}
+                          {!absence && conflict && <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">⚠️ {conflict}</span>}
+                          <div className="flex gap-1.5 mt-2 flex-wrap">
+                            {absence ? (
+                              <button onClick={() => handleUnmarkSick(s)} className="px-2 py-1 text-[11px] border border-amber-200 text-amber-600 rounded">Unmark</button>
+                            ) : (
+                              <>
+                                <button onClick={() => handleMarkSick(s, name, "sick")} className="px-2 py-1 text-[11px] border border-amber-200 text-amber-600 rounded">🤒 Sick</button>
+                                <button onClick={() => handleMarkSick(s, name, "compassionate")} className="px-2 py-1 text-[11px] border border-purple-200 text-purple-600 rounded">🕊️ Comp</button>
+                              </>
+                            )}
+                            <button onClick={() => startEdit(s)} className="px-2 py-1 text-[11px] border border-blue-200 text-blue-600 rounded">Edit</button>
+                            <button onClick={() => handleDelete(s, name)} className="px-2 py-1 text-[11px] border border-red-200 text-red-600 rounded">Del</button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Add shift */}
+          <div className="border-t pt-3">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Add shift</div>
+            {templates.length > 0 && (
+              <div className="mb-2">
+                <div className="text-[10px] text-gray-400 mb-1">Quick templates</div>
+                <div className="flex flex-wrap gap-1">
+                  {templates.map((t) => (
+                    <button key={t.id} onClick={() => {
+                      setNewRole(t.role);
+                      setNewStart(String(t.start_time).slice(0, 5));
+                      setNewEnd(String(t.end_time).slice(0, 5));
+                    }} className="px-2 py-1 text-[11px] border rounded bg-gray-50 text-gray-700">{t.name}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="space-y-2">
+              <select value={newStaffId} onChange={(e) => {
+                const v = e.target.value; setNewStaffId(v);
+                if (v && v !== "other") { const f = staffOptions.find((st) => String(st.id) === v); if (f?.role) setNewRole(f.role); }
+              }} className="w-full rounded border px-2 py-2 text-sm">
+                <option value="">— TBC (no staff yet) —</option>
+                {staffOptions.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+                <option value="other">+ Other (type name)</option>
+              </select>
+              {newStaffId === "other" && (
+                <input value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} placeholder="Enter name" className="w-full rounded border px-2 py-2 text-sm" />
+              )}
+              <select value={newRole} onChange={(e) => setNewRole(e.target.value)} className="w-full rounded border px-2 py-2 text-sm">
+                {ME_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <div className="flex gap-2">
+                <input type="time" value={newStart} onChange={(e) => setNewStart(e.target.value)} className="flex-1 rounded border px-2 py-2 text-sm" />
+                <input type="time" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} className="flex-1 rounded border px-2 py-2 text-sm" />
+              </div>
+              <button onClick={handleAdd} disabled={savingShift} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40">
+                {savingShift ? "Saving…" : "Save shift"}
+              </button>
+            </div>
+          </div>
+
+          {/* Availability */}
+          <div className="border-t pt-3">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Availability</div>
+            <Group icon="✅" label="Available" list={available} cls="bg-green-50 text-green-700 border-green-200" clickable />
+            <Group icon="❓" label="Not submitted" list={unsubmitted} cls="bg-gray-50 text-gray-600 border-gray-200" clickable />
+            <Group icon="❌" label="Unavailable" list={unavailable} cls="bg-red-50 text-red-600 border-red-200" clickable={false} />
+            <div className="text-[10px] text-gray-400 mt-1">Already rostered are hidden. Tap a name to pre-fill the add-shift form.</div>
+          </div>
+
+          {/* Day notes */}
+          <div className="border-t pt-3">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Day notes</div>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Notes for this day (manager only)…" className="w-full rounded border px-2 py-2 text-sm resize-none" />
+            <button onClick={handleSaveNote} disabled={savingNote} className="mt-2 w-full bg-gray-700 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40">
+              {savingNote ? "Saving…" : "Save note"}
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FullRosterTab({ staff }) {
+  const isManager = staff.is_roster_manager === true;
   const [weekOffset, setWeekOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [shiftsByDate, setShiftsByDate] = useState({});
   const [sickByShift, setSickByShift] = useState({});
   const [publishedMonths, setPublishedMonths] = useState(new Set());
+
+  // Manager editing
+  const [sheetDate, setSheetDate] = useState(null);
+  const [staffOptions, setStaffOptions] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [patterns, setPatterns] = useState([]);
+  const [overrides, setOverrides] = useState([]);
+  const [approvedLeave, setApprovedLeave] = useState([]);
+  const [dayNotes, setDayNotes] = useState({});
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Monday of the current displayed week
   const getMonday = (offset) => {
@@ -1834,10 +2182,43 @@ function FullRosterTab({ staff }) {
         byDate[s.shift_date].push(s);
       });
       setShiftsByDate(byDate);
+
+      if (isManager) {
+        const [
+          { data: staffData },
+          { data: tmplData },
+          { data: holData },
+          { data: patData },
+          { data: ovrData },
+          { data: leaveData },
+          { data: noteData },
+        ] = await Promise.all([
+          supabase.from("staff").select("id, name, active, role").eq("pharmacy_id", PHARMACY_ID).neq("role", "Locum").order("name"),
+          supabase.from("shift_templates").select("*").order("name"),
+          supabase.from("public_holidays").select("*"),
+          supabase.from("availability_patterns").select("staff_id, day_of_week, status, from_date, to_date, created_at"),
+          supabase.from("availability_overrides").select("staff_id, override_date, status"),
+          supabase.from("leave_requests").select("*").eq("status", "approved"),
+          supabase.from("roster_day_notes").select("date, note").gte("date", startStr).lte("date", endStr),
+        ]);
+        setStaffOptions((staffData || []).filter((s) => s.active !== false));
+        setTemplates(tmplData || []);
+        setHolidays(holData || []);
+        setPatterns(patData || []);
+        setOverrides(ovrData || []);
+        setApprovedLeave(leaveData || []);
+        const nmap = {};
+        (noteData || []).forEach((n) => { nmap[n.date] = n.note; });
+        setDayNotes(nmap);
+      }
+
       setLoading(false);
     };
     load();
-  }, [weekOffset, staff.id]);
+  }, [weekOffset, staff.id, reloadKey]);
+
+  // Flat list of this week's shifts (for availability "already rostered" checks)
+  const weekShifts = Object.values(shiftsByDate).flat();
 
   const weekLabel = `${monday.toLocaleDateString("en-AU", { day: "numeric", month: "short" })} – ${weekDays[6].toLocaleDateString("en-AU", { day: "numeric", month: "short" })}`;
   const todayStr = toStr(new Date());
@@ -1867,13 +2248,19 @@ function FullRosterTab({ staff }) {
             const isToday = dateStr === todayStr;
             const dayShifts = sortRosterShifts(shiftsByDate[dateStr] || []);
             return (
-              <div key={dateStr} className={`bg-white rounded-xl border ${isToday ? "border-blue-300 ring-1 ring-blue-200" : ""}`}>
-                <div className={`px-3 py-2 border-b text-sm font-semibold ${isToday ? "text-blue-700" : "text-gray-700"}`}>
-                  {d.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "short" })}
+              <div
+                key={dateStr}
+                onClick={isManager ? () => setSheetDate(dateStr) : undefined}
+                className={`bg-white rounded-xl border ${isToday ? "border-blue-300 ring-1 ring-blue-200" : ""} ${isManager ? "cursor-pointer active:bg-gray-50" : ""}`}
+              >
+                <div className={`px-3 py-2 border-b text-sm font-semibold flex items-center ${isToday ? "text-blue-700" : "text-gray-700"}`}>
+                  <span>{d.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "short" })}</span>
                   {isToday && <span className="ml-2 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full">Today</span>}
+                  {isManager && !isPublished && <span className="ml-2 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Draft</span>}
+                  {isManager && <span className="ml-auto text-gray-300 text-xs">✏️</span>}
                 </div>
                 <div className="px-3 py-2">
-                  {!isPublished ? (
+                  {!isPublished && !isManager ? (
                     <div className="text-xs text-gray-400 italic">Not published yet</div>
                   ) : dayShifts.length === 0 ? (
                     <div className="text-xs text-gray-400">No one rostered.</div>
@@ -1900,6 +2287,15 @@ function FullRosterTab({ staff }) {
             );
           })}
         </div>
+      )}
+
+      {isManager && sheetDate && (
+        <DayEditSheet
+          date={sheetDate}
+          ctx={{ staffOptions, templates, holidays, patterns, overrides, approvedLeave, weekShifts, sickByShift, dayNote: dayNotes[sheetDate] || "" }}
+          onClose={() => setSheetDate(null)}
+          onChanged={() => setReloadKey((k) => k + 1)}
+        />
       )}
     </div>
   );
