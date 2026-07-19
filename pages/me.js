@@ -1648,7 +1648,7 @@ function DeliveriesTab({ staff }) {
                 <div className="mt-3 flex gap-3">
                   {c.address && (
                     
-                      href={`https://maps.google.com/?q=${encodeURIComponent(c.address)}`}
+                      <a href={`https://maps.google.com/?q=${encodeURIComponent(c.address)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
@@ -1659,7 +1659,7 @@ function DeliveriesTab({ staff }) {
                   )}
                   {c.phone && (
                     
-                      href={`tel:${c.phone}`}
+                      <a href={`tel:${c.phone}`}
                       style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
                       className="flex-1 flex items-center justify-center gap-1.5 min-h-[52px] text-base font-medium rounded-xl border border-gray-200 bg-gray-50 text-gray-700 active:bg-gray-100"
                     >
