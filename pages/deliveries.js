@@ -10,6 +10,13 @@ const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+const PAYMENT_LABEL = {
+  account: "On account",
+  card: "Card charged",
+  paid: "Already paid",
+  collect: "Collect cash at door",
+};
+
 function isDueOn(c, dateStr) {
   if (!c.active || !c.is_recurring) return false;
   const d = new Date(dateStr + "T00:00:00");
@@ -33,6 +40,7 @@ export default function Deliveries() {
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [builtDates, setBuiltDates] = useState([]);
+  const [historyCustomerId, setHistoryCustomerId] = useState("");
 
   useEffect(() => {
     loadAll();
@@ -41,6 +49,12 @@ export default function Deliveries() {
   useEffect(() => {
     loadDeliveries();
   }, [runDate]);
+
+  useEffect(() => {
+    if (tab !== "run") return;
+    const id = setInterval(() => { loadDeliveries(); }, 30000);
+    return () => clearInterval(id);
+  }, [tab, runDate]);
 
   async function loadAll() {
     setLoading(true);
@@ -129,6 +143,20 @@ export default function Deliveries() {
     loadDeliveries();
   }
 
+  async function moveDelivery(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= deliveries.length) return;
+    const a = deliveries[index];
+    const b = deliveries[target];
+    const aSeq = a.sequence ?? index + 1;
+    const bSeq = b.sequence ?? target + 1;
+    await Promise.all([
+      supabase.from("deliveries").update({ sequence: bSeq }).eq("id", a.id),
+      supabase.from("deliveries").update({ sequence: aSeq }).eq("id", b.id),
+    ]);
+    loadDeliveries();
+  }
+
   async function removeDelivery(id) {
     if (!confirm("Remove this delivery from the run?")) return;
     await supabase.from("deliveries").delete().eq("id", id);
@@ -207,6 +235,14 @@ export default function Deliveries() {
           >
             Customers
           </button>
+          <button
+            onClick={() => setTab("history")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${
+              tab === "history" ? "bg-sky-600 text-white" : "bg-white text-slate-600"
+            }`}
+          >
+            History
+          </button>
         </div>
 
         {tab === "run" && (
@@ -253,13 +289,17 @@ export default function Deliveries() {
             )}
 
             <div className="space-y-2">
-              {deliveries.map((d) => (
+              {deliveries.map((d, i) => (
                 <DeliveryRow
                   key={d.id}
                   d={d}
                   staff={staff}
                   onUpdate={updateDelivery}
                   onRemove={removeDelivery}
+                  onMove={(dir) => moveDelivery(i, dir)}
+                  isFirst={i === 0}
+                  isLast={i === deliveries.length - 1}
+                  position={i + 1}
                 />
               ))}
             </div>
@@ -369,25 +409,44 @@ export default function Deliveries() {
                                 : " — weekly"
                             }`
                           : "One-off"}{" "}
-                        · {c.payment_default}
+                        · {PAYMENT_LABEL[c.payment_default] || c.payment_default}
                         {c.payment_note ? ` · ${c.payment_note}` : ""}
                         {!c.active && " · inactive"}
                       </div>
                     </div>
-                    <button
-                      onClick={() => {
-                        setEditingCustomer(c);
-                        setShowCustomerForm(true);
-                      }}
-                      className="text-sm text-sky-600"
-                    >
-                      Edit
-                    </button>
+                    <div className="flex gap-3 shrink-0">
+                      <button
+                        onClick={() => {
+                          setHistoryCustomerId(c.id);
+                          setTab("history");
+                        }}
+                        className="text-sm text-slate-500 hover:text-slate-700"
+                      >
+                        History
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingCustomer(c);
+                          setShowCustomerForm(true);
+                        }}
+                        className="text-sm text-sky-600"
+                      >
+                        Edit
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
           </div>
+        )}
+
+        {tab === "history" && (
+          <HistoryPanel
+            customers={customers}
+            staff={staff}
+            initialCustomerId={historyCustomerId}
+          />
         )}
 
         {showCustomerForm && (
@@ -405,7 +464,7 @@ export default function Deliveries() {
   );
 }
 
-function DeliveryRow({ d, staff, onUpdate, onRemove }) {
+function DeliveryRow({ d, staff, onUpdate, onRemove, onMove, isFirst, isLast, position }) {
   const [open, setOpen] = useState(false);
   const c = d.delivery_customers || {};
   const delivered = d.status === "delivered";
@@ -420,6 +479,7 @@ function DeliveryRow({ d, staff, onUpdate, onRemove }) {
       <div className="flex justify-between items-start">
         <div className="min-w-0">
           <div className="font-medium text-slate-800">
+            <span className="text-slate-400 mr-1">{position}.</span>
             {delivered && "✓ "}
             {failed && "✕ "}
             {c.name}
@@ -431,7 +491,7 @@ function DeliveryRow({ d, staff, onUpdate, onRemove }) {
           )}
           {d.items && <div className="text-sm text-slate-600 mt-1">{d.items}</div>}
           <div className="text-xs text-slate-400 mt-1">
-            {d.payment_status}
+            {PAYMENT_LABEL[d.payment_status] || d.payment_status}
             {d.amount_collected ? ` · $${d.amount_collected}` : ""}
             {d.delivered_at &&
               ` · ${new Date(d.delivered_at).toLocaleTimeString("en-AU", {
@@ -443,9 +503,27 @@ function DeliveryRow({ d, staff, onUpdate, onRemove }) {
             <div className="text-sm text-slate-600 mt-1">{d.outcome_note}</div>
           )}
         </div>
-        <button onClick={() => setOpen(!open)} className="text-sm text-sky-600 shrink-0">
-          {open ? "Close" : "Edit"}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-col">
+            <button
+              onClick={() => onMove(-1)}
+              disabled={isFirst}
+              className="px-2 text-slate-400 disabled:opacity-20 hover:text-slate-700"
+            >
+              ▲
+            </button>
+            <button
+              onClick={() => onMove(1)}
+              disabled={isLast}
+              className="px-2 text-slate-400 disabled:opacity-20 hover:text-slate-700"
+            >
+              ▼
+            </button>
+          </div>
+          <button onClick={() => setOpen(!open)} className="text-sm text-sky-600">
+            {open ? "Close" : "Edit"}
+          </button>
+        </div>
       </div>
 
       {open && (
@@ -470,8 +548,9 @@ function DeliveryRow({ d, staff, onUpdate, onRemove }) {
               className="border rounded px-3 py-2 text-sm flex-1"
             >
               <option value="account">On account</option>
+              <option value="card">Card charged</option>
               <option value="paid">Already paid</option>
-              <option value="collect">Collect payment</option>
+              <option value="collect">Collect cash at door</option>
             </select>
             <select
               value={d.status}
@@ -489,6 +568,172 @@ function DeliveryRow({ d, staff, onUpdate, onRemove }) {
           >
             Remove from run
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistoryPanel({ customers, staff, initialCustomerId }) {
+  const today = new Date();
+  const monthAgo = new Date();
+  monthAgo.setMonth(monthAgo.getMonth() - (initialCustomerId ? 12 : 1));
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const [from, setFrom] = useState(iso(monthAgo));
+  const [to, setTo] = useState(iso(today));
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [customerFilter, setCustomerFilter] = useState(initialCustomerId || "");
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const staffById = Object.fromEntries((staff || []).map((s) => [String(s.id), s.name]));
+
+  async function run() {
+    setLoading(true);
+    let q = supabase
+      .from("deliveries")
+      .select("*, delivery_customers(name, address, phone)")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .gte("delivery_date", from)
+      .lte("delivery_date", to)
+      .order("delivery_date", { ascending: false })
+      .order("sequence", { nullsFirst: false });
+    if (statusFilter !== "all") q = q.eq("status", statusFilter);
+    if (customerFilter) q = q.eq("delivery_customer_id", customerFilter);
+    const { data, error } = await q;
+    setLoading(false);
+    if (error) { alert("Error: " + error.message); return; }
+    setRows(data || []);
+  }
+
+  useEffect(() => { run(); }, [from, to, statusFilter, customerFilter]);
+
+  async function exportExcel() {
+    if (rows.length === 0) { alert("Nothing to export."); return; }
+    try {
+      const XLSX = await import("xlsx");
+      const data = rows.map((d) => ({
+        Date: d.delivery_date,
+        Customer: d.delivery_customers?.name || "",
+        Address: d.delivery_customers?.address || "",
+        Phone: d.delivery_customers?.phone || "",
+        Items: d.items || "",
+        Notes: d.notes || "",
+        Payment: PAYMENT_LABEL[d.payment_status] || d.payment_status || "",
+        Status: d.status,
+        "Delivered by": staffById[String(d.delivered_by)] || "",
+        "Completed at": d.delivered_at
+          ? new Date(d.delivered_at).toLocaleString("en-AU")
+          : "",
+        Outcome: d.outcome_note || "",
+      }));
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Deliveries");
+      XLSX.writeFile(wb, `deliveries_${from}_to_${to}.xlsx`);
+    } catch (err) {
+      alert("Export failed: " + (err?.message || String(err)));
+    }
+  }
+
+  const counts = {
+    total: rows.length,
+    delivered: rows.filter((r) => r.status === "delivered").length,
+    failed: rows.filter((r) => r.status === "failed").length,
+    pending: rows.filter((r) => r.status === "pending").length,
+  };
+
+  return (
+    <div>
+      <div className="bg-white rounded-lg p-4 mb-4 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">From</label>
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="border rounded px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">To</label>
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="border rounded px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Status</label>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border rounded px-3 py-2 text-sm">
+              <option value="all">All</option>
+              <option value="delivered">Delivered</option>
+              <option value="failed">Failed</option>
+              <option value="pending">Pending</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Customer</label>
+            <select value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)} className="border rounded px-3 py-2 text-sm">
+              <option value="">All customers</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <button onClick={exportExcel} className="ml-auto border border-emerald-300 text-emerald-700 rounded px-4 py-2 text-sm font-medium hover:bg-emerald-50">
+            ↓ Export to Excel
+          </button>
+        </div>
+        <div className="text-sm text-slate-500">
+          {counts.total} deliveries · {counts.delivered} delivered · {counts.failed} failed
+          {counts.pending > 0 ? ` · ${counts.pending} still pending` : ""}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="bg-white rounded-lg p-6 text-center text-sm text-slate-400">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="bg-white rounded-lg p-6 text-center text-sm text-slate-400">
+          No deliveries in this range.
+        </div>
+      ) : (
+        <div className="bg-white rounded-lg overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-slate-500">
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Customer</th>
+                <th className="px-3 py-2">Items</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">By</th>
+                <th className="px-3 py-2">Completed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((d) => (
+                <tr key={d.id} className="border-b last:border-0">
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                    {new Date(d.delivery_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-slate-800">{d.delivery_customers?.name}</div>
+                    <div className="text-xs text-slate-400">{d.delivery_customers?.address}</div>
+                  </td>
+                  <td className="px-3 py-2 text-slate-600">{d.items || "—"}</td>
+                  <td className="px-3 py-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      d.status === "delivered" ? "bg-emerald-50 text-emerald-700"
+                      : d.status === "failed" ? "bg-red-50 text-red-600"
+                      : "bg-slate-100 text-slate-500"
+                    }`}>
+                      {d.status}
+                    </span>
+                    {d.outcome_note && <div className="text-xs text-slate-500 mt-0.5">{d.outcome_note}</div>}
+                  </td>
+                  <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{staffById[String(d.delivered_by)] || "—"}</td>
+                  <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">
+                    {d.delivered_at
+                      ? new Date(d.delivered_at).toLocaleString("en-AU", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -599,8 +844,9 @@ function CustomerForm({ customer, onSave, onCancel }) {
               className="w-full border rounded px-3 py-2 text-sm"
             >
               <option value="account">On account</option>
+              <option value="card">Card charged</option>
               <option value="paid">Already paid</option>
-              <option value="collect">Collect payment</option>
+              <option value="collect">Collect cash at door</option>
             </select>
           </div>
           <input

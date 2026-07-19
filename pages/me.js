@@ -1549,6 +1549,22 @@ function DeliveriesTab({ staff }) {
     load();
   };
 
+  const moveRow = async (index, direction) => {
+    const target = index + direction;
+    if (target < 0 || target >= rows.length) return;
+    const a = rows[index];
+    const b = rows[target];
+    const aSeq = a.sequence ?? index + 1;
+    const bSeq = b.sequence ?? target + 1;
+    setSaving(a.id);
+    await Promise.all([
+      supabase.from("deliveries").update({ sequence: bSeq }).eq("id", a.id),
+      supabase.from("deliveries").update({ sequence: aSeq }).eq("id", b.id),
+    ]);
+    setSaving(null);
+    load();
+  };
+
   const markDelivered = (d) =>
     update(d.id, {
       status: "delivered",
@@ -1596,7 +1612,7 @@ function DeliveriesTab({ staff }) {
       ) : (
         <>
           <div className="text-xs text-gray-500 text-center">{done} of {rows.length} done</div>
-          {rows.map((d) => {
+          {rows.map((d, i) => {
             const c = d.delivery_customers || {};
             const delivered = d.status === "delivered";
             const failed = d.status === "failed";
@@ -1611,13 +1627,14 @@ function DeliveriesTab({ staff }) {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className={`text-sm font-semibold ${delivered ? "text-emerald-700" : failed ? "text-red-700" : "text-gray-800"}`}>
+                      <span className="text-gray-400 mr-1">{i + 1}.</span>
                       {delivered && "✓ "}{failed && "✕ "}{c.name}
                     </div>
                     <div className="text-xs text-gray-500">{c.address}</div>
                     {c.notes && <div className="text-xs text-amber-700 mt-0.5">{c.notes}</div>}
                     {d.items && <div className="text-xs text-gray-600 mt-0.5">{d.items}</div>}
                     {d.payment_status === "collect" && (
-                      <div className="text-xs text-indigo-700 font-medium mt-0.5">💳 Collect payment</div>
+                      <div className="text-sm text-indigo-700 font-semibold mt-0.5">💵 Collect cash at door</div>
                     )}
                     {c.payment_note && <div className="text-xs text-indigo-600">{c.payment_note}</div>}
                     {d.outcome_note && <div className="text-xs text-gray-600 mt-0.5">{d.outcome_note}</div>}
@@ -1664,6 +1681,22 @@ function DeliveriesTab({ staff }) {
                       Undo
                     </button>
                   )}
+                  <div className="flex gap-1 ml-auto">
+                    <button
+                      onClick={() => moveRow(i, -1)}
+                      disabled={i === 0 || saving === d.id}
+                      className="min-w-[44px] min-h-[44px] rounded-xl border-2 border-gray-200 text-gray-500 disabled:opacity-20"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={() => moveRow(i, 1)}
+                      disabled={i === rows.length - 1 || saving === d.id}
+                      className="min-w-[44px] min-h-[44px] rounded-xl border-2 border-gray-200 text-gray-500 disabled:opacity-20"
+                    >
+                      ▼
+                    </button>
+                  </div>
                 </div>
 
                 {d.payment_status === "collect" && (
