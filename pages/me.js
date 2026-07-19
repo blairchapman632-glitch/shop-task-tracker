@@ -1514,6 +1514,188 @@ function MeEditShiftModal({ shift, staff, onClose, onSaved }) {
   );
 }
 
+function DeliveriesTab({ staff }) {
+  const [loading, setLoading] = useState(true);
+  const [dayOffset, setDayOffset] = useState(0);
+  const [rows, setRows] = useState([]);
+  const [openId, setOpenId] = useState(null);
+  const [saving, setSaving] = useState(null);
+
+  const dateISO = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + dayOffset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("deliveries")
+      .select("*, delivery_customers(*)")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .eq("delivery_date", dateISO)
+      .order("sequence", { nullsFirst: false });
+    setRows(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [dateISO, staff.id]);
+
+  const update = async (id, patch) => {
+    setSaving(id);
+    const { error } = await supabase.from("deliveries").update(patch).eq("id", id);
+    setSaving(null);
+    if (error) { alert("Couldn't save: " + error.message); return; }
+    load();
+  };
+
+  const markDelivered = (d) =>
+    update(d.id, {
+      status: "delivered",
+      delivered_at: new Date().toISOString(),
+      delivered_by: staff.id,
+    });
+
+  const markFailed = (d) => {
+    const note = window.prompt("What happened? (e.g. no answer, wrong address)", "");
+    if (note === null) return;
+    update(d.id, {
+      status: "failed",
+      delivered_at: new Date().toISOString(),
+      delivered_by: staff.id,
+      outcome_note: note.trim() || null,
+    });
+  };
+
+  const undo = (d) =>
+    update(d.id, { status: "pending", delivered_at: null, delivered_by: null, outcome_note: null });
+
+  const done = rows.filter((r) => r.status !== "pending").length;
+  const dateLabel = new Date(dateISO + "T00:00:00").toLocaleDateString("en-AU", {
+    weekday: "long", day: "numeric", month: "short",
+  });
+
+  return (
+    <div className="max-w-lg mx-auto space-y-3">
+      {/* Day nav */}
+      <div className="flex items-center justify-between">
+        <button onClick={() => setDayOffset((o) => o - 1)} className="px-3 py-1.5 rounded-lg border bg-white text-sm">←</button>
+        <div className="text-sm font-semibold text-gray-700 text-center">
+          {dateLabel}
+          {dayOffset === 0 && <span className="block text-[11px] text-blue-600">Today</span>}
+        </div>
+        <button onClick={() => setDayOffset((o) => o + 1)} className="px-3 py-1.5 rounded-lg border bg-white text-sm">→</button>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-gray-400 text-center mt-10">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-sm border p-6 text-center text-sm text-gray-400">
+          No deliveries for this day.
+        </div>
+      ) : (
+        <>
+          <div className="text-xs text-gray-500 text-center">{done} of {rows.length} done</div>
+          {rows.map((d) => {
+            const c = d.delivery_customers || {};
+            const delivered = d.status === "delivered";
+            const failed = d.status === "failed";
+            const isOpen = openId === d.id;
+            return (
+              <div
+                key={d.id}
+                className={`bg-white rounded-2xl shadow-sm border p-4 ${
+                  delivered ? "border-l-4 border-l-emerald-500" : failed ? "border-l-4 border-l-red-500" : ""
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className={`text-sm font-semibold ${delivered ? "text-emerald-700" : failed ? "text-red-700" : "text-gray-800"}`}>
+                      {delivered && "✓ "}{failed && "✕ "}{c.name}
+                    </div>
+                    <div className="text-xs text-gray-500">{c.address}</div>
+                    {c.notes && <div className="text-xs text-amber-700 mt-0.5">{c.notes}</div>}
+                    {d.items && <div className="text-xs text-gray-600 mt-0.5">{d.items}</div>}
+                    {d.payment_status === "collect" && (
+                      <div className="text-xs text-indigo-700 font-medium mt-0.5">💳 Collect payment</div>
+                    )}
+                    {c.payment_note && <div className="text-xs text-indigo-600">{c.payment_note}</div>}
+                    {d.outcome_note && <div className="text-xs text-gray-600 mt-0.5">{d.outcome_note}</div>}
+                  </div>
+                  <div className="flex flex-col gap-1 shrink-0">
+                    {c.address && (
+                      
+                        <a href={`https://maps.google.com/?q=${encodeURIComponent(c.address)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-center text-[11px] px-2 py-1.5 rounded-lg border border-blue-200 text-blue-600"
+                      >
+                        🧭 Navigate
+                      </a>
+                    )}
+                    {c.phone && (
+                      <a href={`tel:${c.phone}`} className="text-center text-[11px] px-2 py-1.5 rounded-lg border border-gray-200 text-gray-600">
+                        📞 Call
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                  {d.status === "pending" ? (
+                    <>
+                      <button
+                        onClick={() => markDelivered(d)}
+                        disabled={saving === d.id}
+                        className="flex-1 bg-emerald-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40"
+                      >
+                        {saving === d.id ? "…" : "Delivered"}
+                      </button>
+                      <button
+                        onClick={() => markFailed(d)}
+                        disabled={saving === d.id}
+                        className="px-3 border border-red-200 text-red-600 rounded-lg py-2.5 text-sm disabled:opacity-40"
+                      >
+                        Couldn't deliver
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => undo(d)} className="text-xs text-gray-500 underline">
+                      Undo
+                    </button>
+                  )}
+                </div>
+
+                {d.payment_status === "collect" && (
+                  <div className="mt-2 pt-2 border-t">
+                    <button onClick={() => setOpenId(isOpen ? null : d.id)} className="text-xs text-indigo-600">
+                      {isOpen ? "Hide" : d.amount_collected ? `Collected $${d.amount_collected}` : "Record payment"}
+                    </button>
+                    {isOpen && (
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          defaultValue={d.amount_collected || ""}
+                          placeholder="Amount $"
+                          onBlur={(e) =>
+                            update(d.id, { amount_collected: e.target.value ? Number(e.target.value) : null })
+                          }
+                          className="flex-1 border rounded-lg px-3 py-2 text-sm"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
 function DetailsTab({ staff }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -2683,6 +2865,7 @@ export default function MePage() {
     { key: "timeoff", label: "Time off", icon: "✅" },
     { key: "wages", label: "Wages", icon: "💰" },
     { key: "messages", label: "Messages", icon: "💬" },
+    ...(staff.is_driver ? [{ key: "deliveries", label: "Deliveries", icon: "🚚" }] : []),
     { key: "details", label: "Details", icon: "👤" },
   ];
 
@@ -2749,6 +2932,8 @@ export default function MePage() {
           <WagesTab staff={staff} />
         ) : tab === "messages" ? (
           <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} newBoardCount={newBoardCount} unreadCount={unreadCount} />
+        ) : tab === "deliveries" ? (
+          <DeliveriesTab staff={staff} />
         ) : tab === "details" ? (
           <DetailsTab staff={staff} />
         ) : (
