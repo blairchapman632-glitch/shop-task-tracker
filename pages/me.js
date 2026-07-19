@@ -1593,7 +1593,6 @@ function DeliveriesTab({ staff }) {
 
   return (
     <div className="max-w-lg mx-auto space-y-3">
-      {/* Day nav */}
       <div className="flex items-center justify-between">
         <button onClick={() => setDayOffset((o) => o - 1)} className="px-3 py-1.5 rounded-lg border bg-white text-sm">←</button>
         <div className="text-sm font-semibold text-gray-700 text-center">
@@ -1624,102 +1623,130 @@ function DeliveriesTab({ staff }) {
                   delivered ? "border-l-4 border-l-emerald-500" : failed ? "border-l-4 border-l-red-500" : ""
                 }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className={`text-sm font-semibold ${delivered ? "text-emerald-700" : failed ? "text-red-700" : "text-gray-800"}`}>
-                      <span className="text-gray-400 mr-1">{i + 1}.</span>
-                      {delivered && "✓ "}{failed && "✕ "}{c.name}
+                <div className="min-w-0">
+                  <div className={`text-base font-semibold ${delivered ? "text-emerald-700" : failed ? "text-red-700" : "text-gray-800"}`}>
+                    <span className="text-gray-400 mr-1">{i + 1}.</span>
+                    {delivered && "✓ "}{failed && "✕ "}{c.name}
+                  </div>
+                  <div className="text-sm text-gray-500 mt-0.5">{c.address}</div>
+                  {c.notes && <div className="text-sm text-amber-700 mt-1">{c.notes}</div>}
+                  {d.items && <div className="text-sm text-gray-600 mt-1">{d.items}</div>}
+                  {d.payment_status === "collect" && (
+                    <div className="mt-2 rounded-xl bg-indigo-50 border border-indigo-200 px-3 py-2">
+                      <div className="text-sm font-semibold text-indigo-800">💵 Collect cash at door</div>
+                      {d.amount_due != null && (
+                        <div className="text-2xl font-bold text-indigo-900 tabular-nums">
+                          ${Number(d.amount_due).toFixed(2)}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-xs text-gray-500">{c.address}</div>
-                    {c.notes && <div className="text-xs text-amber-700 mt-0.5">{c.notes}</div>}
-                    {d.items && <div className="text-xs text-gray-600 mt-0.5">{d.items}</div>}
-                    {d.payment_status === "collect" && (
-                      <div className="text-sm text-indigo-700 font-semibold mt-0.5">💵 Collect cash at door</div>
-                    )}
-                    {c.payment_note && <div className="text-xs text-indigo-600">{c.payment_note}</div>}
-                    {d.outcome_note && <div className="text-xs text-gray-600 mt-0.5">{d.outcome_note}</div>}
-                  </div>
-                  <div className="flex flex-col gap-1 shrink-0">
-                    {c.address && (
-                      
-                        <a href={`https://maps.google.com/?q=${encodeURIComponent(c.address)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-center text-[11px] px-2 py-1.5 rounded-lg border border-blue-200 text-blue-600"
-                      >
-                        🧭 Navigate
-                      </a>
-                    )}
-                    {c.phone && (
-                      <a href={`tel:${c.phone}`} className="text-center text-[11px] px-2 py-1.5 rounded-lg border border-gray-200 text-gray-600">
-                        📞 Call
-                      </a>
-                    )}
-                  </div>
+                  )}
+                  {c.payment_note && <div className="text-sm text-indigo-600 mt-1">{c.payment_note}</div>}
+                  {d.outcome_note && <div className="text-sm text-gray-600 mt-1">{d.outcome_note}</div>}
                 </div>
 
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 flex gap-3">
+                  {c.address && (
+                    
+                      href={`https://maps.google.com/?q=${encodeURIComponent(c.address)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
+                      className="flex-1 flex items-center justify-center gap-1.5 min-h-[52px] text-base font-medium rounded-xl border border-blue-200 bg-blue-50 text-blue-700 active:bg-blue-100"
+                    >
+                      🧭 Navigate
+                    </a>
+                  )}
+                  {c.phone && (
+                    
+                      href={`tel:${c.phone}`}
+                      style={{ touchAction: "manipulation", WebkitTapHighlightColor: "transparent" }}
+                      className="flex-1 flex items-center justify-center gap-1.5 min-h-[52px] text-base font-medium rounded-xl border border-gray-200 bg-gray-50 text-gray-700 active:bg-gray-100"
+                    >
+                      📞 Call
+                    </a>
+                  )}
+                </div>
+
+                <div className="mt-3">
                   {d.status === "pending" ? (
-                    <>
+                    <div className="flex gap-3">
                       <button
                         onClick={() => markDelivered(d)}
                         disabled={saving === d.id}
-                        className="flex-1 bg-emerald-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40"
+                        style={{ touchAction: "manipulation" }}
+                        className="flex-1 min-h-[52px] bg-emerald-600 text-white rounded-xl text-base font-semibold disabled:opacity-40"
                       >
                         {saving === d.id ? "…" : "Delivered"}
                       </button>
                       <button
                         onClick={() => markFailed(d)}
                         disabled={saving === d.id}
-                        className="px-3 border border-red-200 text-red-600 rounded-lg py-2.5 text-sm disabled:opacity-40"
+                        style={{ touchAction: "manipulation" }}
+                        className="flex-1 min-h-[52px] border border-red-200 bg-red-50 text-red-600 rounded-xl text-base font-medium disabled:opacity-40"
                       >
                         Couldn't deliver
                       </button>
-                    </>
+                    </div>
                   ) : (
-                    <button onClick={() => undo(d)} className="text-xs text-gray-500 underline">
+                    <button
+                      onClick={() => undo(d)}
+                      className="w-full min-h-[44px] rounded-xl border border-gray-200 text-sm text-gray-500"
+                    >
                       Undo
                     </button>
                   )}
-                  <div className="flex gap-1 ml-auto">
-                    <button
-                      onClick={() => moveRow(i, -1)}
-                      disabled={i === 0 || saving === d.id}
-                      className="min-w-[44px] min-h-[44px] rounded-xl border-2 border-gray-200 text-gray-500 disabled:opacity-20"
-                    >
-                      ▲
-                    </button>
-                    <button
-                      onClick={() => moveRow(i, 1)}
-                      disabled={i === rows.length - 1 || saving === d.id}
-                      className="min-w-[44px] min-h-[44px] rounded-xl border-2 border-gray-200 text-gray-500 disabled:opacity-20"
-                    >
-                      ▼
-                    </button>
-                  </div>
                 </div>
 
                 {d.payment_status === "collect" && (
-                  <div className="mt-2 pt-2 border-t">
-                    <button onClick={() => setOpenId(isOpen ? null : d.id)} className="text-xs text-indigo-600">
-                      {isOpen ? "Hide" : d.amount_collected ? `Collected $${d.amount_collected}` : "Record payment"}
+                  <div className="mt-3 pt-3 border-t">
+                    <button
+                      onClick={() => setOpenId(isOpen ? null : d.id)}
+                      className="w-full min-h-[44px] rounded-xl border border-indigo-200 text-sm font-medium text-indigo-700"
+                    >
+                      {isOpen
+                        ? "Hide"
+                        : d.amount_collected != null
+                        ? `✓ Collected $${Number(d.amount_collected).toFixed(2)}`
+                        : "Record cash collected"}
                     </button>
                     {isOpen && (
-                      <div className="mt-2 flex gap-2">
+                      <div className="mt-2">
                         <input
                           type="number"
                           step="0.01"
-                          defaultValue={d.amount_collected || ""}
-                          placeholder="Amount $"
+                          inputMode="decimal"
+                          defaultValue={d.amount_collected ?? d.amount_due ?? ""}
+                          placeholder="Amount collected $"
                           onBlur={(e) =>
                             update(d.id, { amount_collected: e.target.value ? Number(e.target.value) : null })
                           }
-                          className="flex-1 border rounded-lg px-3 py-2 text-sm"
+                          className="w-full border rounded-xl px-3 py-3 text-base"
                         />
                       </div>
                     )}
                   </div>
                 )}
+
+                <div className="mt-3 pt-3 border-t flex items-center gap-3">
+                  <span className="text-xs text-gray-400">Order</span>
+                  <button
+                    onClick={() => moveRow(i, -1)}
+                    disabled={i === 0 || saving === d.id}
+                    style={{ touchAction: "manipulation" }}
+                    className="min-w-[52px] min-h-[44px] rounded-xl border border-gray-200 text-gray-500 disabled:opacity-20"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    onClick={() => moveRow(i, 1)}
+                    disabled={i === rows.length - 1 || saving === d.id}
+                    style={{ touchAction: "manipulation" }}
+                    className="min-w-[52px] min-h-[44px] rounded-xl border border-gray-200 text-gray-500 disabled:opacity-20"
+                  >
+                    ▼
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -1728,8 +1755,6 @@ function DeliveriesTab({ staff }) {
     </div>
   );
 }
-
-function DetailsTab({ staff }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = async () => {

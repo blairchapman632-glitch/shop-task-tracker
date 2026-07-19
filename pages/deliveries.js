@@ -492,7 +492,8 @@ function DeliveryRow({ d, staff, onUpdate, onRemove, onMove, isFirst, isLast, po
           {d.items && <div className="text-sm text-slate-600 mt-1">{d.items}</div>}
           <div className="text-xs text-slate-400 mt-1">
             {PAYMENT_LABEL[d.payment_status] || d.payment_status}
-            {d.amount_collected ? ` · $${d.amount_collected}` : ""}
+            {d.payment_status === "collect" && d.amount_due ? ` — $${Number(d.amount_due).toFixed(2)} due` : ""}
+            {d.amount_collected ? ` · $${Number(d.amount_collected).toFixed(2)} collected` : ""}
             {d.delivered_at &&
               ` · ${new Date(d.delivered_at).toLocaleTimeString("en-AU", {
                 hour: "numeric",
@@ -552,6 +553,16 @@ function DeliveryRow({ d, staff, onUpdate, onRemove, onMove, isFirst, isLast, po
               <option value="paid">Already paid</option>
               <option value="collect">Collect cash at door</option>
             </select>
+            {d.payment_status === "collect" && (
+              <input
+                type="number"
+                step="0.01"
+                defaultValue={d.amount_due || ""}
+                onBlur={(e) => onUpdate(d.id, { amount_due: e.target.value ? Number(e.target.value) : null })}
+                placeholder="Amount to collect $"
+                className="border rounded px-3 py-2 text-sm w-40"
+              />
+            )}
             <select
               value={d.status}
               onChange={(e) => onUpdate(d.id, { status: e.target.value })}
@@ -621,6 +632,8 @@ function HistoryPanel({ customers, staff, initialCustomerId }) {
         Items: d.items || "",
         Notes: d.notes || "",
         Payment: PAYMENT_LABEL[d.payment_status] || d.payment_status || "",
+        "Amount due": d.amount_due ?? "",
+        "Amount collected": d.amount_collected ?? "",
         Status: d.status,
         "Delivered by": staffById[String(d.delivered_by)] || "",
         "Completed at": d.delivered_at
