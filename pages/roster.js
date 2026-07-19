@@ -274,6 +274,39 @@ const selectedDayShifts = selectedDate
         if (!hasPharmacist) {
           issues.push({ key: `nopharmacist:${dateStr}`, type: "nopharmacist", date: dateStr, shift: null, label: "No pharmacist rostered", sub: `${dayShifts.length} shift${dayShifts.length !== 1 ? "s" : ""} — no Pharmacist or Locum` });
         }
+        if (!holidayDates.has(dateStr) && hasPharmacist) {
+          const dowP = new Date(dateStr + "T00:00:00").getDay();
+          const openP = "08:00";
+          const closeP = (dowP === 0 || dowP === 6) ? "17:00" : "18:30";
+          const closeLabelP = (dowP === 0 || dowP === 6) ? "5pm" : "6:30pm";
+          const pharmShifts = dayShifts
+            .filter((s) => (s.role === "Pharmacist" || s.role === "Locum") && s.start_time && s.end_time && !sickByShift[s.id])
+            .map((s) => ({ start: String(s.start_time).slice(0, 5), end: String(s.end_time).slice(0, 5) }))
+            .sort((a, b) => a.start.localeCompare(b.start));
+
+          // Find uncovered gaps between open and close
+          const gaps = [];
+          let cursor = openP;
+          for (const p of pharmShifts) {
+            if (p.start > cursor) gaps.push([cursor, p.start < closeP ? p.start : closeP]);
+            if (p.end > cursor) cursor = p.end;
+            if (cursor >= closeP) break;
+          }
+          if (cursor < closeP) gaps.push([cursor, closeP]);
+
+          const validGaps = gaps.filter(([a, b]) => a < b);
+          if (validGaps.length) {
+            const gapText = validGaps.map(([a, b]) => `${formatTime(a)}–${formatTime(b)}`).join(", ");
+            issues.push({
+              key: `pharmgap:${dateStr}`,
+              type: "pharmgap",
+              date: dateStr,
+              shift: null,
+              label: `No pharmacist cover: ${gapText}`,
+              sub: `Trading 8am–${closeLabelP} must have a pharmacist at all times`,
+            });
+          }
+        }
         if (!holidayDates.has(dateStr)) {
           const dow = new Date(dateStr + "T00:00:00").getDay();
           const closeTime = (dow === 0 || dow === 6) ? "17:00" : "18:30";
@@ -714,8 +747,19 @@ const refreshLeave = useCallback(async () => {
         return { staff_id: s.staff_id, staff_name: s.staff_name, shift_date: newDate, start_time: s.start_time, end_time: s.end_time, role: s.role, roster_month_id: targetMonthId };
       }).filter(Boolean);
 
-      if (!copied.length) { alert("No valid shifts to copy."); return; }
-      await supabase.from("roster_shifts").insert(copied);
+      // De-dupe: findDate falls back to the last occurrence of a weekday when the
+      // target month has fewer of that weekday, which can land two source shifts
+      // on the same date. Drop exact duplicates before inserting.
+      const seen = new Set();
+      const deduped = copied.filter((s) => {
+        const key = `${s.staff_id ?? ""}|${s.staff_name ?? ""}|${s.shift_date}|${s.start_time}|${s.end_time}|${s.role}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      if (!deduped.length) { alert("No valid shifts to copy."); return; }
+      await supabase.from("roster_shifts").insert(deduped);
       await refreshShifts();
       setCopyUndo({ monthLabel, targetMonthDate, targetEnd, shifts: snapshot || [] });
     } catch (err) {
@@ -2013,17 +2057,18 @@ const handleLeaveDecision = async (lr, decision) => {
         const issues = allIssues.filter((i) => !dismissedIssues.has(i.key));
         const resolved = allIssues.filter((i) => dismissedIssues.has(i.key));
 
-        const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday", nostaff: "No staff rostered", nopharmacist: "No pharmacist", noopener: "No opener", nocloser: "No closer" };
+        const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday", nostaff: "No staff rostered", nopharmacist: "No pharmacist", pharmgap: "Pharmacist cover gap", noopener: "No opener", nocloser: "No closer" };
         const typeStyle = {
           availability: "bg-amber-50 border-amber-200 text-amber-800",
           tbc: "bg-red-50 border-red-200 text-red-700",
           ph: "bg-orange-50 border-orange-200 text-orange-700",
           nostaff: "bg-gray-50 border-gray-300 text-gray-700",
           nopharmacist: "bg-red-50 border-red-200 text-red-700",
+          pharmgap: "bg-red-50 border-red-300 text-red-800",
           noopener: "bg-sky-50 border-sky-200 text-sky-700",
           nocloser: "bg-indigo-50 border-indigo-200 text-indigo-700",
         };
-        const typeIcon = { availability: "⚠️", tbc: "❓", ph: "🏖️", nostaff: "📭", nopharmacist: "💊", noopener: "🔓", nocloser: "🔒" };
+        const typeIcon = { availability: "⚠️", tbc: "❓", ph: "🏖️", nostaff: "📭", nopharmacist: "💊", pharmgap: "💊", noopener: "🔓", nocloser: "🔒" };
 
         return (
           <div className="no-print fixed inset-0 z-50 flex">
