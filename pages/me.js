@@ -1755,6 +1755,8 @@ function DeliveriesTab({ staff }) {
     </div>
   );
 }
+
+function DetailsTab({ staff }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = async () => {
