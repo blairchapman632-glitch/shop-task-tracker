@@ -622,6 +622,9 @@ export default function HomePage() {
   const [showOffRoster, setShowOffRoster] = useState(false);
   const [completingSection, setCompletingSection] = useState(null);
   const [todayRosteredIds, setTodayRosteredIds] = useState(new Set());
+  const [todayDeliveries, setTodayDeliveries] = useState([]);
+  const [showDeliveriesModal, setShowDeliveriesModal] = useState(false);
+  const [completingDelivery, setCompletingDelivery] = useState(null);
   const [approvalReminderIds, setApprovalReminderIds] = useState(new Set());
   const [unreadByStaff, setUnreadByStaff] = useState({}); // staffId -> unread message count
   const [leaveUpdateIds, setLeaveUpdateIds] = useState(new Set()); // staff with unseen leave status changes
@@ -816,7 +819,70 @@ export default function HomePage() {
     };
     load();
   }, [authChecked, currentPharmacyId]);
+// ── Today's deliveries (real rows + projected recurring customers) ──
+  const loadTodayDeliveries = async () => {
+    if (!currentPharmacyId) return;
+    try {
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const [{ data: rows }, { data: custs }] = await Promise.all([
+        supabase
+          .from("deliveries")
+          .select("*, delivery_customers(*)")
+          .eq("pharmacy_id", currentPharmacyId)
+          .eq("delivery_date", todayStr)
+          .order("sequence", { nullsFirst: false }),
+        supabase
+          .from("delivery_customers")
+          .select("*")
+          .eq("pharmacy_id", currentPharmacyId)
+          .eq("active", true),
+      ]);
 
+      const real = rows || [];
+      const existing = new Set(real.map((d) => String(d.delivery_customer_id)));
+      const dow = now.getDay();
+
+      const isDue = (c) => {
+        if (!c.is_recurring) return false;
+        if (c.recurring_day !== dow) return false;
+        const weeks = c.recurrence_weeks || 1;
+        if (weeks === 1) return true;
+        if (!c.anchor_date) return true;
+        const anchor = new Date(c.anchor_date + "T00:00:00");
+        const d = new Date(todayStr + "T00:00:00");
+        const diffDays = Math.round((d - anchor) / 86400000);
+        if (diffDays < 0) return false;
+        return diffDays % (weeks * 7) === 0;
+      };
+
+      const maxSeq = real.reduce((m, d) => Math.max(m, d.sequence || 0), 0);
+      const virtual = (custs || [])
+        .filter((c) => isDue(c) && !existing.has(String(c.id)))
+        .map((c, i) => ({
+          id: null,
+          virtual: true,
+          delivery_customer_id: c.id,
+          delivery_customers: c,
+          delivery_date: todayStr,
+          payment_status: c.payment_default,
+          status: "pending",
+          sequence: maxSeq + i + 1,
+        }));
+
+      
+      setTodayDeliveries(
+        [...real, ...virtual].sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
+      );
+    } catch (err) {
+      console.error("Deliveries load failed:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (!authChecked || !currentPharmacyId) return;
+    loadTodayDeliveries();
+  }, [authChecked, currentPharmacyId]);
   // ── Wage approval reminders ──
   useEffect(() => {
     if (!authChecked || !currentPharmacyId) return;
@@ -1253,7 +1319,49 @@ export default function HomePage() {
       });
     } catch (err) { alert("Couldn't update reaction: " + (err?.message || String(err))); }
   };
+const handleDeliveryTap = async (d) => {
+    if (!selectedStaffId) { alert("Tap your photo first."); return; }
+    const key = d.id || `v-${d.delivery_customer_id}`;
+    const name = d.delivery_customers?.name || "this customer";
 
+    if (d.status === "delivered") {
+      if (!window.confirm(`Undo delivery for ${name}?`)) return;
+      try {
+        setCompletingDelivery(key);
+        await supabase
+          .from("deliveries")
+          .update({ status: "pending", delivered_at: null, delivered_by: null })
+          .eq("id", d.id);
+        await loadTodayDeliveries();
+      } catch (err) { alert("Error: " + (err?.message || String(err))); }
+      finally { setCompletingDelivery(null); }
+      return;
+    }
+
+    try {
+      setCompletingDelivery(key);
+      const patch = {
+        status: "delivered",
+        delivered_at: new Date().toISOString(),
+        delivered_by: Number(selectedStaffId),
+      };
+      if (d.virtual) {
+        await supabase.from("deliveries").insert({
+          pharmacy_id: currentPharmacyId,
+          delivery_customer_id: d.delivery_customer_id,
+          delivery_date: d.delivery_date,
+          payment_status: d.payment_status,
+          sequence: d.sequence,
+          ...patch,
+        });
+      } else {
+        await supabase.from("deliveries").update(patch).eq("id", d.id);
+      }
+      await loadTodayDeliveries();
+      burstConfetti();
+    } catch (err) { alert("Error: " + (err?.message || String(err))); }
+    finally { setCompletingDelivery(null); }
+  };
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push("/login");
@@ -1485,7 +1593,7 @@ export default function HomePage() {
                   </div>
 
                   {/* On the List section */}
-                  {monthlyTotal > 0 && (
+                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped")) && (
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">On the List</div>
@@ -1495,6 +1603,28 @@ export default function HomePage() {
                         <div className="bg-orange-400 h-1 rounded-full transition-all" style={{ width: `${monthlyPct}%` }} />
                       </div>
                       <div className="grid grid-cols-2 gap-2">
+                        {(() => {
+                          if (todayDeliveries.length === 0) return null;
+                          const active = todayDeliveries.filter((d) => d.status !== "skipped");
+                          if (active.length === 0) return null;
+                          const doneCount = active.filter((d) => d.status === "delivered").length;
+                          const allDone = doneCount === active.length;
+                          return (
+                            <button
+                              onClick={() => setShowDeliveriesModal(true)}
+                              className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${allDone ? "border-l-green-500" : "border-l-orange-400"} text-left bg-white shadow-sm hover:shadow-md transition-shadow`}
+                            >
+                              <div className="flex items-start justify-between gap-2 mb-1">
+                                <div className="font-semibold text-sm leading-tight flex-1 text-gray-800">🚚 Deliveries</div>
+                                {allDone && <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]">✓</span>}
+                              </div>
+                              <div className="text-xs text-blue-600 font-medium mb-1">
+                                {doneCount}/{active.length} delivered
+                              </div>
+                              <div className="text-[10px] text-gray-400">Tap to see today's drops</div>
+                            </button>
+                          );
+                        })()}
                         {monthlyTasks.map((task) => {
                           const isWeekly = task.frequency === "weekly";
                           const isDone = isWeekly
@@ -2317,6 +2447,67 @@ export default function HomePage() {
                 >
                   {savingAddToList ? "Saving…" : "Add to List"}
                 </button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+      {/* Deliveries modal */}
+      {showDeliveriesModal && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setShowDeliveriesModal(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+                <h2 className="font-semibold text-gray-800">🚚 Today's Deliveries</h2>
+                <button onClick={() => setShowDeliveriesModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="px-5 py-4 overflow-y-auto space-y-2">
+                {!selectedStaffId && (
+                  <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Tap your photo on the home screen first, then tap each delivery you complete.
+                  </div>
+                )}
+                {todayDeliveries.filter((d) => d.status !== "skipped").map((d) => {
+                  const key = d.id || `v-${d.delivery_customer_id}`;
+                  const c = d.delivery_customers || {};
+                  const isDone = d.status === "delivered";
+                  const failed = d.status === "failed";
+                  const by = isDone ? staffById[d.delivered_by]?.name : null;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => handleDeliveryTap(d)}
+                      disabled={completingDelivery === key}
+                      className={`w-full text-left pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${isDone ? "border-l-green-500" : failed ? "border-l-red-500" : "border-l-orange-400"} bg-white shadow-sm hover:shadow-md transition-shadow disabled:opacity-50`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-sm text-gray-800">{c.name}</div>
+                          <div className="text-xs text-gray-500">{c.address}</div>
+                          {d.payment_status === "collect" && (
+                            <div className="text-xs text-indigo-700 mt-0.5">
+                              💵 Collect{d.amount_due ? ` $${Number(d.amount_due).toFixed(2)}` : ""}
+                            </div>
+                          )}
+                          {isDone && by && (
+                            <div className="text-[10px] text-green-600 mt-0.5">✓ Delivered by {by}</div>
+                          )}
+                        </div>
+                        {isDone && <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]">✓</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+                {todayDeliveries.filter((d) => d.status !== "skipped").length === 0 && (
+                  <div className="text-sm text-gray-400 text-center py-4">No deliveries today.</div>
+                )}
+              </div>
+              <div className="px-5 py-3 border-t shrink-0">
+                <Link href="/deliveries" className="text-xs text-blue-600 hover:underline">
+                  Open Deliveries page →
+                </Link>
               </div>
             </div>
           </div>
