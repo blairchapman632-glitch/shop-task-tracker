@@ -370,8 +370,11 @@ export default function Deliveries() {
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-bold text-slate-800">Deliveries</h1>
-          <a href="/" className="text-sm text-sky-600">
-            ← Home
+          <a
+          href="/"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors"
+          >
+            <span>🏠</span> Home
           </a>
         </div>
 
