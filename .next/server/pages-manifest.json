@@ -2,7 +2,5 @@
   "/_app": "pages/_app.js",
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/deliveries": "pages/deliveries.js",
-  "/tasks": "pages/tasks.js",
-  "/": "pages/index.js"
+  "/deliveries": "pages/deliveries.js"
 }

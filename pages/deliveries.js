@@ -452,6 +452,7 @@ export default function Deliveries() {
                   staff={staff}
                   onUpdate={updateDelivery}
                   onRemove={removeDelivery}
+                  onSkip={skipDelivery}
                   onMove={(dir) => moveDelivery(activeSchedule, i, dir)}
                   isFirst={i === 0}
                   isLast={i === activeSchedule.length - 1}
@@ -805,7 +806,7 @@ function AddDeliveryForm({ customers, defaultDate, onSave, onNewCustomer, onCanc
     </div>
   );
 }
-function DeliveryRow({ d, staff, onUpdate, onRemove, onMove, isFirst, isLast, position }) {
+function DeliveryRow({ d, staff, onUpdate, onRemove, onSkip, onMove, isFirst, isLast, position }) {
   const [open, setOpen] = useState(false);
   const c = d.delivery_customers || {};
   const delivered = d.status === "delivered";
@@ -865,6 +866,13 @@ function DeliveryRow({ d, staff, onUpdate, onRemove, onMove, isFirst, isLast, po
           <button onClick={() => setOpen(!open)} className="text-sm text-sky-600">
             {open ? "Close" : "Edit"}
           </button>
+          <button
+            onClick={() => onSkip(d)}
+            className="text-sm text-slate-400 hover:text-red-600"
+            title="Not needed today"
+          >
+            Skip
+          </button>
         </div>
       </div>
 
@@ -915,7 +923,7 @@ function DeliveryRow({ d, staff, onUpdate, onRemove, onMove, isFirst, isLast, po
             </select>
           </div>
           <button
-            onClick={() => onRemove(d.id)}
+            onClick={() => onRemove(d)}
             className="text-sm text-red-600"
           >
             Remove from run
