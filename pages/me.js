@@ -1529,34 +1529,105 @@ function DeliveriesTab({ staff }) {
 
   const load = async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("deliveries")
-      .select("*, delivery_customers(*)")
-      .eq("pharmacy_id", PHARMACY_ID)
-      .eq("delivery_date", dateISO)
-      .order("sequence", { nullsFirst: false });
-    setRows(data || []);
+    const [{ data }, { data: custs }] = await Promise.all([
+      supabase
+        .from("deliveries")
+        .select("*, delivery_customers(*)")
+        .eq("pharmacy_id", PHARMACY_ID)
+        .eq("delivery_date", dateISO)
+        .order("sequence", { nullsFirst: false }),
+      supabase
+        .from("delivery_customers")
+        .select("*")
+        .eq("pharmacy_id", PHARMACY_ID)
+        .eq("active", true),
+    ]);
+
+    const real = (data || []).filter((d) => d.status !== "skipped");
+    const taken = new Set((data || []).map((d) => String(d.delivery_customer_id)));
+    const dow = new Date(dateISO + "T00:00:00").getDay();
+
+    const isDue = (c) => {
+      if (!c.is_recurring) return false;
+      if (c.recurring_day !== dow) return false;
+      const weeks = c.recurrence_weeks || 1;
+      if (weeks === 1) return true;
+      if (!c.anchor_date) return true;
+      const anchor = new Date(c.anchor_date + "T00:00:00");
+      const d = new Date(dateISO + "T00:00:00");
+      const diffDays = Math.round((d - anchor) / 86400000);
+      if (diffDays < 0) return false;
+      return diffDays % (weeks * 7) === 0;
+    };
+
+    const maxSeq = real.reduce((m, d) => Math.max(m, d.sequence || 0), 0);
+    const virtual = (custs || [])
+      .filter((c) => isDue(c) && !taken.has(String(c.id)))
+      .map((c, i) => ({
+        id: null,
+        virtual: true,
+        delivery_customer_id: c.id,
+        delivery_customers: c,
+        delivery_date: dateISO,
+        payment_status: c.payment_default,
+        status: "pending",
+        sequence: maxSeq + i + 1,
+      }));
+
+    setRows([...real, ...virtual].sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999)));
     setLoading(false);
   };
 
   useEffect(() => { load(); }, [dateISO, staff.id]);
 
-  const update = async (id, patch) => {
-    setSaving(id);
-    const { error } = await supabase.from("deliveries").update(patch).eq("id", id);
+  const rowKey = (d) => d.id || `v-${d.delivery_customer_id}`;
+
+  const update = async (d, patch) => {
+    const key = rowKey(d);
+    setSaving(key);
+    let error;
+    if (d.virtual) {
+      ({ error } = await supabase.from("deliveries").insert({
+        pharmacy_id: PHARMACY_ID,
+        delivery_customer_id: d.delivery_customer_id,
+        delivery_date: d.delivery_date,
+        payment_status: d.payment_status,
+        sequence: d.sequence,
+        ...patch,
+      }));
+    } else {
+      ({ error } = await supabase.from("deliveries").update(patch).eq("id", d.id));
+    }
     setSaving(null);
     if (error) { alert("Couldn't save: " + error.message); return; }
     load();
   };
 
+  const materialise = async (d, patch = {}) => {
+    const { data, error } = await supabase.from("deliveries").insert({
+      pharmacy_id: PHARMACY_ID,
+      delivery_customer_id: d.delivery_customer_id,
+      delivery_date: d.delivery_date,
+      payment_status: d.payment_status,
+      sequence: d.sequence,
+      ...patch,
+    }).select().single();
+    if (error) { alert("Couldn't save: " + error.message); return null; }
+    return data;
+  };
+
   const moveRow = async (index, direction) => {
     const target = index + direction;
     if (target < 0 || target >= rows.length) return;
-    const a = rows[index];
-    const b = rows[target];
+    let a = rows[index];
+    let b = rows[target];
+    setSaving(rowKey(a));
+    if (a.virtual) a = await materialise(a);
+    if (!a) { setSaving(null); return; }
+    if (b.virtual) b = await materialise(b);
+    if (!b) { setSaving(null); return; }
     const aSeq = a.sequence ?? index + 1;
     const bSeq = b.sequence ?? target + 1;
-    setSaving(a.id);
     await Promise.all([
       supabase.from("deliveries").update({ sequence: bSeq }).eq("id", a.id),
       supabase.from("deliveries").update({ sequence: aSeq }).eq("id", b.id),
@@ -1566,7 +1637,7 @@ function DeliveriesTab({ staff }) {
   };
 
   const markDelivered = (d) =>
-    update(d.id, {
+    update(d, {
       status: "delivered",
       delivered_at: new Date().toISOString(),
       delivered_by: staff.id,
@@ -1575,7 +1646,7 @@ function DeliveriesTab({ staff }) {
   const markFailed = (d) => {
     const note = window.prompt("What happened? (e.g. no answer, wrong address)", "");
     if (note === null) return;
-    update(d.id, {
+    update(d, {
       status: "failed",
       delivered_at: new Date().toISOString(),
       delivered_by: staff.id,
@@ -1584,7 +1655,7 @@ function DeliveriesTab({ staff }) {
   };
 
   const undo = (d) =>
-    update(d.id, { status: "pending", delivered_at: null, delivered_by: null, outcome_note: null });
+    update(d, { status: "pending", delivered_at: null, delivered_by: null, outcome_note: null });
 
   const done = rows.filter((r) => r.status !== "pending").length;
   const dateLabel = new Date(dateISO + "T00:00:00").toLocaleDateString("en-AU", {
@@ -1615,10 +1686,11 @@ function DeliveriesTab({ staff }) {
             const c = d.delivery_customers || {};
             const delivered = d.status === "delivered";
             const failed = d.status === "failed";
-            const isOpen = openId === d.id;
+            const key = rowKey(d);
+            const isOpen = openId === key;
             return (
               <div
-                key={d.id}
+                key={key}
                 className={`bg-white rounded-2xl shadow-sm border p-4 ${
                   delivered ? "border-l-4 border-l-emerald-500" : failed ? "border-l-4 border-l-red-500" : ""
                 }`}
@@ -1673,15 +1745,15 @@ function DeliveriesTab({ staff }) {
                     <div className="flex gap-3">
                       <button
                         onClick={() => markDelivered(d)}
-                        disabled={saving === d.id}
+                        disabled={saving === key}
                         style={{ touchAction: "manipulation" }}
                         className="flex-1 min-h-[52px] bg-emerald-600 text-white rounded-xl text-base font-semibold disabled:opacity-40"
                       >
-                        {saving === d.id ? "…" : "Delivered"}
+                        {saving === key ? "…" : "Delivered"}
                       </button>
                       <button
                         onClick={() => markFailed(d)}
-                        disabled={saving === d.id}
+                        disabled={saving === key}
                         style={{ touchAction: "manipulation" }}
                         className="flex-1 min-h-[52px] border border-red-200 bg-red-50 text-red-600 rounded-xl text-base font-medium disabled:opacity-40"
                       >
@@ -1701,7 +1773,7 @@ function DeliveriesTab({ staff }) {
                 {d.payment_status === "collect" && (
                   <div className="mt-3 pt-3 border-t">
                     <button
-                      onClick={() => setOpenId(isOpen ? null : d.id)}
+                      onClick={() => setOpenId(isOpen ? null : key)}
                       className="w-full min-h-[44px] rounded-xl border border-indigo-200 text-sm font-medium text-indigo-700"
                     >
                       {isOpen
@@ -1719,7 +1791,7 @@ function DeliveriesTab({ staff }) {
                           defaultValue={d.amount_collected ?? d.amount_due ?? ""}
                           placeholder="Amount collected $"
                           onBlur={(e) =>
-                            update(d.id, { amount_collected: e.target.value ? Number(e.target.value) : null })
+                            update(d, { amount_collected: e.target.value ? Number(e.target.value) : null })
                           }
                           className="w-full border rounded-xl px-3 py-3 text-base"
                         />
@@ -1732,7 +1804,7 @@ function DeliveriesTab({ staff }) {
                   <span className="text-xs text-gray-400">Order</span>
                   <button
                     onClick={() => moveRow(i, -1)}
-                    disabled={i === 0 || saving === d.id}
+                    disabled={i === 0 || saving === key}
                     style={{ touchAction: "manipulation" }}
                     className="min-w-[52px] min-h-[44px] rounded-xl border border-gray-200 text-gray-500 disabled:opacity-20"
                   >
@@ -1740,7 +1812,7 @@ function DeliveriesTab({ staff }) {
                   </button>
                   <button
                     onClick={() => moveRow(i, 1)}
-                    disabled={i === rows.length - 1 || saving === d.id}
+                    disabled={i === rows.length - 1 || saving === key}
                     style={{ touchAction: "manipulation" }}
                     className="min-w-[52px] min-h-[44px] rounded-xl border border-gray-200 text-gray-500 disabled:opacity-20"
                   >
