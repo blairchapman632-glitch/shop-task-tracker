@@ -297,6 +297,103 @@ function EditShiftModal({ shift, currentUser, isManager, onClose, onSaved }) {
   );
 }
 
+// ─── Notes Block ──────────────────────────────────────────────────────────────
+
+function NotesBlock({ row, note, isManager, isSelf, onSave }) {
+  const [managerText, setManagerText] = useState(note?.manager_note || "");
+  const [staffText, setStaffText] = useState(note?.staff_note || "");
+  const [savingM, setSavingM] = useState(false);
+  const [savingS, setSavingS] = useState(false);
+
+  useEffect(() => {
+    setManagerText(note?.manager_note || "");
+    setStaffText(note?.staff_note || "");
+  }, [note?.manager_note, note?.staff_note]);
+
+  const hasStaffNote = !!(note?.staff_note && note.staff_note.trim());
+  const reviewed = !!note?.manager_reviewed_at;
+
+  const saveManager = async () => {
+    setSavingM(true);
+    await onSave(row.staffId, { manager_note: managerText.trim() || null });
+    setSavingM(false);
+  };
+
+  const saveStaff = async () => {
+    setSavingS(true);
+    await onSave(row.staffId, { staff_note: staffText.trim() || null, manager_reviewed_at: null });
+    setSavingS(false);
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-200">
+      <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Notes</div>
+
+      {/* Staff note */}
+      {isManager ? (
+        hasStaffNote ? (
+          <div className={`rounded-lg border px-3 py-2 mb-3 ${reviewed ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[11px] font-semibold text-gray-600">📝 From {row.name}</span>
+              {reviewed
+                ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">Reviewed</span>
+                : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">Needs review</span>}
+            </div>
+            <div className="text-sm text-gray-700 whitespace-pre-wrap">{note.staff_note}</div>
+            <div className="flex gap-2 mt-2">
+              {!reviewed && (
+                <button
+                  onClick={() => onSave(row.staffId, { manager_reviewed_at: new Date().toISOString() })}
+                  className="text-[11px] px-2 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50"
+                >
+                  ✓ Mark reviewed
+                </button>
+              )}
+              <button
+                onClick={() => setManagerText((t) => (t ? t + " " : "") + note.staff_note)}
+                className="text-[11px] px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50"
+              >
+                Copy to Notes
+              </button>
+            </div>
+          </div>
+        ) : null
+      ) : (
+        <div className="mb-3">
+          <div className="text-[11px] font-medium text-gray-600 mb-1">Your note to the manager</div>
+          <textarea
+            value={staffText}
+            onChange={(e) => setStaffText(e.target.value)}
+            rows={2}
+            placeholder="e.g. used my car for the Tuesday delivery run"
+            className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
+          />
+          <button onClick={saveStaff} disabled={savingS} className="mt-1 text-[11px] px-3 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-40">
+            {savingS ? "Saving…" : "Save note"}
+          </button>
+        </div>
+      )}
+
+      {/* Manager note — goes to Excel */}
+      {isManager && (
+        <div>
+          <div className="text-[11px] font-medium text-gray-600 mb-1">Notes for payroll</div>
+          <textarea
+            value={managerText}
+            onChange={(e) => setManagerText(e.target.value)}
+            rows={2}
+            placeholder=""
+            className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
+          />
+          <button onClick={saveManager} disabled={savingM} className="mt-1 text-[11px] px-3 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-40">
+            {savingM ? "Saving…" : "Save note"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function WagesPage() {
@@ -310,6 +407,7 @@ export default function WagesPage() {
   const [staff, setStaff] = useState([]);
   const [rows, setRows] = useState([]);
   const [approvals, setApprovals] = useState(new Set());
+  const [notes, setNotes] = useState({}); // staffId -> wage_notes row
   const [approveRow, setApproveRow] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [expandedKey, setExpandedKey] = useState(null);
@@ -352,11 +450,12 @@ export default function WagesPage() {
       const startISO = toISO(period.start);
       const endISO = toISO(period.end);
 
-      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: leaveData }] = await Promise.all([
+      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: noteData }, { data: leaveData }] = await Promise.all([
         supabase.from("roster_shifts").select("id, shift_date, start_time, end_time, role, staff_id, staff_name").gte("shift_date", startISO).lte("shift_date", endISO),
         supabase.from("staff").select("id, name, role, employment_type, contracted_hours, active, schedule_type, weekly_schedule, week_ab_schedule, no_lunch_deduction").eq("pharmacy_id", PHARMACY_ID),
         supabase.from("public_holidays").select("date, name").eq("pharmacy_id", PHARMACY_ID).gte("date", startISO).lte("date", endISO),
         supabase.from("wage_approvals").select("staff_id").eq("pharmacy_id", PHARMACY_ID).eq("period_start", startISO),
+        supabase.from("wage_notes").select("*").eq("pharmacy_id", PHARMACY_ID).eq("period_start", startISO),
         // Approved leave overlapping this pay period
         supabase.from("leave_requests").select("*").eq("status", "approved").lte("from_date", endISO).gte("to_date", startISO),
       ]);
@@ -376,6 +475,7 @@ export default function WagesPage() {
 
       setStaff(staffData || []);
       setApprovals(new Set((appr || []).map((a) => a.staff_id)));
+      setNotes(Object.fromEntries((noteData || []).map((n) => [String(n.staff_id), n])));
 
       const built = buildWageRows({
         period,
@@ -400,6 +500,28 @@ export default function WagesPage() {
 
   const handleEditSaved = () => { setEditShift(null); setReloadKey((k) => k + 1); };
 
+  const saveNote = async (staffId, fields) => {
+    const startISO = toISO(period.start);
+    const payload = {
+      pharmacy_id: PHARMACY_ID,
+      staff_id: staffId,
+      period_start: startISO,
+      updated_at: new Date().toISOString(),
+      ...fields,
+    };
+    const { data, error } = await supabase
+      .from("wage_notes")
+      .upsert(payload, { onConflict: "staff_id,period_start" })
+      .select()
+      .maybeSingle();
+    if (error) { alert("Could not save note: " + error.message); return; }
+    if (data) setNotes((prev) => ({ ...prev, [String(staffId)]: data }));
+  };
+
+  const unreviewedCount = Object.values(notes).filter(
+    (n) => n.staff_note && n.staff_note.trim() && !n.manager_reviewed_at
+  ).length;
+
   const allApproved = rows.filter((r) => r.staffId && !r.isSalary).every((r) => approvals.has(r.staffId));
 
   const handleExport = async () => {
@@ -420,6 +542,8 @@ export default function WagesPage() {
           if (annual) parts.push(`${annual} annual`);
           if (parts.length) leaveNote = "incl. " + parts.join(", ");
         }
+        const mgrNote = (notes[String(r.staffId)]?.manager_note || "").trim();
+        const combinedNote = [leaveNote, mgrNote].filter(Boolean).join(" — ");
         return {
           Name: r.name,
           "Contracted hrs": Number((r.isSalary ? (r.contracted || 0) : 0).toFixed(2)),
@@ -432,7 +556,7 @@ export default function WagesPage() {
           "Annual Leave hrs": annual,
           "OT hrs": Number(r.ot.toFixed(2)),
           "Total hrs": Number(r.total.toFixed(2)),
-          "Leave note": leaveNote,
+          Notes: combinedNote,
         };
       });
       const ws = XLSX.utils.json_to_sheet(data);
@@ -476,6 +600,11 @@ export default function WagesPage() {
 
               {isManager && (
                 <div className="ml-auto flex items-center gap-2">
+                  {unreviewedCount > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                      📝 {unreviewedCount} staff {unreviewedCount === 1 ? "note" : "notes"} not yet reviewed
+                    </span>
+                  )}
                   {!allApproved && rows.some((r) => r.staffId) && (
                     <span className="text-xs text-amber-600">Some hours not yet confirmed</span>
                   )}
@@ -519,15 +648,16 @@ export default function WagesPage() {
                 <tbody>
                   {visibleRows.map((r) => {
                     const approved = r.staffId && approvals.has(r.staffId);
-                    const expanded = !r.isSalary && (!isManager || expandedKey === r.key);
+                    const expanded = r.staffId && (isManager ? expandedKey === r.key : true);
                     const dayLabel = { weekday: "Weekday", sat: "Saturday", sun: "Sunday", ph: "Public Holiday" };
                     return (
                       <React.Fragment key={r.key}>
-                      <tr className={`border-t border-gray-100 hover:bg-gray-50 ${isManager && !r.isSalary ? "cursor-pointer" : ""}`} onClick={() => { if (isManager && !r.isSalary) setExpandedKey(expandedKey === r.key ? null : r.key); }}>
+                      <tr className={`border-t border-gray-100 hover:bg-gray-50 ${isManager && r.staffId ? "cursor-pointer" : ""}`} onClick={() => { if (isManager && r.staffId) setExpandedKey(expandedKey === r.key ? null : r.key); }}>
                         <td className="px-3 py-2 font-medium text-gray-800">
-                          {isManager && !r.isSalary && <span className="inline-block w-4 text-gray-400">{expandedKey === r.key ? "▾" : "▸"}</span>}
-                          {isManager && r.isSalary && <span className="inline-block w-4" />}
+                          {isManager && r.staffId && <span className="inline-block w-4 text-gray-400">{expandedKey === r.key ? "▾" : "▸"}</span>}
+                          {isManager && !r.staffId && <span className="inline-block w-4" />}
                           {r.name}
+                          {(() => { const n = notes[String(r.staffId)]; return n?.staff_note && !n.manager_reviewed_at ? <span className="ml-1 text-amber-600" title="Staff note needs review">📝</span> : null; })()}
                           {!r.staffId && <span className="ml-1 text-[10px] text-gray-400">(casual)</span>}
                           {r.isSalary && <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">Salary</span>}
                           {!r.isSalary && r.shifts.some((sh) => sh.edit) && <span className="ml-1 text-blue-600" title="Has edited shifts">✏️</span>}
@@ -554,9 +684,9 @@ export default function WagesPage() {
 
                       {expanded && (
                         <tr className="bg-gray-50 border-t border-gray-100">
-                          <td colSpan={10} className="px-6 py-3">
-                            <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Shifts this period</div>
-                            {r.shifts.length === 0 ? (
+                          <td colSpan={11} className="px-6 py-3">
+                            {!r.isSalary && <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Shifts this period</div>}
+                            {r.isSalary ? null : r.shifts.length === 0 ? (
                               <div className="text-sm text-gray-400">No shifts.</div>
                             ) : (
                               <div className="space-y-1">
@@ -591,6 +721,13 @@ export default function WagesPage() {
                                 })}
                               </div>
                             )}
+                            <NotesBlock
+                              row={r}
+                              note={notes[String(r.staffId)]}
+                              isManager={isManager}
+                              isSelf={currentUser?.id === r.staffId}
+                              onSave={saveNote}
+                            />
                           </td>
                         </tr>
                       )}

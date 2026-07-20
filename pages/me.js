@@ -1812,6 +1812,10 @@ function WagesTab({ staff }) {
   const [confirming, setConfirming] = useState(false);
   const [editShift, setEditShift] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [noteRow, setNoteRow] = useState(null);
+  const [noteText, setNoteText] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
 
   useEffect(() => {
     supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", PHARMACY_ID).single()
@@ -1838,11 +1842,12 @@ function WagesTab({ staff }) {
       const startISO = toISO(period.start);
       const endISO = toISO(period.end);
 
-      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: leaveData }] = await Promise.all([
+      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: noteData }, { data: leaveData }] = await Promise.all([
         supabase.from("roster_shifts").select("id, shift_date, start_time, end_time, role, staff_id, staff_name").gte("shift_date", startISO).lte("shift_date", endISO),
         supabase.from("staff").select("id, name, role, employment_type, contracted_hours, active, schedule_type, weekly_schedule, week_ab_schedule, no_lunch_deduction").eq("pharmacy_id", PHARMACY_ID),
         supabase.from("public_holidays").select("date, name").eq("pharmacy_id", PHARMACY_ID).gte("date", startISO).lte("date", endISO),
         supabase.from("wage_approvals").select("staff_id").eq("pharmacy_id", PHARMACY_ID).eq("period_start", startISO).eq("staff_id", staff.id),
+        supabase.from("wage_notes").select("*").eq("pharmacy_id", PHARMACY_ID).eq("period_start", startISO).eq("staff_id", staff.id).maybeSingle(),
         supabase.from("leave_requests").select("*").eq("status", "approved").lte("from_date", endISO).gte("to_date", startISO),
       ]);
 
@@ -1861,6 +1866,9 @@ function WagesTab({ staff }) {
       const mine = built.find((r) => r.staffId === staff.id) || null;
       setRow(mine);
       setApproved((appr || []).length > 0);
+      setNoteRow(noteData || null);
+      setNoteText(noteData?.staff_note || "");
+      setNoteSaved(false);
       setLoading(false);
     };
     load();
@@ -1876,6 +1884,24 @@ function WagesTab({ staff }) {
     setConfirming(false);
     if (error) { alert("Couldn't confirm: " + error.message); return; }
     setApproved(true);
+  };
+
+  const handleSaveNote = async () => {
+    if (!period) return;
+    setSavingNote(true);
+    const { data, error } = await supabase.from("wage_notes").upsert({
+      pharmacy_id: PHARMACY_ID,
+      staff_id: staff.id,
+      period_start: toISO(period.start),
+      staff_note: noteText.trim() || null,
+      manager_reviewed_at: null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "staff_id,period_start" }).select().maybeSingle();
+    setSavingNote(false);
+    if (error) { alert("Couldn't save note: " + error.message); return; }
+    setNoteRow(data || null);
+    setNoteSaved(true);
+    setTimeout(() => setNoteSaved(false), 3000);
   };
 
   const periodLabel = period
@@ -1967,6 +1993,30 @@ function WagesTab({ staff }) {
               )}
             </div>
           )}
+
+          {/* Note to manager */}
+          <div className="bg-white rounded-2xl shadow-sm border p-5">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Note for this pay period</div>
+            <p className="text-xs text-gray-400 mb-3">Anything the manager should know — e.g. used your car for a delivery run.</p>
+            <textarea
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              rows={3}
+              placeholder=""
+              className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
+            />
+            <button onClick={handleSaveNote} disabled={savingNote} className="mt-2 w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40">
+              {savingNote ? "Saving…" : "Save note"}
+            </button>
+            {noteSaved && (
+              <div className="mt-2 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-center text-sm text-green-700 font-medium">
+                ✅ Note saved.
+              </div>
+            )}
+            {noteRow?.manager_reviewed_at && !noteSaved && (
+              <div className="mt-2 text-[11px] text-green-700">✓ Reviewed by your manager</div>
+            )}
+          </div>
 
           {/* Confirm */}
           {!row.isSalary && (
