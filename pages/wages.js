@@ -299,101 +299,128 @@ function EditShiftModal({ shift, currentUser, isManager, onClose, onSaved }) {
 
 // ─── Notes Block ──────────────────────────────────────────────────────────────
 
-function NotesBlock({ row, note, isManager, isSelf, onSave }) {
-  const [managerText, setManagerText] = useState(note?.manager_note || "");
-  const [staffText, setStaffText] = useState(note?.staff_note || "");
-  const [savingM, setSavingM] = useState(false);
-  const [savingS, setSavingS] = useState(false);
+function NotesBlock({ row, note, isManager, onSave }) {
+  const [text, setText] = useState(note?.staff_note || "");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setManagerText(note?.manager_note || "");
-    setStaffText(note?.staff_note || "");
-  }, [note?.manager_note, note?.staff_note]);
+    setText(note?.staff_note || "");
+    setEditing(false);
+  }, [note?.staff_note]);
 
-  const hasStaffNote = !!(note?.staff_note && note.staff_note.trim());
+  const hasNote = !!(note?.staff_note && note.staff_note.trim());
   const reviewed = !!note?.manager_reviewed_at;
+  const inExport = note?.include_in_export === true;
 
-  const saveManager = async () => {
-    setSavingM(true);
-    await onSave(row.staffId, { manager_note: managerText.trim() || null });
-    setSavingM(false);
+  const act = async (fields) => {
+    setSaving(true);
+    await onSave(row.staffId, fields);
+    setSaving(false);
+    setEditing(false);
   };
 
-  const saveStaff = async () => {
-    setSavingS(true);
-    await onSave(row.staffId, { staff_note: staffText.trim() || null, manager_reviewed_at: null });
-    setSavingS(false);
-  };
+  // ── Staff view: write or edit their own note ──
+  if (!isManager) {
+    return (
+      <div className="mt-3 pt-3 border-t border-gray-200">
+        <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Note for this pay period</div>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={2}
+          className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
+        />
+        <button
+          onClick={() => act({ staff_note: text.trim() || null, manager_reviewed_at: null })}
+          disabled={saving}
+          className="mt-1 text-[11px] px-3 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-40"
+        >
+          {saving ? "Saving…" : "Save note"}
+        </button>
+      </div>
+    );
+  }
 
+  // ── Manager view ──
   return (
     <div className="mt-3 pt-3 border-t border-gray-200">
       <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Notes</div>
 
-      {/* Staff note */}
-      {isManager ? (
-        hasStaffNote ? (
-          <div className={`rounded-lg border px-3 py-2 mb-3 ${reviewed ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[11px] font-semibold text-gray-600">📝 From {row.name}</span>
-              {reviewed
-                ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">Reviewed</span>
-                : <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">Needs review</span>}
-            </div>
-            <div className="text-sm text-gray-700 whitespace-pre-wrap">{note.staff_note}</div>
-            <div className="flex gap-2 mt-2">
-              {!reviewed && (
-                <button
-                  onClick={() => onSave(row.staffId, { manager_reviewed_at: new Date().toISOString() })}
-                  className="text-[11px] px-2 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50"
-                >
-                  ✓ Mark reviewed
-                </button>
-              )}
-              <button
-                onClick={() => setManagerText((t) => (t ? t + " " : "") + note.staff_note)}
-                className="text-[11px] px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50"
-              >
-                Copy to Notes
-              </button>
-            </div>
-          </div>
-        ) : null
+      {!hasNote && !editing ? (
+        <button
+          onClick={() => setEditing(true)}
+          className="text-[11px] px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+        >
+          + Add a note
+        </button>
       ) : (
-        <div className="mb-3">
-          <div className="text-[11px] font-medium text-gray-600 mb-1">Your note to the manager</div>
-          <textarea
-            value={staffText}
-            onChange={(e) => setStaffText(e.target.value)}
-            rows={2}
-            placeholder="e.g. used my car for the Tuesday delivery run"
-            className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
-          />
-          <button onClick={saveStaff} disabled={savingS} className="mt-1 text-[11px] px-3 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-40">
-            {savingS ? "Saving…" : "Save note"}
-          </button>
-        </div>
-      )}
+        <div className={`rounded-lg border px-3 py-2 ${reviewed ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"}`}>
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-[11px] font-semibold text-gray-600">📝 {hasNote ? `From ${row.name}` : "Note"}</span>
+            {!reviewed && hasNote && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">Needs review</span>}
+            {reviewed && inExport && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">✓ In export</span>}
+            {reviewed && !inExport && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200">Dismissed</span>}
+          </div>
 
-      {/* Manager note — goes to Excel */}
-      {isManager && (
-        <div>
-          <div className="text-[11px] font-medium text-gray-600 mb-1">Notes for payroll</div>
-          <textarea
-            value={managerText}
-            onChange={(e) => setManagerText(e.target.value)}
-            rows={2}
-            placeholder=""
-            className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
-          />
-          <button onClick={saveManager} disabled={savingM} className="mt-1 text-[11px] px-3 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:opacity-40">
-            {savingM ? "Saving…" : "Save note"}
-          </button>
+          {editing ? (
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={2}
+              autoFocus
+              className="w-full border rounded-lg px-3 py-2 text-sm resize-none"
+            />
+          ) : (
+            <div className="text-sm text-gray-700 whitespace-pre-wrap">{text}</div>
+          )}
+
+          <div className="flex gap-2 mt-2 flex-wrap">
+            {editing ? (
+              <>
+                <button
+                  onClick={() => act({ staff_note: text.trim() || null, include_in_export: true, manager_reviewed_at: new Date().toISOString() })}
+                  disabled={saving || !text.trim()}
+                  className="text-[11px] px-2 py-1 rounded border border-green-200 text-green-700 hover:bg-green-50 disabled:opacity-40"
+                >
+                  {saving ? "Saving…" : "Save & add to export"}
+                </button>
+                <button
+                  onClick={() => { setText(note?.staff_note || ""); setEditing(false); }}
+                  className="text-[11px] px-2 py-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => act({ include_in_export: !inExport, manager_reviewed_at: new Date().toISOString() })}
+                  disabled={saving}
+                  className={`text-[11px] px-2 py-1 rounded border disabled:opacity-40 ${inExport ? "border-gray-200 text-gray-500 hover:bg-gray-50" : "border-green-200 text-green-700 hover:bg-green-50"}`}
+                >
+                  {inExport ? "Remove from export" : "Add to export"}
+                </button>
+                {!reviewed && (
+                  <button
+                    onClick={() => act({ include_in_export: false, manager_reviewed_at: new Date().toISOString() })}
+                    disabled={saving}
+                    className="text-[11px] px-2 py-1 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                  >
+                    Dismiss
+                  </button>
+                )}
+                <button onClick={() => setEditing(true)} className="text-[11px] px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50">
+                  Edit
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function WagesPage() {
@@ -542,7 +569,8 @@ export default function WagesPage() {
           if (annual) parts.push(`${annual} annual`);
           if (parts.length) leaveNote = "incl. " + parts.join(", ");
         }
-        const mgrNote = (notes[String(r.staffId)]?.manager_note || "").trim();
+        const nRow = notes[String(r.staffId)];
+        const mgrNote = (nRow?.include_in_export ? (nRow.staff_note || "") : "").trim();
         const combinedNote = [leaveNote, mgrNote].filter(Boolean).join(" — ");
         return {
           Name: r.name,
@@ -725,7 +753,6 @@ export default function WagesPage() {
                               row={r}
                               note={notes[String(r.staffId)]}
                               isManager={isManager}
-                              isSelf={currentUser?.id === r.staffId}
                               onSave={saveNote}
                             />
                           </td>
