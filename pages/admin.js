@@ -273,6 +273,7 @@ function StaffForm({ member, onSave, onCancel }) {
       pin: form.pin || null,
       photo_url: form.photo_url || null,
       pharmacy_id: PHARMACY_ID,
+      onboarding_token: isNew ? Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) : undefined,
     };
     let result;
     if (isNew) {
@@ -481,25 +482,28 @@ function StaffForm({ member, onSave, onCancel }) {
           ))}
         </div>
 
-        {/* Personal link — active existing staff only */}
-        {!isNew && form.active && member?.staff_token && (
-          <div className="border rounded-lg p-3 bg-blue-50 border-blue-100">
-            <div className="text-xs font-semibold text-blue-700 mb-1">🔗 Personal Link</div>
-            <div className="text-[11px] text-blue-600 break-all mb-2">
-              {typeof window !== "undefined" ? `${window.location.origin}/me?token=${member.staff_token}` : ""}
+        {/* Onboarding link — existing staff only, for collecting payroll details */}
+        {!isNew && member?.onboarding_token && (
+          <div className="border rounded-lg p-3 bg-amber-50 border-amber-100">
+            <div className="text-xs font-semibold text-amber-700 mb-1">📋 Onboarding Link</div>
+            <div className="text-[11px] text-amber-600 mb-2">Send this to a new staff member to collect their payroll details.</div>
+            <div className="text-[11px] text-amber-600 break-all mb-2">
+              {typeof window !== "undefined" ? `${window.location.origin}/staff-onboard?token=${member.onboarding_token}` : ""}
             </div>
             <button
               onClick={() => {
-                const url = `${window.location.origin}/me?token=${member.staff_token}`;
+                const url = `${window.location.origin}/staff-onboard?token=${member.onboarding_token}`;
                 navigator.clipboard.writeText(url);
-                alert("Link copied to clipboard!");
+                alert("Onboarding link copied to clipboard!");
               }}
-              className="text-[11px] px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              className="text-[11px] px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700"
             >
               Copy link
             </button>
           </div>
         )}
+
+        
 
         {/* Sick days — existing staff only */}
         {!isNew && (
@@ -1485,7 +1489,7 @@ export default function AdminPage() {
         .from("staff")
         .select("*")
         .eq("pharmacy_id", PHARMACY_ID)
-        .neq("role", "Locum")
+        .or("role.is.null,role.neq.Locum")
         .order("name", { ascending: true });
       setStaffList(data || []);
       setLoading(false);
