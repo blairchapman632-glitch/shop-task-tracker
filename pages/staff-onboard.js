@@ -248,6 +248,7 @@ export default function StaffOnboardingPage() {
                 { type: "resume", label: "Resume" },
                 ...(isPharmacist
                   ? [
+                      { type: "ahpra_cert", label: "AHPRA Certificate" },
                       { type: "indemnity_cert", label: "Professional Indemnity Certificate" },
                       { type: "first_aid_cert", label: "First Aid Certificate" },
                       { type: "cpr_cert", label: "CPR Certificate" },

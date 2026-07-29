@@ -23,7 +23,6 @@ const ROLES = [
   "Pharmacy Assistant",
   "DAA Coordinator",
   "Intern Pharmacist",
-  "Manager",
 ];
 
 const EMPLOYMENT_TYPES = ["Permanent", "Salary", "Casual"];
@@ -178,12 +177,28 @@ function DayScheduleGrid({ schedule, onChange }) {
 function StaffForm({ member, onSave, onCancel }) {
 
   const isNew = !member?.id;
+  const [activeTab, setActiveTab] = useState("profile");
   const [form, setForm] = useState({
     name: member?.name || "",
     email: member?.email || "",
+    phone: member?.phone || "",
     role: member?.role || "",
     employment_type: member?.employment_type || "",
     contracted_hours: member?.contracted_hours || "",
+    date_of_birth: member?.date_of_birth || "",
+    start_date: member?.start_date || "",
+    address: member?.address || "",
+    emergency_contact_name: member?.emergency_contact_name || "",
+    emergency_contact_phone: member?.emergency_contact_phone || "",
+    tfn: member?.tfn || "",
+    ahpra_number: member?.ahpra_number || "",
+    bank_account_name: member?.bank_account_name || "",
+    bsb: member?.bsb || "",
+    account_number: member?.account_number || "",
+    super_fund_name: member?.super_fund_name || "",
+    super_fund_usi: member?.super_fund_usi || "",
+    super_fund_abn: member?.super_fund_abn || "",
+    super_member_number: member?.super_member_number || "",
     active: member?.active ?? true,
     can_access_roster: member?.can_access_roster ?? false,
     can_access_tasks: member?.can_access_tasks ?? false,
@@ -202,6 +217,8 @@ function StaffForm({ member, onSave, onCancel }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [sickDays, setSickDays] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
 
   useEffect(() => {
     if (!member?.id) return;
@@ -210,12 +227,52 @@ function StaffForm({ member, onSave, onCancel }) {
       .eq("staff_id", member.id)
       .order("sick_date", { ascending: false })
       .then(({ data }) => setSickDays(data || []));
+    supabase.from("locum_documents")
+      .select("*")
+      .eq("staff_id", member.id)
+      .order("uploaded_at", { ascending: false })
+      .then(({ data }) => setDocuments(data || []));
   }, [member?.id]);
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
+  const handleDocUpload = async (file, type) => {
+    if (!file || !member?.id) return;
+    setUploadingDoc(true);
+    setError("");
+    try {
+      const ext = file.name.split(".").pop();
+      const filename = `${member.id}_${type}_${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("locum-documents")
+        .upload(filename, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from("locum-documents").getPublicUrl(filename);
+      const { data: doc, error: insErr } = await supabase.from("locum_documents").insert([{
+        staff_id: member.id,
+        type,
+        url: urlData.publicUrl,
+        filename: file.name,
+        pharmacy_id: PHARMACY_ID,
+      }]).select().single();
+      if (insErr) throw insErr;
+      setDocuments((prev) => [doc, ...prev]);
+    } catch (err) {
+      setError("Upload failed: " + (err?.message || String(err)));
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
+
+  const handleDocDelete = async (doc) => {
+    if (!window.confirm("Delete this document?")) return;
+    await supabase.from("locum_documents").delete().eq("id", doc.id);
+    setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+  };
+
   const showHours = form.employment_type === "Salary";
   const showSchedule = form.employment_type === "Permanent";
+  const isPharmacist = form.role === "Pharmacist" || form.role === "Intern Pharmacist";
 
   const handlePhotoUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -255,10 +312,25 @@ function StaffForm({ member, onSave, onCancel }) {
     const payload = {
       name: form.name.trim(),
       email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
       role: form.role || null,
       employment_type: form.employment_type || null,
       contracted_hours: showHours && form.contracted_hours ? Number(form.contracted_hours) : null,
       contracted_hours_period: null,
+      date_of_birth: form.date_of_birth || null,
+      start_date: form.start_date || null,
+      address: form.address.trim() || null,
+      emergency_contact_name: form.emergency_contact_name.trim() || null,
+      emergency_contact_phone: form.emergency_contact_phone.trim() || null,
+      tfn: form.tfn.trim() || null,
+      ahpra_number: form.ahpra_number.trim() || null,
+      bank_account_name: form.bank_account_name.trim() || null,
+      bsb: form.bsb.trim() || null,
+      account_number: form.account_number.trim() || null,
+      super_fund_name: form.super_fund_name.trim() || null,
+      super_fund_usi: form.super_fund_usi.trim() || null,
+      super_fund_abn: form.super_fund_abn.trim() || null,
+      super_member_number: form.super_member_number.trim() || null,
       weekly_schedule: showSchedule && form.schedule_type === "weekly" ? form.weekly_schedule : null,
       schedule_type: showSchedule ? form.schedule_type : null,
       week_ab_schedule: showSchedule && form.schedule_type === "alternating" ? form.week_ab_schedule : null,
@@ -293,7 +365,29 @@ function StaffForm({ member, onSave, onCancel }) {
         <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
       </div>
 
+      {/* Tab bar */}
+      <div className="flex border-b shrink-0 px-5 gap-4">
+        {[
+          { key: "profile", label: "Profile" },
+          { key: "payroll", label: "Payroll" },
+          { key: "documents", label: "Documents" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setActiveTab(t.key)}
+            className={`py-2.5 text-sm font-medium ${activeTab === t.key ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+
+        {/* ── PROFILE TAB ── */}
+        {activeTab === "profile" && (
+        <div className="space-y-4">
 
         {/* Photo */}
         <div className="flex items-center gap-4">
@@ -335,6 +429,72 @@ function StaffForm({ member, onSave, onCancel }) {
           <p className="text-[11px] text-gray-400 mt-1">Used for app login. Must match the email they sign up with.</p>
         </div>
 
+        {/* Phone */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
+          <input
+            value={form.phone}
+            onChange={(e) => set("phone", e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            placeholder="04xx xxx xxx"
+          />
+        </div>
+
+        {/* DOB + Start date */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Date of Birth</label>
+            <input
+              type="date"
+              value={form.date_of_birth}
+              onChange={(e) => set("date_of_birth", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Start Date</label>
+            <input
+              type="date"
+              value={form.start_date}
+              onChange={(e) => set("start_date", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+        </div>
+
+        {/* Address */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Address</label>
+          <input
+            value={form.address}
+            onChange={(e) => set("address", e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            placeholder="Street, Suburb, State, Postcode"
+          />
+        </div>
+
+        {/* Emergency contact */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Emergency Contact</label>
+            <input
+              value={form.emergency_contact_name}
+              onChange={(e) => set("emergency_contact_name", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="Name"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Emergency Phone</label>
+            <input
+              value={form.emergency_contact_phone}
+              onChange={(e) => set("emergency_contact_phone", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="04xx xxx xxx"
+            />
+          </div>
+        </div>
+
         {/* Role */}
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
@@ -347,6 +507,67 @@ function StaffForm({ member, onSave, onCancel }) {
             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
+
+        {/* AHPRA — pharmacists only */}
+        {isPharmacist && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">AHPRA Number</label>
+            <input
+              value={form.ahpra_number}
+              onChange={(e) => set("ahpra_number", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="PHA0000000000"
+            />
+          </div>
+        )}
+
+        {/* PIN */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">PIN (4 digits)</label>
+          <input
+            type="password"
+            inputMode="numeric"
+            maxLength={4}
+            value={form.pin}
+            onChange={(e) => set("pin", e.target.value.replace(/\D/g, ""))}
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            placeholder="••••"
+          />
+        </div>
+
+        {/* Toggles */}
+        <div className="space-y-3 pt-1">
+          {[
+            { field: "active", label: "Active", desc: "Appears on roster and home screen" },
+            { field: "can_access_roster", label: "Can access roster", desc: "PIN unlocks the roster page" },
+            { field: "can_access_tasks", label: "Can access tasks", desc: "PIN unlocks the tasks page" },
+            { field: "can_access_admin", label: "Can access admin", desc: "PIN unlocks this admin page" },
+            { field: "can_access_wages", label: "Can access wages", desc: "PIN unlocks the full wages table for all staff" },
+            { field: "no_lunch_deduction", label: "Never deduct lunch break", desc: "Skip the 30-min lunch deduction on all shifts and public holidays" },
+            { field: "is_roster_manager", label: "Roster manager", desc: "Receives push notifications for leave requests and availability changes" },
+            { field: "is_driver", label: "Delivery driver", desc: "Sees the Deliveries tab on their phone app" },
+          ].map(({ field, label, desc }) => (
+            <div key={field} className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium text-gray-700">{label}</div>
+                <div className="text-xs text-gray-400">{desc}</div>
+              </div>
+              <button
+                onClick={() => set(field, !form[field])}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form[field] ? "bg-blue-600" : "bg-gray-200"}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form[field] ? "translate-x-6" : "translate-x-1"}`} />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        </div>
+        )}
+
+        {/* ── PAYROLL TAB ── */}
+        {activeTab === "payroll" && (
+        <div className="space-y-4">
 
         {/* Employment type */}
         <div>
@@ -441,45 +662,92 @@ function StaffForm({ member, onSave, onCancel }) {
           </div>
         )}
 
-        {/* PIN */}
+        <div className="border-t pt-2" />
+
+        {/* TFN */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">PIN (4 digits)</label>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Tax File Number (TFN)</label>
           <input
-            type="password"
-            inputMode="numeric"
-            maxLength={4}
-            value={form.pin}
-            onChange={(e) => set("pin", e.target.value.replace(/\D/g, ""))}
+            value={form.tfn}
+            onChange={(e) => set("tfn", e.target.value)}
             className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-            placeholder="••••"
+            placeholder="xxx xxx xxx"
           />
         </div>
 
-        {/* Toggles */}
-        <div className="space-y-3 pt-1">
-          {[
-            { field: "active", label: "Active", desc: "Appears on roster and home screen" },
-            { field: "can_access_roster", label: "Can access roster", desc: "PIN unlocks the roster page" },
-            { field: "can_access_tasks", label: "Can access tasks", desc: "PIN unlocks the tasks page" },
-            { field: "can_access_admin", label: "Can access admin", desc: "PIN unlocks this admin page" },
-            { field: "can_access_wages", label: "Can access wages", desc: "PIN unlocks the full wages table for all staff" },
-            { field: "no_lunch_deduction", label: "Never deduct lunch break", desc: "Skip the 30-min lunch deduction on all shifts and public holidays" },
-            { field: "is_roster_manager", label: "Roster manager", desc: "Receives push notifications for leave requests and availability changes" },
-            { field: "is_driver", label: "Delivery driver", desc: "Sees the Deliveries tab on their phone app" },
-          ].map(({ field, label, desc }) => (
-            <div key={field} className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium text-gray-700">{label}</div>
-                <div className="text-xs text-gray-400">{desc}</div>
-              </div>
-              <button
-                onClick={() => set(field, !form[field])}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form[field] ? "bg-blue-600" : "bg-gray-200"}`}
-              >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form[field] ? "translate-x-6" : "translate-x-1"}`} />
-              </button>
-            </div>
-          ))}
+        {/* Bank */}
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide pt-1">Bank Account</div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Account Name</label>
+          <input
+            value={form.bank_account_name}
+            onChange={(e) => set("bank_account_name", e.target.value)}
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            placeholder="Full name as on account"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">BSB</label>
+            <input
+              value={form.bsb}
+              onChange={(e) => set("bsb", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="xxx-xxx"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
+            <input
+              value={form.account_number}
+              onChange={(e) => set("account_number", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="xxxxxxxx"
+            />
+          </div>
+        </div>
+
+        {/* Super */}
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide pt-1">Superannuation</div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Fund Name</label>
+            <input
+              value={form.super_fund_name}
+              onChange={(e) => set("super_fund_name", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="e.g. GuildSuper"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">USI / SPIN</label>
+            <input
+              value={form.super_fund_usi}
+              onChange={(e) => set("super_fund_usi", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="e.g. RES0103AU"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Fund ABN</label>
+            <input
+              value={form.super_fund_abn}
+              onChange={(e) => set("super_fund_abn", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="xx xxx xxx xxx"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Member Number</label>
+            <input
+              value={form.super_member_number}
+              onChange={(e) => set("super_member_number", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="xxxxxxxxx"
+            />
+          </div>
         </div>
 
         {/* Onboarding link — existing staff only, for collecting payroll details */}
@@ -529,6 +797,69 @@ function StaffForm({ member, onSave, onCancel }) {
               </div>
             )}
           </div>
+        )}
+
+        </div>
+        )}
+
+        {/* ── DOCUMENTS TAB ── */}
+        {activeTab === "documents" && (
+        <div className="space-y-4">
+          {isNew ? (
+            <p className="text-xs text-gray-400">Save the staff member first, then you can upload documents.</p>
+          ) : (
+            <>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Documents {documents.length > 0 && <span className="text-gray-400 font-normal">({documents.length})</span>}
+              </div>
+
+              {documents.length === 0 ? (
+                <p className="text-xs text-gray-400">No documents uploaded yet.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {documents.map((doc) => (
+                    <div key={doc.id} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                      <span className="text-sm">📄</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-medium text-gray-700 truncate">{doc.filename || doc.type}</div>
+                        <div className="text-[11px] text-gray-400">{doc.type} · {new Date(doc.uploaded_at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</div>
+                      </div>
+                      <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
+                      <button type="button" onClick={() => handleDocDelete(doc)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Delete</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="space-y-2 border rounded-lg p-3 bg-gray-50">
+                <div className="text-[11px] font-medium text-gray-500">Upload document</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { type: "signed_contract", label: "Contract" },
+                    { type: "resume", label: "Resume" },
+                    { type: "first_aid_cert", label: "First Aid" },
+                    { type: "cpr_cert", label: "CPR" },
+                    { type: "induction_checklist", label: "Induction Checklist" },
+                    ...(isPharmacist
+                      ? [
+                          { type: "ahpra_cert", label: "AHPRA Certificate" },
+                          { type: "indemnity_cert", label: "Indemnity" },
+                          { type: "vaccination_accreditation", label: "Vaccination" },
+                        ]
+                      : [{ type: "s2_s3_cert", label: "S2/S3" }]),
+                    { type: "other", label: "Other" },
+                  ].map(({ type, label }) => (
+                    <label key={type} className={`text-center text-[11px] px-2 py-2 rounded-lg border cursor-pointer hover:bg-blue-50 hover:border-blue-200 ${uploadingDoc ? "opacity-40 pointer-events-none" : "border-gray-200 text-gray-600"}`}>
+                      {uploadingDoc ? "Uploading…" : `+ ${label}`}
+                      <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc}
+                        onChange={(e) => handleDocUpload(e.target.files?.[0], type)} />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
         )}
 
         {error && <p className="text-sm text-red-500">{error}</p>}
