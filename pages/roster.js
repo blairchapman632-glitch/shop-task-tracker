@@ -226,10 +226,10 @@ const selectedDayShifts = selectedDate
     getStaffAvailabilityShared({ staffId, date, patterns: allPatterns, overrides: allOverrides, approvedLeave });
 
   const getShiftConflict = (shift) =>
-    getShiftConflictShared({ shift, patterns: allPatterns, overrides: allOverrides, approvedLeave });
+    getShiftConflictShared({ shift, patterns: allPatterns, overrides: allOverrides, approvedLeave: leaveRequests });
 
   const getDayAvailability = (date) =>
-    getDayAvailabilityShared({ date, staffOptions, shifts, patterns: allPatterns, overrides: allOverrides, approvedLeave });
+    getDayAvailabilityShared({ date, staffOptions, shifts, patterns: allPatterns, overrides: allOverrides, approvedLeave: leaveRequests });
 
   // ── Issue builder (shared by sidebar badge + Issues panel) ──
   const buildIssues = () => {
@@ -2104,6 +2104,7 @@ const handleLeaveDecision = async (lr, decision) => {
                               const fits = (st) => {
                                 if (!issue.shift) return true;
                                 const { status } = getStaffAvailability(st.id, issue.date);
+                                if (status === "leave" || status === "leave_pending") return false;
                                 const NOON = 12 * 60;
                                 if (status === "am" && toMinutes(issue.shift.end_time) > NOON) return false;
                                 if (status === "pm" && toMinutes(issue.shift.start_time) < NOON) return false;
