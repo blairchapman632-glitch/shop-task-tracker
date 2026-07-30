@@ -13,6 +13,7 @@ export default function StaffOnboardingPage() {
   const [form, setForm] = useState({
     name: "", email: "", phone: "",
     date_of_birth: "", address: "", tfn: "", ahpra_number: "",
+    emergency_contact_name: "", emergency_contact_phone: "",
     bank_account_name: "", bsb: "", account_number: "",
     super_fund_name: "", super_fund_usi: "", super_fund_abn: "", super_member_number: "",
   });
@@ -31,7 +32,7 @@ export default function StaffOnboardingPage() {
     const load = async () => {
       const { data, error: err } = await supabase
         .from("staff")
-        .select("id, name, email, phone, ahpra_number, date_of_birth, address, tfn, bank_account_name, bsb, account_number, super_fund_name, super_fund_usi, super_fund_abn, super_member_number, onboarding_token, role")
+        .select("id, name, email, phone, ahpra_number, date_of_birth, address, tfn, emergency_contact_name, emergency_contact_phone, bank_account_name, bsb, account_number, super_fund_name, super_fund_usi, super_fund_abn, super_member_number, onboarding_token, role")
         .eq("onboarding_token", token)
         .or("role.is.null,role.neq.Locum")
         .single();
@@ -45,6 +46,8 @@ export default function StaffOnboardingPage() {
         date_of_birth: data.date_of_birth || "",
         address: data.address || "",
         tfn: data.tfn || "",
+        emergency_contact_name: data.emergency_contact_name || "",
+        emergency_contact_phone: data.emergency_contact_phone || "",
         bank_account_name: data.bank_account_name || "",
         bsb: data.bsb || "",
         account_number: data.account_number || "",
@@ -83,6 +86,25 @@ export default function StaffOnboardingPage() {
     }
   };
 
+  const storagePathFromUrl = (url) => {
+    if (!url) return null;
+    const marker = "/locum-documents/";
+    const i = url.indexOf(marker);
+    return i === -1 ? null : url.slice(i + marker.length).split("?")[0];
+  };
+
+  const handleDocDelete = async (doc) => {
+    setError("");
+    try {
+      const path = storagePathFromUrl(doc.url);
+      if (path) await supabase.storage.from("locum-documents").remove([path]);
+      await supabase.from("locum_documents").delete().eq("id", doc.id);
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+    } catch (err) {
+      setError("Couldn't remove document: " + (err?.message || String(err)));
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError("");
@@ -95,6 +117,8 @@ export default function StaffOnboardingPage() {
         date_of_birth: form.date_of_birth || null,
         address: form.address.trim() || null,
         tfn: form.tfn.trim() || null,
+        emergency_contact_name: form.emergency_contact_name.trim() || null,
+        emergency_contact_phone: form.emergency_contact_phone.trim() || null,
         bank_account_name: form.bank_account_name.trim() || null,
         bsb: form.bsb.trim() || null,
         account_number: form.account_number.trim() || null,
@@ -179,6 +203,21 @@ export default function StaffOnboardingPage() {
             </div>
           </div>
 
+          {/* Emergency Contact */}
+          <div className="bg-white rounded-2xl shadow-sm border p-5">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Emergency Contact</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Contact Name</label>
+                <input value={form.emergency_contact_name} onChange={(e) => set("emergency_contact_name", e.target.value)} placeholder="Full name" autoComplete="off" name="emergency_contact_name_field" className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Contact Phone</label>
+                <input value={form.emergency_contact_phone} onChange={(e) => set("emergency_contact_phone", e.target.value)} placeholder="04xx xxx xxx" autoComplete="off" name="emergency_contact_phone_field" className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              </div>
+            </div>
+          </div>
+
           {/* Bank */}
           <div className="bg-white rounded-2xl shadow-sm border p-5">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Bank Account</div>
@@ -228,41 +267,60 @@ export default function StaffOnboardingPage() {
           {/* Documents */}
           <div className="bg-white rounded-2xl shadow-sm border p-5">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Documents</div>
-            {documents.length > 0 && (
-              <div className="space-y-1.5 mb-3">
-                {documents.map((doc) => (
-                  <div key={doc.id} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                    <span>📄</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs text-gray-700 truncate">{doc.filename || doc.type}</div>
-                      <div className="text-[11px] text-green-600">✅ Uploaded</div>
-                    </div>
-                    <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">View</a>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="space-y-2">
+            <div className="space-y-4">
               {[
-                { type: "signed_contract", label: "Signed Employment Contract" },
-                { type: "resume", label: "Resume" },
+                { type: "signed_contract", label: "Signed Employment Contract", multi: false },
+                { type: "resume", label: "Resume", multi: false },
                 ...(isPharmacist
                   ? [
-                      { type: "ahpra_cert", label: "AHPRA Certificate" },
-                      { type: "indemnity_cert", label: "Professional Indemnity Certificate" },
-                      { type: "first_aid_cert", label: "First Aid Certificate" },
-                      { type: "cpr_cert", label: "CPR Certificate" },
-                      { type: "vaccination_accreditation", label: "Vaccination Accreditation" },
+                      { type: "ahpra_cert", label: "AHPRA Certificate", multi: false },
+                      { type: "indemnity_cert", label: "Professional Indemnity Certificate", multi: false },
+                      { type: "first_aid_cert", label: "First Aid Certificate", multi: false },
+                      { type: "cpr_cert", label: "CPR Certificate", multi: false },
+                      { type: "vaccination_accreditation", label: "Vaccination Accreditation", multi: true },
                     ]
-                  : [{ type: "s2_s3_cert", label: "S2/S3 Certificate (if applicable)" }]),
-                { type: "other", label: "Other Document" },
-              ].map(({ type, label }) => (
-                <label key={type} className={`flex items-center gap-2 w-full border-2 border-dashed rounded-lg px-3 py-3 cursor-pointer transition-colors ${uploadingDoc ? "border-blue-200 bg-blue-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"}`}>
-                  <span className="text-gray-400">📎</span>
-                  <span className="text-xs text-gray-500">{uploadingDoc ? "Uploading…" : `Upload ${label}`}</span>
-                  <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc} onChange={(e) => handleDocUpload(e.target.files?.[0], type)} />
-                </label>
-              ))}
+                  : [{ type: "s2_s3_cert", label: "S2/S3 Certificate (if applicable)", multi: false }]),
+                { type: "other", label: "Other Documents", multi: true },
+              ].map(({ type, label, multi }) => {
+                const slotDocs = documents.filter((d) => d.type === type);
+                const showUploader = multi || slotDocs.length === 0;
+                return (
+                  <div key={type}>
+                    <div className="text-xs font-medium text-gray-600 mb-1.5">{label}</div>
+
+                    {slotDocs.length > 0 && (
+                      <div className="space-y-1.5 mb-2">
+                        {slotDocs.map((doc) => (
+                          <div key={doc.id} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                            <span>📄</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs text-gray-700 truncate">{doc.filename || doc.type}</div>
+                              <div className="text-[11px] text-green-600">✅ Uploaded</div>
+                            </div>
+                            <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
+                            {!multi && (
+                              <label className="text-xs text-blue-600 hover:underline shrink-0 cursor-pointer">
+                                Replace
+                                <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc}
+                                  onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; await handleDocDelete(doc); await handleDocUpload(f, type); }} />
+                              </label>
+                            )}
+                            <button onClick={() => handleDocDelete(doc)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {showUploader && (
+                      <label className={`flex items-center gap-2 w-full border-2 border-dashed rounded-lg px-3 py-3 cursor-pointer transition-colors ${uploadingDoc ? "border-blue-200 bg-blue-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"}`}>
+                        <span className="text-gray-400">📎</span>
+                        <span className="text-xs text-gray-500">{uploadingDoc ? "Uploading…" : multi && slotDocs.length > 0 ? "Add another" : `Upload ${label}`}</span>
+                        <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc} onChange={(e) => handleDocUpload(e.target.files?.[0], type)} />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 

@@ -264,8 +264,17 @@ function StaffForm({ member, onSave, onCancel }) {
     }
   };
 
-  const handleDocDelete = async (doc) => {
-    if (!window.confirm("Delete this document?")) return;
+  const storagePathFromUrl = (url) => {
+    if (!url) return null;
+    const marker = "/locum-documents/";
+    const i = url.indexOf(marker);
+    return i === -1 ? null : url.slice(i + marker.length).split("?")[0];
+  };
+
+  const handleDocDelete = async (doc, skipConfirm = false) => {
+    if (!skipConfirm && !window.confirm("Delete this document?")) return;
+    const path = storagePathFromUrl(doc.url);
+    if (path) await supabase.storage.from("locum-documents").remove([path]);
     await supabase.from("locum_documents").delete().eq("id", doc.id);
     setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
   };
@@ -480,6 +489,8 @@ function StaffForm({ member, onSave, onCancel }) {
             <input
               value={form.emergency_contact_name}
               onChange={(e) => set("emergency_contact_name", e.target.value)}
+              autoComplete="off"
+              name="emergency_contact_name_field"
               className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
               placeholder="Name"
             />
@@ -489,6 +500,8 @@ function StaffForm({ member, onSave, onCancel }) {
             <input
               value={form.emergency_contact_phone}
               onChange={(e) => set("emergency_contact_phone", e.target.value)}
+              autoComplete="off"
+              name="emergency_contact_phone_field"
               className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
               placeholder="04xx xxx xxx"
             />
@@ -515,6 +528,8 @@ function StaffForm({ member, onSave, onCancel }) {
             <input
               value={form.ahpra_number}
               onChange={(e) => set("ahpra_number", e.target.value)}
+              autoComplete="off"
+              name="ahpra_number_field"
               className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
               placeholder="PHA0000000000"
             />
@@ -530,6 +545,8 @@ function StaffForm({ member, onSave, onCancel }) {
             maxLength={4}
             value={form.pin}
             onChange={(e) => set("pin", e.target.value.replace(/\D/g, ""))}
+            autoComplete="new-password"
+            name="staff_pin_field"
             className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
             placeholder="••••"
           />
@@ -813,49 +830,61 @@ function StaffForm({ member, onSave, onCancel }) {
                 Documents {documents.length > 0 && <span className="text-gray-400 font-normal">({documents.length})</span>}
               </div>
 
-              {documents.length === 0 ? (
-                <p className="text-xs text-gray-400">No documents uploaded yet.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {documents.map((doc) => (
-                    <div key={doc.id} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                      <span className="text-sm">📄</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs font-medium text-gray-700 truncate">{doc.filename || doc.type}</div>
-                        <div className="text-[11px] text-gray-400">{doc.type} · {new Date(doc.uploaded_at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</div>
-                      </div>
-                      <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
-                      <button type="button" onClick={() => handleDocDelete(doc)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Delete</button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="space-y-4">
+                {[
+                  { type: "signed_contract", label: "Signed Employment Contract", multi: false },
+                  { type: "resume", label: "Resume", multi: false },
+                  { type: "first_aid_cert", label: "First Aid Certificate", multi: false },
+                  { type: "cpr_cert", label: "CPR Certificate", multi: false },
+                  { type: "induction_checklist", label: "Induction Checklist", multi: false },
+                  ...(isPharmacist
+                    ? [
+                        { type: "ahpra_cert", label: "AHPRA Certificate", multi: false },
+                        { type: "indemnity_cert", label: "Professional Indemnity Certificate", multi: false },
+                        { type: "vaccination_accreditation", label: "Vaccination Accreditation", multi: true },
+                      ]
+                    : [{ type: "s2_s3_cert", label: "S2/S3 Certificate (if applicable)", multi: false }]),
+                  { type: "other", label: "Other Documents", multi: true },
+                ].map(({ type, label, multi }) => {
+                  const slotDocs = documents.filter((d) => d.type === type);
+                  const showUploader = multi || slotDocs.length === 0;
+                  return (
+                    <div key={type}>
+                      <div className="text-xs font-medium text-gray-600 mb-1.5">{label}</div>
 
-              <div className="space-y-2 border rounded-lg p-3 bg-gray-50">
-                <div className="text-[11px] font-medium text-gray-500">Upload document</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { type: "signed_contract", label: "Contract" },
-                    { type: "resume", label: "Resume" },
-                    { type: "first_aid_cert", label: "First Aid" },
-                    { type: "cpr_cert", label: "CPR" },
-                    { type: "induction_checklist", label: "Induction Checklist" },
-                    ...(isPharmacist
-                      ? [
-                          { type: "ahpra_cert", label: "AHPRA Certificate" },
-                          { type: "indemnity_cert", label: "Indemnity" },
-                          { type: "vaccination_accreditation", label: "Vaccination" },
-                        ]
-                      : [{ type: "s2_s3_cert", label: "S2/S3" }]),
-                    { type: "other", label: "Other" },
-                  ].map(({ type, label }) => (
-                    <label key={type} className={`text-center text-[11px] px-2 py-2 rounded-lg border cursor-pointer hover:bg-blue-50 hover:border-blue-200 ${uploadingDoc ? "opacity-40 pointer-events-none" : "border-gray-200 text-gray-600"}`}>
-                      {uploadingDoc ? "Uploading…" : `+ ${label}`}
-                      <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc}
-                        onChange={(e) => handleDocUpload(e.target.files?.[0], type)} />
-                    </label>
-                  ))}
-                </div>
+                      {slotDocs.length > 0 && (
+                        <div className="space-y-1.5 mb-2">
+                          {slotDocs.map((doc) => (
+                            <div key={doc.id} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                              <span className="text-sm">📄</span>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-medium text-gray-700 truncate">{doc.filename || doc.type}</div>
+                                <div className="text-[11px] text-gray-400">{new Date(doc.uploaded_at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</div>
+                              </div>
+                              <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
+                              {!multi && (
+                                <label className="text-xs text-blue-600 hover:underline shrink-0 cursor-pointer">
+                                  Replace
+                                  <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc}
+                                    onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; await handleDocDelete(doc, true); await handleDocUpload(f, type); }} />
+                                </label>
+                              )}
+                              <button type="button" onClick={() => handleDocDelete(doc)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {showUploader && (
+                        <label className={`flex items-center gap-2 w-full border-2 border-dashed rounded-lg px-3 py-3 cursor-pointer transition-colors ${uploadingDoc ? "border-blue-200 bg-blue-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"}`}>
+                          <span className="text-gray-400">📎</span>
+                          <span className="text-xs text-gray-500">{uploadingDoc ? "Uploading…" : multi && slotDocs.length > 0 ? "Add another" : `Upload ${label}`}</span>
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc} onChange={(e) => handleDocUpload(e.target.files?.[0], type)} />
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}
