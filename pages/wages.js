@@ -104,7 +104,7 @@ function PinScreen({ onUnlock }) {
             <img src={selectedStaff.photo_url || "/placeholder.png"} alt={selectedStaff.name} className="w-14 h-14 rounded-full object-cover mx-auto mb-2" />
             <div className="font-medium text-gray-800 mb-4">{selectedStaff.name}</div>
             <input
-              type="password"
+              type="text"
               inputMode="numeric"
               maxLength={4}
               value={pin}
@@ -112,6 +112,11 @@ function PinScreen({ onUnlock }) {
               onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
               placeholder="••••"
               autoFocus
+              autoComplete="off"
+              name="wages_identity_pin_field"
+              data-1p-ignore
+              data-lpignore="true"
+              style={{ WebkitTextSecurity: "disc", textSecurity: "disc" }}
               className="w-full border rounded-lg px-4 py-3 text-center text-2xl tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
             {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
@@ -179,13 +184,18 @@ function ApproveModal({ row, periodStart, currentUser, isManager, onClose, onApp
           {isManager ? `${row.name}'s PIN, or a manager PIN to confirm on their behalf.` : "Enter your PIN to confirm."}
         </p>
         <input
-          type="password"
+          type="text"
           inputMode="numeric"
           maxLength={4}
           value={pin}
           onChange={(e) => { setPin(e.target.value.replace(/\D/g, "")); setError(""); }}
           onKeyDown={(e) => e.key === "Enter" && handleApprove()}
           placeholder="••••"
+          autoComplete="off"
+          name="wages_approve_pin_field"
+          data-1p-ignore
+          data-lpignore="true"
+          style={{ WebkitTextSecurity: "disc", textSecurity: "disc" }}
           className="w-full border rounded-lg px-4 py-3 text-center text-2xl tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
           autoFocus
         />

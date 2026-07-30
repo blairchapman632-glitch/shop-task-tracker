@@ -1486,13 +1486,18 @@ const handleLeaveDecision = async (lr, decision) => {
           <h1 className="text-lg font-semibold text-gray-800 mb-1">Roster</h1>
           <p className="text-xs text-gray-500 mb-4">Enter PIN to continue</p>
           <input
-            type="password"
+            type="text"
             inputMode="numeric"
             maxLength={6}
             value={pinInput}
             onChange={(e) => { setPinInput(e.target.value); setPinError(false); }}
             onKeyDown={(e) => { if (e.key === "Enter") handlePinSubmit(); }}
             placeholder="••••"
+            autoComplete="off"
+            name="roster_pin_field"
+            data-1p-ignore
+            data-lpignore="true"
+            style={{ WebkitTextSecurity: "disc", textSecurity: "disc" }}
             className="w-full text-center rounded-lg border border-gray-300 px-3 py-2 text-lg tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
             autoFocus
           />

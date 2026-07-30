@@ -109,13 +109,18 @@ function PinScreen({ onUnlock }) {
         <h1 className="text-lg font-bold text-gray-800 mb-1">Admin</h1>
         <p className="text-sm text-gray-500 mb-6">Enter your PIN to continue</p>
         <input
-          type="password"
+          type="text"
           inputMode="numeric"
           maxLength={4}
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           placeholder="••••"
+          autoComplete="off"
+          name="admin_pin_field"
+          data-1p-ignore
+          data-lpignore="true"
+          style={{ WebkitTextSecurity: "disc", textSecurity: "disc" }}
           className="w-full border rounded-lg px-4 py-3 text-center text-2xl tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
           autoFocus
         />

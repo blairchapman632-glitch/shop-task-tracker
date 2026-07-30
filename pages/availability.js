@@ -347,10 +347,12 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
             <img src={selectedStaff.photo_url || "/placeholder.png"} alt={selectedStaff.name} className="w-14 h-14 rounded-full object-cover mx-auto mb-2" />
             <div className="font-medium text-gray-800 mb-4">{selectedStaff.name}</div>
             <input
-              type="password" inputMode="numeric" maxLength={4} value={pin}
+              type="text" inputMode="numeric" maxLength={4} value={pin}
               onChange={(e) => { setPin(e.target.value.replace(/\D/g, "")); setPinError(""); }}
               onKeyDown={(e) => e.key === "Enter" && handlePin()}
               placeholder="••••" autoFocus
+              autoComplete="off" name="availability_pin_field" data-1p-ignore data-lpignore="true"
+              style={{ WebkitTextSecurity: "disc", textSecurity: "disc" }}
               className="w-full border rounded-lg px-4 py-3 text-center text-2xl tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
             />
             {pinError && <p className="text-sm text-red-500 mb-3">{pinError}</p>}
