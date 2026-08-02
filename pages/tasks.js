@@ -508,6 +508,21 @@ const handleAutoBalance = async (staffId, staffName) => {
       };
 
       if (editingTask) {
+        // If a completed on_the_list task's schedule changed (date / frequency / next-shift),
+        // clear its completion stamp so it reappears on the new date. Its completions-table
+        // history rows are left untouched.
+        if (
+          editingTask.task_type === "on_the_list" &&
+          editingTask.completed_at &&
+          (
+            (editingTask.specific_date?.slice(0, 10) || "") !== (payload.specific_date || "") ||
+            editingTask.frequency !== payload.frequency ||
+            Boolean(editingTask.show_next_shift) !== Boolean(payload.show_next_shift)
+          )
+        ) {
+          payload.completed_at = null;
+          payload.completed_by_staff_id = null;
+        }
         const { error } = await supabase.from("tasks").update(payload).eq("id", editingTask.id);
         if (error) throw error;
       } else {

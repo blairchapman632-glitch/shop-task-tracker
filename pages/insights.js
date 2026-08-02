@@ -93,6 +93,8 @@ export default function InsightsPage() {
 
   // ── UI ──
   const [activeSection, setActiveSection] = useState("staff");
+  const [logSearch, setLogSearch] = useState("");
+  const [logAllTime, setLogAllTime] = useState(false);
 
   // ── Auth check ──
   useEffect(() => {
@@ -125,7 +127,7 @@ export default function InsightsPage() {
       end = new Date();
     } else if (period === "lastmonth") {
       start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      end = new Date(now.getFullYear(), now.getMonth(), 1);
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999); // last day of last month
     } else if (period === "custom" && customStart && customEnd) {
       start = new Date(customStart);
       end = new Date(customEnd);
@@ -156,7 +158,7 @@ export default function InsightsPage() {
         { data: reactionData },
       ] = await Promise.all([
         supabase.from("staff").select("id, name, active").eq("pharmacy_id", currentPharmacyId).order("name"),
-        supabase.from("tasks").select("id, title, frequency, points, assigned_staff_id, active").eq("pharmacy_id", currentPharmacyId),
+        supabase.from("tasks").select("id, title, frequency, points, assigned_staff_id, assigned_role, assigned_staff_ids, task_type, specific_date, days_of_week, completed_at, completed_by_staff_id, active").eq("pharmacy_id", currentPharmacyId),
         supabase.from("completions").select("id, task_id, section_clean_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", start.toISOString()).lte("completed_at", end.toISOString()),
         supabase.from("roster_shifts").select("id, shift_date, staff_id").eq("pharmacy_id", currentPharmacyId).gte("shift_date", start.toISOString().slice(0, 10)).lte("shift_date", end.toISOString().slice(0, 10)),
         supabase.from("sections").select("id, name, assigned_staff_id").eq("pharmacy_id", currentPharmacyId),
@@ -210,7 +212,9 @@ export default function InsightsPage() {
   })();
 
   const mostMissedTask = (() => {
-    const eligibleTasks = tasks.filter((t) => (t.frequency === "daily" || t.frequency === "weekly") && t.active !== false);
+    // Only recurring daily/weekly tasks have a meaningful "rate". Exclude on_the_list
+    // one-off/monthly jobs — they don't recur, so a completion rate is nonsense for them.
+    const eligibleTasks = tasks.filter((t) => (t.frequency === "daily" || t.frequency === "weekly") && t.task_type !== "on_the_list" && t.active !== false);
     const { start, end } = dateRange;
     const days = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
     let worst = null, worstRate = 100;
@@ -261,22 +265,165 @@ export default function InsightsPage() {
     return { ...t, done, missed, expected, rate };
   }).sort((a, b) => a.rate - b.rate);
 
-  // ── Assigned task compliance ──
-  const assignedCompliance = (() => {
+  // ── Assigned task: describe who it's assigned to ──
+  const assignmentLabel = (t) => {
+    if (t.assigned_role) return `Role: ${t.assigned_role}`;
+    if (Array.isArray(t.assigned_staff_ids) && t.assigned_staff_ids.length > 0) {
+      return t.assigned_staff_ids.map((id) => staffById[id]?.name).filter(Boolean).join(", ") || "Multiple";
+    }
+    if (t.assigned_staff_id) return staffById[t.assigned_staff_id]?.name || "Unknown";
+    return "Anyone";
+  };
+
+  const typeLabel = (t) => {
+    if (t.show_next_shift) return "Next shift";
+    const f = t.frequency;
+    if (f === "specific_date") return "One-off";
+    if (f === "weekly") return "Weekly";
+    if (f === "monthly_anytime" || f === "monthly") return "Monthly";
+    if (f === "daily") return "Daily";
+    return f || "—";
+  };
+
+  // ── Assigned task completion LOG (merges both sources) ──
+  // One-off/next-shift tasks stamp completed_at on the task row (never hit completions).
+  // Weekly/monthly recurring write to the completions table each time.
+  const assignedLog = (() => {
+    const { start, end } = dateRange;
+    const inPeriod = (d) => {
+      if (logAllTime) return true;
+      const dt = new Date(d);
+      return dt >= start && dt <= end;
+    };
+    const onListTasks = tasks.filter((t) => t.task_type === "on_the_list");
     const rows = [];
-    const assignedTasks = tasks.filter((t) => t.assigned_staff_id && t.active !== false);
-    for (const t of assignedTasks) {
-      const s = staffById[t.assigned_staff_id];
-      if (!s) continue;
-      const myShifts = rosterShifts.filter((sh) => sh.staff_id === t.assigned_staff_id);
-      let done = 0, missed = 0;
-      for (const sh of myShifts) {
-        const completed = taskCompletions.some((c) => c.task_id === t.id && c.staff_id === t.assigned_staff_id && c.completed_at.slice(0, 10) === sh.shift_date);
-        if (completed) done++; else missed++;
+
+    // Source 1: task-row completions (one-off / next-shift)
+    for (const t of onListTasks) {
+      if (t.completed_at && t.completed_by_staff_id) {
+        if (inPeriod(t.completed_at)) {
+          rows.push({
+            key: `task-${t.id}`,
+            title: t.title,
+            by: staffById[t.completed_by_staff_id]?.name || "Unknown",
+            when: t.completed_at,
+            assignment: assignmentLabel(t),
+            type: typeLabel(t),
+          });
+        }
       }
-      const total = done + missed;
-      const rate = pct(done, total);
-      rows.push({ task: t, staff: s, done, missed, total, rate });
+    }
+
+    // Source 2: completions table (recurring on_the_list tasks)
+    // Dedupe: skip any completions-table row that collides with a task-row
+    // completion for the same task + person + same minute (double-write from
+    // older code paths). Task-row is authoritative for one-offs.
+    const taskRowKeys = new Set(
+      onListTasks
+        .filter((t) => t.completed_at && t.completed_by_staff_id)
+        .map((t) => `${t.id}-${t.completed_by_staff_id}-${new Date(t.completed_at).toISOString().slice(0, 16)}`)
+    );
+    const onListIds = new Set(onListTasks.map((t) => t.id));
+    for (const c of completions) {
+      if (!c.task_id || !onListIds.has(c.task_id)) continue;
+      if (!inPeriod(c.completed_at)) continue;
+      const collisionKey = `${c.task_id}-${c.staff_id}-${new Date(c.completed_at).toISOString().slice(0, 16)}`;
+      if (taskRowKeys.has(collisionKey)) continue;
+      const t = tasksById[c.task_id];
+      rows.push({
+        key: `comp-${c.id}`,
+        title: t?.title || `Task #${c.task_id}`,
+        by: staffById[c.staff_id]?.name || "Unknown",
+        when: c.completed_at,
+        assignment: t ? assignmentLabel(t) : "—",
+        type: t ? typeLabel(t) : "—",
+      });
+    }
+
+    const q = logSearch.trim().toLowerCase();
+    const filtered = q ? rows.filter((r) => r.title.toLowerCase().includes(q)) : rows;
+    return filtered.sort((a, b) => new Date(b.when) - new Date(a.when));
+  })();
+
+  // ── Outstanding assigned tasks (dated, past due, not done) ──
+  const assignedOutstanding = (() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return tasks
+      .filter((t) => t.task_type === "on_the_list" && t.active !== false && !t.completed_at)
+      .map((t) => {
+        const due = t.specific_date ? t.specific_date.slice(0, 10) : null;
+        return { task: t, due };
+      })
+      .filter((r) => r.due && r.due < today)
+      .sort((a, b) => a.due.localeCompare(b.due));
+  })();
+
+  // ── Schedule compliance (weekly/monthly assigned tasks vs their schedule) ──
+  // Measures expected occurrences in the period (once per week / once per month)
+  // against periods actually completed. No roster-shift dependency.
+  const scheduleCompliance = (() => {
+    const { start, end } = dateRange;
+
+    // Mon–Sun week key for a date
+    const weekKey = (d) => {
+      const x = new Date(d);
+      const day = x.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+      x.setDate(x.getDate() + diff);
+      x.setHours(0, 0, 0, 0);
+      return x.toISOString().slice(0, 10);
+    };
+    const monthKey = (d) => new Date(d).toISOString().slice(0, 7);
+
+    // Build the set of expected week/month buckets across the period
+    const expectedWeeks = [];
+    {
+      let cur = new Date(start);
+      const seen = new Set();
+      while (cur <= end) {
+        const k = weekKey(cur);
+        if (!seen.has(k)) { seen.add(k); expectedWeeks.push(k); }
+        cur.setDate(cur.getDate() + 7);
+      }
+    }
+    const expectedMonths = [];
+    {
+      let cur = new Date(start.getFullYear(), start.getMonth(), 1);
+      while (cur <= end) {
+        expectedMonths.push(cur.toISOString().slice(0, 7));
+        cur.setMonth(cur.getMonth() + 1);
+      }
+    }
+
+    const rows = [];
+    const scheduled = tasks.filter(
+      (t) => t.task_type === "on_the_list" && t.active !== false && (t.frequency === "weekly" || t.frequency === "monthly_anytime" || t.frequency === "monthly")
+    );
+
+    for (const t of scheduled) {
+      const isWeekly = t.frequency === "weekly";
+      const buckets = isWeekly ? expectedWeeks : expectedMonths;
+      const keyFn = isWeekly ? weekKey : monthKey;
+
+      // Completions for this task in the period (from completions table)
+      const doneBuckets = new Set(
+        completions
+          .filter((c) => c.task_id === t.id)
+          .map((c) => keyFn(c.completed_at))
+      );
+
+      const expected = buckets.length;
+      const done = buckets.filter((b) => doneBuckets.has(b)).length;
+      const missed = Math.max(0, expected - done);
+      rows.push({
+        task: t,
+        assignedTo: assignmentLabel(t),
+        cadence: isWeekly ? "Weekly" : "Monthly",
+        expected,
+        done,
+        missed,
+        rate: pct(done, expected),
+      });
     }
     return rows.sort((a, b) => a.rate - b.rate);
   })();
@@ -478,42 +625,126 @@ export default function InsightsPage() {
                 </div>
               )}
 
-              {/* ── Assigned Task Compliance ── */}
+              {/* ── Assigned Tasks ── */}
               {activeSection === "assigned" && (
-                <div className="bg-white rounded-xl border overflow-hidden">
-                  <div className="px-4 py-3 border-b">
-                    <SectionHeader title="Assigned Task Compliance" subtitle="How often assigned staff complete their tasks on days they are rostered" />
-                  </div>
-                  {assignedCompliance.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-gray-400 text-sm">No assigned tasks found.</div>
-                  ) : (
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50 border-b">
-                        <tr>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Task</th>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Staff</th>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Shifts</th>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Done</th>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Missed</th>
-                          <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase w-40">Rate</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {assignedCompliance.map((r, i) => (
-                          <tr key={i} className={`border-t hover:bg-gray-50 ${r.rate < 50 ? "bg-red-50" : ""}`}>
-                            <td className="px-4 py-2 font-medium text-gray-800">{r.task.title}</td>
-                            <td className="px-4 py-2 text-blue-700 font-medium">{r.staff.name}</td>
-                            <td className="px-4 py-2 text-gray-600">{r.total}</td>
-                            <td className="px-4 py-2 text-green-700 font-medium">{r.done}</td>
-                            <td className="px-4 py-2 text-red-600 font-medium">{r.missed}</td>
-                            <td className="px-4 py-2 w-40">
-                              <PctBar value={r.rate} color={r.rate < 50 ? "bg-red-500" : r.rate < 80 ? "bg-orange-400" : "bg-green-500"} />
-                            </td>
+                <div className="space-y-4">
+
+                  {/* Completion Log */}
+                  <div className="bg-white rounded-xl border overflow-hidden">
+                    <div className="px-4 py-3 border-b flex items-center justify-between gap-3 flex-wrap">
+                      <SectionHeader title="Completion Log" subtitle={logAllTime ? "Every assigned task completion — all time" : "Assigned task completions in selected period"} />
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={logSearch}
+                          onChange={(e) => setLogSearch(e.target.value)}
+                          placeholder="Search task…"
+                          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg w-44 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                        />
+                        <button
+                          onClick={() => setLogAllTime((v) => !v)}
+                          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${logAllTime ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                        >
+                          All time
+                        </button>
+                      </div>
+                    </div>
+                    {assignedLog.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-gray-400 text-sm">No completions{logSearch ? " matching your search" : logAllTime ? " recorded" : " in this period"}.</div>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Task</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Completed By</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">When</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Assigned To</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Type</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+                        </thead>
+                        <tbody>
+                          {assignedLog.map((r) => (
+                            <tr key={r.key} className="border-t hover:bg-gray-50">
+                              <td className="px-4 py-2 font-medium text-gray-800">{r.title}</td>
+                              <td className="px-4 py-2 text-blue-700 font-medium">{r.by}</td>
+                              <td className="px-4 py-2 text-gray-600">{new Date(r.when).toLocaleString("en-AU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+                              <td className="px-4 py-2 text-gray-500">{r.assignment}</td>
+                              <td className="px-4 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{r.type}</span></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  {/* Outstanding */}
+                  <div className="bg-white rounded-xl border overflow-hidden">
+                    <div className="px-4 py-3 border-b">
+                      <SectionHeader title="Outstanding" subtitle="Dated assigned tasks past their due date, not completed" />
+                    </div>
+                    {assignedOutstanding.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-green-600 text-sm">Nothing overdue ✓</div>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Task</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Assigned To</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Was Due</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {assignedOutstanding.map((r) => (
+                            <tr key={r.task.id} className="border-t hover:bg-gray-50 bg-red-50">
+                              <td className="px-4 py-2 font-medium text-gray-800">{r.task.title}</td>
+                              <td className="px-4 py-2 text-gray-500">{assignmentLabel(r.task)}</td>
+                              <td className="px-4 py-2 text-red-600 font-medium">{new Date(r.due).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  {/* Schedule compliance (weekly/monthly assigned tasks) */}
+                  <div className="bg-white rounded-xl border overflow-hidden">
+                    <div className="px-4 py-3 border-b">
+                      <SectionHeader title="Schedule Compliance" subtitle="Weekly/monthly assigned tasks — how many scheduled occurrences got done in this period" />
+                    </div>
+                    {scheduleCompliance.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-gray-400 text-sm">No weekly or monthly assigned tasks in this period.</div>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Task</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Assigned To</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Cadence</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Expected</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Done</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase">Missed</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase w-40">Rate</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {scheduleCompliance.map((r, i) => (
+                            <tr key={i} className={`border-t hover:bg-gray-50 ${r.missed > 0 ? "bg-red-50" : ""}`}>
+                              <td className="px-4 py-2 font-medium text-gray-800">{r.task.title}</td>
+                              <td className="px-4 py-2 text-gray-500">{r.assignedTo}</td>
+                              <td className="px-4 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{r.cadence}</span></td>
+                              <td className="px-4 py-2 text-gray-600">{r.expected}</td>
+                              <td className="px-4 py-2 text-green-700 font-medium">{r.done}</td>
+                              <td className="px-4 py-2 text-red-600 font-medium">{r.missed}</td>
+                              <td className="px-4 py-2 w-40">
+                                <PctBar value={r.rate} color={r.rate < 50 ? "bg-red-500" : r.rate < 80 ? "bg-orange-400" : "bg-green-500"} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
                 </div>
               )}
 

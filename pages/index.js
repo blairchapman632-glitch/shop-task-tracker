@@ -275,7 +275,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
         onClick={onAddToList}
         className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
       >
-        <span>📝</span> Create a Job
+        <span>📝</span> Create a Task
       </button>
       <button
         onClick={onViewRoster}
@@ -1119,22 +1119,34 @@ export default function HomePage() {
         const ok = window.confirm(`Undo completion for "${task.title}" today?`);
         if (!ok) return;
         undoCompletion(supabase, task.id, currentPharmacyId);
+        // One-off on_the_list tasks also carry a task-row stamp — clear it so undo is clean.
+        if (task.task_type === "on_the_list" && (task.show_next_shift || task.frequency === "specific_date")) {
+          await supabase.from("tasks").update({ completed_at: null, completed_by_staff_id: null }).eq("id", task.id);
+        }
         setCompletedTaskIds((prev) => { const next = new Set(prev); next.delete(task.id); return next; });
         setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: `Undid: ${task.title}`, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
         setLeadersRefreshKey((k) => k + 1);
         return;
       }
       if (!selectedStaffId) { alert("Tap your photo first, then tap the task."); return; }
-      recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId);
-      // For On the List tasks: only one-off tasks complete permanently.
-      // Weekly/monthly recurring tasks just record the completion and reset next period.
       const isOneOff = task.show_next_shift || task.frequency === "specific_date";
+      // Recurring tasks log via recordCompletion. One-off on_the_list tasks stamp the
+      // task row (to hide them) AND write a completions row (permanent history that
+      // survives editing the task's date later).
       if (task.task_type === "on_the_list" && isOneOff) {
+        await supabase.from("completions").insert([{
+          task_id: task.id,
+          staff_id: selectedStaff.id,
+          completed_at: new Date().toISOString(),
+          pharmacy_id: currentPharmacyId,
+        }]);
         await supabase.from("tasks").update({
           completed_at: new Date().toISOString(),
           completed_by_staff_id: selectedStaff.id,
         }).eq("id", task.id);
         setTasks((prev) => prev.filter((t) => t.id !== task.id));
+      } else {
+        recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId);
       }
       setCompletedTaskIds((prev) => { const next = new Set(prev); next.add(task.id); return next; });
       setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: task.title, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
@@ -1632,9 +1644,11 @@ const handleDeliveryTap = async (d) => {
                             : Boolean(monthlyCompletions[task.id]);
                           const monthlyComp = monthlyCompletions[task.id];
                           const assignedStaff = task.assigned_staff_id ? staffById[task.assigned_staff_id] : null;
+                          // Overdue only once the due DAY has fully passed — a task due today isn't overdue.
+                          const todayStr = new Date().toISOString().slice(0, 10);
                           const isOnListOverdue = !isDone && (
-                            (task.end_date && new Date(task.end_date) < new Date()) ||
-                            (task.specific_date && new Date(task.specific_date) < new Date())
+                            (task.end_date && task.end_date.slice(0, 10) < todayStr) ||
+                            (task.specific_date && task.specific_date.slice(0, 10) < todayStr)
                           );
                           const borderColour = isDone ? "border-l-green-500" : isOnListOverdue ? "border-l-red-500" : "border-l-orange-400";
                           return (
@@ -2207,7 +2221,7 @@ const handleDeliveryTap = async (d) => {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
-                <h2 className="font-semibold text-gray-800">📝 Create a Job</h2>
+                <h2 className="font-semibold text-gray-800">📝 Create a Task</h2>
                 <button onClick={() => setShowAddToList(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
               </div>
               <div className="px-5 py-4 space-y-3 overflow-y-auto">
