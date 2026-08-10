@@ -899,13 +899,55 @@ function StaffForm({ member, onSave, onCancel }) {
         {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
 
-      <div className="px-5 py-4 border-t shrink-0 flex gap-2">
-        <button onClick={onCancel} className="flex-1 border border-gray-300 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">
-          Cancel
-        </button>
-        <button onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
-          {saving ? "Saving…" : isNew ? "Add Staff" : "Save Changes"}
-        </button>
+      <div className="px-5 py-4 border-t shrink-0 space-y-2">
+        {!isNew && (
+          <button
+            onClick={async () => {
+              try {
+                const XLSX = await import("xlsx");
+                const data = [{
+                  "Name": form.name,
+                  "Role": form.role || "",
+                  "Employment Type": form.employment_type || "",
+                  "Date of Birth": form.date_of_birth || "",
+                  "Start Date": form.start_date || "",
+                  "Address": form.address || "",
+                  "Phone": form.phone || "",
+                  "Email": form.email || "",
+                  "Emergency Contact": form.emergency_contact_name || "",
+                  "Emergency Phone": form.emergency_contact_phone || "",
+                  "TFN": form.tfn || "",
+                  "AHPRA": form.ahpra_number || "",
+                  "Fortnightly Hours": form.contracted_hours || "",
+                  "Bank Account Name": form.bank_account_name || "",
+                  "BSB": form.bsb || "",
+                  "Account Number": form.account_number || "",
+                  "Super Fund Name": form.super_fund_name || "",
+                  "Super Fund USI/SPIN": form.super_fund_usi || "",
+                  "Super Fund ABN": form.super_fund_abn || "",
+                  "Super Member Number": form.super_member_number || "",
+                }];
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Staff");
+                XLSX.writeFile(wb, `staff_${(form.name || "member").replace(/\s+/g, "_").toLowerCase()}.xlsx`);
+              } catch (err) {
+                alert("Export failed: " + (err?.message || String(err)));
+              }
+            }}
+            className="w-full border border-green-300 text-green-700 rounded-lg py-2 text-sm font-medium hover:bg-green-50"
+          >
+            ↓ Export to Excel
+          </button>
+        )}
+        <div className="flex gap-2">
+          <button onClick={onCancel} className="flex-1 border border-gray-300 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
+            {saving ? "Saving…" : isNew ? "Add Staff" : "Save Changes"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1903,12 +1945,53 @@ export default function AdminPage() {
                 >
                   + Add Staff
                 </button>
-                <button
-                  onClick={() => setShowInactive((v) => !v)}
-                  className="text-xs text-gray-400 hover:text-gray-600"
-                >
-                  {showInactive ? "Hide inactive" : "Show inactive"}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const XLSX = await import("xlsx");
+                        const rows = staffList.filter((s) => s.active !== false).map((s) => ({
+                          "Name": s.name || "",
+                          "Role": s.role || "",
+                          "Employment Type": s.employment_type || "",
+                          "Date of Birth": s.date_of_birth || "",
+                          "Start Date": s.start_date || "",
+                          "Address": s.address || "",
+                          "Phone": s.phone || "",
+                          "Email": s.email || "",
+                          "Emergency Contact": s.emergency_contact_name || "",
+                          "Emergency Phone": s.emergency_contact_phone || "",
+                          "TFN": s.tfn || "",
+                          "AHPRA": s.ahpra_number || "",
+                          "Fortnightly Hours": s.contracted_hours || "",
+                          "Bank Account Name": s.bank_account_name || "",
+                          "BSB": s.bsb || "",
+                          "Account Number": s.account_number || "",
+                          "Super Fund Name": s.super_fund_name || "",
+                          "Super Fund USI/SPIN": s.super_fund_usi || "",
+                          "Super Fund ABN": s.super_fund_abn || "",
+                          "Super Member Number": s.super_member_number || "",
+                        }));
+                        if (!rows.length) { alert("No active staff to export."); return; }
+                        const ws = XLSX.utils.json_to_sheet(rows);
+                        const wb = XLSX.utils.book_new();
+                        XLSX.utils.book_append_sheet(wb, ws, "Staff");
+                        XLSX.writeFile(wb, `staff_directory_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                      } catch (err) {
+                        alert("Export failed: " + (err?.message || String(err)));
+                      }
+                    }}
+                    className="text-xs text-green-600 hover:text-green-700"
+                  >
+                    ↓ Export
+                  </button>
+                  <button
+                    onClick={() => setShowInactive((v) => !v)}
+                    className="text-xs text-gray-400 hover:text-gray-600"
+                  >
+                    {showInactive ? "Hide inactive" : "Show inactive"}
+                  </button>
+                </div>
               </div>
 
               {/* Staff list */}
