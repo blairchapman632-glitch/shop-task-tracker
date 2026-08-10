@@ -625,6 +625,8 @@ export default function HomePage() {
   const [todayDeliveries, setTodayDeliveries] = useState([]);
   const [showDeliveriesModal, setShowDeliveriesModal] = useState(false);
   const [completingDelivery, setCompletingDelivery] = useState(null);
+  const [hireDueBack, setHireDueBack] = useState([]);
+  const [showHireModal, setShowHireModal] = useState(false);
   const [approvalReminderIds, setApprovalReminderIds] = useState(new Set());
   const [unreadByStaff, setUnreadByStaff] = useState({}); // staffId -> unread message count
   const [leaveUpdateIds, setLeaveUpdateIds] = useState(new Set()); // staff with unseen leave status changes
@@ -882,6 +884,21 @@ export default function HomePage() {
   useEffect(() => {
     if (!authChecked || !currentPharmacyId) return;
     loadTodayDeliveries();
+  }, [authChecked, currentPharmacyId]);
+
+  // ── Hire equipment due back today or overdue (from Hire Book app) ──
+  useEffect(() => {
+    if (!authChecked || !currentPharmacyId) return;
+    const loadHireDueBack = async () => {
+      try {
+        const res = await fetch("/api/hire-due-back");
+        const data = await res.json();
+        setHireDueBack(Array.isArray(data.hires) ? data.hires : []);
+      } catch (err) {
+        console.error("Hire due-back load failed:", err);
+      }
+    };
+    loadHireDueBack();
   }, [authChecked, currentPharmacyId]);
   // ── Wage approval reminders ──
   useEffect(() => {
@@ -1605,10 +1622,10 @@ const handleDeliveryTap = async (d) => {
                   </div>
 
                   {/* On the List section */}
-                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped")) && (
+                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped") || hireDueBack.length > 0) && (
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">On the List</div>
+                        <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">Today's Jobs</div>
                         <span className="text-[11px] font-semibold text-orange-600">{monthlyDone}/{monthlyTotal} ({monthlyPct}%)</span>
                       </div>
                       <div className="w-full bg-orange-50 rounded-full h-1 mb-2">
@@ -1637,6 +1654,20 @@ const handleDeliveryTap = async (d) => {
                             </button>
                           );
                         })()}
+                        {hireDueBack.length > 0 && (
+                          <button
+                            onClick={() => setShowHireModal(true)}
+                            className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-red-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
+                          >
+                            <div className="flex items-start justify-between gap-2 mb-1">
+                              <div className="font-semibold text-sm leading-tight flex-1 text-gray-800">📦 Hire Returns</div>
+                            </div>
+                            <div className="text-xs text-red-600 font-medium mb-1">
+                              {hireDueBack.length} due back
+                            </div>
+                            <div className="text-[10px] text-gray-400">Tap to follow up</div>
+                          </button>
+                        )}
                         {monthlyTasks.map((task) => {
                           const isWeekly = task.frequency === "weekly";
                           const isDone = isWeekly
@@ -2522,6 +2553,58 @@ const handleDeliveryTap = async (d) => {
                 <Link href="/deliveries" className="text-xs text-blue-600 hover:underline">
                   Open Deliveries page →
                 </Link>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+      {/* Hire Returns modal */}
+      {showHireModal && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setShowHireModal(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+                <h2 className="font-semibold text-gray-800">📦 Hire Equipment Due Back</h2>
+                <button onClick={() => setShowHireModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="px-5 py-4 overflow-y-auto space-y-2">
+                {hireDueBack.map((h) => {
+                  const due = h.due_date
+                    ? new Date(h.due_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" })
+                    : "";
+                  return (
+                    <div
+                      key={h.agreement_no}
+                      className={`pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${h.overdue ? "border-l-red-500" : "border-l-orange-400"} bg-white shadow-sm`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-sm text-gray-800">{h.item || "Equipment"}</div>
+                          <div className="text-xs text-gray-600">{h.customer_name}</div>
+                          {h.phone && <div className="text-xs text-gray-500">{h.phone}</div>}
+                        </div>
+                        <div className="shrink-0 text-right">
+                          {h.overdue ? (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-medium">Overdue</span>
+                          ) : (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">Due today</span>
+                          )}
+                          <div className="text-[10px] text-gray-400 mt-1">Due {due}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {hireDueBack.length === 0 && (
+                  <div className="text-sm text-gray-400 text-center py-4">Nothing due back.</div>
+                )}
+              </div>
+              <div className="px-5 py-3 border-t shrink-0">
+                <a href="https://byford-hire.vercel.app" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+                  Open Hire Book →
+                </a>
               </div>
             </div>
           </div>
