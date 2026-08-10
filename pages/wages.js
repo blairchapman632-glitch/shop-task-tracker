@@ -445,6 +445,7 @@ export default function WagesPage() {
   const [rows, setRows] = useState([]);
   const [approvals, setApprovals] = useState(new Set());
   const [notes, setNotes] = useState({}); // staffId -> wage_notes row
+  const [kmByStaff, setKmByStaff] = useState({}); // staffId -> total own-car km
   const [approveRow, setApproveRow] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [expandedKey, setExpandedKey] = useState(null);
@@ -487,7 +488,7 @@ export default function WagesPage() {
       const startISO = toISO(period.start);
       const endISO = toISO(period.end);
 
-      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: noteData }, { data: leaveData }] = await Promise.all([
+      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: noteData }, { data: leaveData }, { data: runData }] = await Promise.all([
         supabase.from("roster_shifts").select("id, shift_date, start_time, end_time, role, staff_id, staff_name").gte("shift_date", startISO).lte("shift_date", endISO),
         supabase.from("staff").select("id, name, role, employment_type, contracted_hours, active, schedule_type, weekly_schedule, week_ab_schedule, no_lunch_deduction").eq("pharmacy_id", PHARMACY_ID),
         supabase.from("public_holidays").select("date, name").eq("pharmacy_id", PHARMACY_ID).gte("date", startISO).lte("date", endISO),
@@ -495,6 +496,7 @@ export default function WagesPage() {
         supabase.from("wage_notes").select("*").eq("pharmacy_id", PHARMACY_ID).eq("period_start", startISO),
         // Approved leave overlapping this pay period
         supabase.from("leave_requests").select("*").eq("status", "approved").lte("from_date", endISO).gte("to_date", startISO),
+        supabase.from("delivery_runs").select("driver_staff_id, total_km, own_car").eq("pharmacy_id", PHARMACY_ID).eq("own_car", true).gte("run_date", startISO).lte("run_date", endISO),
       ]);
 
       // Load edits for these shifts
@@ -513,6 +515,13 @@ export default function WagesPage() {
       setStaff(staffData || []);
       setApprovals(new Set((appr || []).map((a) => a.staff_id)));
       setNotes(Object.fromEntries((noteData || []).map((n) => [String(n.staff_id), n])));
+
+      const kmMap = {};
+      (runData || []).forEach((r) => {
+        const key = String(r.driver_staff_id);
+        kmMap[key] = (kmMap[key] || 0) + Number(r.total_km || 0);
+      });
+      setKmByStaff(kmMap);
 
       const built = buildWageRows({
         period,
@@ -594,6 +603,7 @@ export default function WagesPage() {
           "Annual Leave hrs": annual,
           "OT hrs": Number(r.ot.toFixed(2)),
           "Total hrs": Number(r.total.toFixed(2)),
+          "Own-car km": Number((kmByStaff[String(r.staffId)] || 0).toFixed(1)),
           Notes: combinedNote,
         };
       });
@@ -757,6 +767,15 @@ export default function WagesPage() {
                                   </div>
                                   );
                                 })}
+                              </div>
+                            )}
+                            {kmByStaff[String(r.staffId)] > 0 && (
+                              <div className="mt-3 pt-3 border-t border-gray-200">
+                                <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Own-car travel</div>
+                                <div className="text-sm text-gray-700">
+                                  🚗 {kmByStaff[String(r.staffId)]} km this period
+                                  <span className="text-xs text-gray-400 ml-2">(travel allowance)</span>
+                                </div>
                               </div>
                             )}
                             <NotesBlock

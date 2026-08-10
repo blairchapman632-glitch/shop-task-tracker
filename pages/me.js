@@ -1520,6 +1520,10 @@ function DeliveriesTab({ staff }) {
   const [rows, setRows] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [saving, setSaving] = useState(null);
+  const [ownCar, setOwnCar] = useState(false);
+  const [kmText, setKmText] = useState("");
+  const [savingRun, setSavingRun] = useState(false);
+  const [runSaved, setRunSaved] = useState(false);
 
   const dateISO = (() => {
     const d = new Date();
@@ -1575,6 +1579,18 @@ function DeliveriesTab({ staff }) {
       }));
 
     setRows([...real, ...virtual].sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999)));
+
+    const { data: runData } = await supabase
+      .from("delivery_runs")
+      .select("*")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .eq("run_date", dateISO)
+      .eq("driver_staff_id", staff.id)
+      .maybeSingle();
+    setOwnCar(runData?.own_car || false);
+    setKmText(runData?.total_km != null ? String(runData.total_km) : "");
+    setRunSaved(false);
+
     setLoading(false);
   };
 
@@ -1656,6 +1672,22 @@ function DeliveriesTab({ staff }) {
 
   const undo = (d) =>
     update(d, { status: "pending", delivered_at: null, delivered_by: null, outcome_note: null });
+
+  const saveRun = async () => {
+    setSavingRun(true);
+    const { error } = await supabase.from("delivery_runs").upsert({
+      pharmacy_id: PHARMACY_ID,
+      run_date: dateISO,
+      driver_staff_id: staff.id,
+      own_car: ownCar,
+      total_km: ownCar && kmText ? Number(kmText) : 0,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "pharmacy_id,run_date,driver_staff_id" });
+    setSavingRun(false);
+    if (error) { alert("Couldn't save: " + error.message); return; }
+    setRunSaved(true);
+    setTimeout(() => setRunSaved(false), 3000);
+  };
 
   const done = rows.filter((r) => r.status !== "pending").length;
   const dateLabel = new Date(dateISO + "T00:00:00").toLocaleDateString("en-AU", {
@@ -1824,6 +1856,47 @@ function DeliveriesTab({ staff }) {
           })}
         </>
       )}
+
+      {!loading && dayOffset <= 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border p-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={ownCar}
+              onChange={(e) => setOwnCar(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            <span className="text-sm font-medium text-gray-700">I used my own car for this run</span>
+          </label>
+          {ownCar && (
+            <div className="mt-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Total km travelled</label>
+              <input
+                type="number"
+                step="0.1"
+                inputMode="decimal"
+                value={kmText}
+                onChange={(e) => setKmText(e.target.value)}
+                placeholder="e.g. 24"
+                className="w-full border rounded-xl px-3 py-3 text-base"
+              />
+            </div>
+          )}
+          <button
+            onClick={saveRun}
+            disabled={savingRun}
+            style={{ touchAction: "manipulation" }}
+            className="mt-3 w-full min-h-[48px] bg-blue-600 text-white rounded-xl text-sm font-medium disabled:opacity-40"
+          >
+            {savingRun ? "Saving…" : "Save"}
+          </button>
+          {runSaved && (
+            <div className="mt-2 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-center text-sm text-green-700 font-medium">
+              ✅ Saved. Your km will show in Wages for review.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1888,6 +1961,7 @@ function WagesTab({ staff }) {
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [noteSaved, setNoteSaved] = useState(false);
+  const [periodKm, setPeriodKm] = useState(0);
 
   useEffect(() => {
     supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", PHARMACY_ID).single()
@@ -1914,13 +1988,14 @@ function WagesTab({ staff }) {
       const startISO = toISO(period.start);
       const endISO = toISO(period.end);
 
-      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: noteData }, { data: leaveData }] = await Promise.all([
+      const [{ data: shifts }, { data: staffData }, { data: holidays }, { data: appr }, { data: noteData }, { data: leaveData }, { data: runData }] = await Promise.all([
         supabase.from("roster_shifts").select("id, shift_date, start_time, end_time, role, staff_id, staff_name").gte("shift_date", startISO).lte("shift_date", endISO),
         supabase.from("staff").select("id, name, role, employment_type, contracted_hours, active, schedule_type, weekly_schedule, week_ab_schedule, no_lunch_deduction").eq("pharmacy_id", PHARMACY_ID),
         supabase.from("public_holidays").select("date, name").eq("pharmacy_id", PHARMACY_ID).gte("date", startISO).lte("date", endISO),
         supabase.from("wage_approvals").select("staff_id").eq("pharmacy_id", PHARMACY_ID).eq("period_start", startISO).eq("staff_id", staff.id),
         supabase.from("wage_notes").select("*").eq("pharmacy_id", PHARMACY_ID).eq("period_start", startISO).eq("staff_id", staff.id).maybeSingle(),
         supabase.from("leave_requests").select("*").eq("status", "approved").lte("from_date", endISO).gte("to_date", startISO),
+        supabase.from("delivery_runs").select("total_km").eq("pharmacy_id", PHARMACY_ID).eq("driver_staff_id", staff.id).eq("own_car", true).gte("run_date", startISO).lte("run_date", endISO),
       ]);
 
       const shiftIds = (shifts || []).map((s) => s.id);
@@ -1937,6 +2012,7 @@ function WagesTab({ staff }) {
       const built = buildWageRows({ period, staffData, shifts, holidays, editsByShift, sickByShift, leaveData });
       const mine = built.find((r) => r.staffId === staff.id) || null;
       setRow(mine);
+      setPeriodKm((runData || []).reduce((sum, r) => sum + Number(r.total_km || 0), 0));
       setApproved((appr || []).length > 0);
       setNoteRow(noteData || null);
       setNoteText(noteData?.staff_note || "");
@@ -2069,6 +2145,11 @@ function WagesTab({ staff }) {
           {/* Note to manager */}
           <div className="bg-white rounded-2xl shadow-sm border p-5">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Note for this pay period</div>
+            {periodKm > 0 && (
+              <div className="mb-3 rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-sm text-gray-700">
+                🚗 {periodKm} km logged from own-car deliveries this period.
+              </div>
+            )}
             <p className="text-xs text-gray-400 mb-3">Anything the manager should know — e.g. used your car for a delivery run.</p>
             <textarea
               value={noteText}
