@@ -4,6 +4,7 @@ import { useRouter } from "next/router";
 import { createPortal } from "react-dom";
 import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
+import Avatar from "../components/Avatar";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -192,7 +193,7 @@ function ChangePINModal({ staff, onClose }) {
                     onClick={() => handleSelectStaff(s)}
                     className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-left"
                   >
-                    <img src={s.photo_url || "/placeholder.png"} alt={s.name} className="w-8 h-8 rounded-full object-cover" />
+                    <Avatar name={s.name} photoUrl={s.photo_url} className="w-8 h-8 rounded-full" />
                     <span className="text-sm font-medium text-gray-800">{s.name}</span>
                   </button>
                 ))}
@@ -201,7 +202,7 @@ function ChangePINModal({ staff, onClose }) {
           ) : (
             <div className="px-5 py-4 space-y-3">
               <div className="flex items-center gap-3 mb-2">
-                <img src={selectedStaff.photo_url || "/placeholder.png"} alt={selectedStaff.name} className="w-8 h-8 rounded-full object-cover" />
+                <Avatar name={selectedStaff.name} photoUrl={selectedStaff.photo_url} className="w-8 h-8 rounded-full" />
                 <span className="text-sm font-medium text-gray-800">{selectedStaff.name}</span>
                 <button onClick={() => { setStep(1); setError(""); setCurrentPin(""); setNewPin(""); setConfirmPin(""); }} className="ml-auto text-xs text-blue-600 hover:underline">Change</button>
               </div>
@@ -932,17 +933,19 @@ export default function HomePage() {
         const [{ data: periodShifts }, { data: appr }, { data: staffTypes }] = await Promise.all([
           supabase.from("roster_shifts").select("staff_id, shift_date").gte("shift_date", periodStartISO).lte("shift_date", periodEndISO).not("staff_id", "is", null),
           supabase.from("wage_approvals").select("staff_id").eq("pharmacy_id", currentPharmacyId).eq("period_start", periodStartISO),
-          supabase.from("staff").select("id, employment_type").eq("pharmacy_id", currentPharmacyId),
+          supabase.from("staff").select("id, employment_type, role").eq("pharmacy_id", currentPharmacyId),
         ]);
 
         const approvedIds = new Set((appr || []).map((a) => a.staff_id));
         const salaryIds = new Set((staffTypes || []).filter((s) => s.employment_type === "Salary").map((s) => s.id));
+        const locumIds = new Set((staffTypes || []).filter((s) => s.role === "Locum").map((s) => s.id));
 
         // Per staff: latest shift date that is <= deadline (salary staff don't confirm hours)
         const lastShiftBeforeDeadline = {};
         for (const sh of periodShifts || []) {
           if (sh.shift_date > deadlineISO) continue;
           if (salaryIds.has(sh.staff_id)) continue;
+          if (locumIds.has(sh.staff_id)) continue;
           const sid = sh.staff_id;
           if (!lastShiftBeforeDeadline[sid] || sh.shift_date > lastShiftBeforeDeadline[sid]) {
             lastShiftBeforeDeadline[sid] = sh.shift_date;
@@ -1871,11 +1874,10 @@ const handleDeliveryTap = async (d) => {
                     )}
                     
                     
-                    <img
-                      src={s.photo_url || "/placeholder.png"}
-                      alt={s.name}
-                      className="w-14 h-14 rounded-full object-cover"
-                      loading="lazy"
+                    <Avatar
+                      name={s.name}
+                      photoUrl={s.photo_url}
+                      className="w-14 h-14 rounded-full"
                     />
                     <span className="text-[11px] mt-1 text-center max-w-[72px] truncate text-gray-700 font-medium">{s.name}</span>
                     {s.start_time && s.end_time && (
@@ -2034,7 +2036,7 @@ const handleDeliveryTap = async (d) => {
                       ref={(el) => { if (el) noteItemRefs.current[n.id] = el; }}
                       className={`flex items-start gap-2 rounded-lg ${n.resolved ? "bg-gray-50 border border-gray-200 px-2 py-1.5 border-l-4 border-l-gray-300" : ""}`}
                     >
-                      <img src={author?.photo_url || "/placeholder.png"} alt={author?.name || "Staff"} className="w-8 h-8 rounded-full object-cover mt-0.5 shrink-0" loading="lazy" />
+                      <Avatar name={author?.name} photoUrl={author?.photo_url} className="w-8 h-8 rounded-full mt-0.5 shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-medium">{author?.name ?? "Someone"}</span>
@@ -2125,7 +2127,7 @@ const handleDeliveryTap = async (d) => {
                                           const who = staffById[r.staff_id];
                                           return (
                                             <div key={r.id} className="flex items-start gap-2">
-                                              <img src={who?.photo_url || "/placeholder.png"} alt={who?.name || "Staff"} className="w-6 h-6 rounded-full object-cover mt-0.5" loading="lazy" />
+                                              <Avatar name={who?.name} photoUrl={who?.photo_url} className="w-6 h-6 rounded-full mt-0.5" style={{ fontSize: "0.7rem" }} />
                                               <div className="min-w-0 flex-1">
                                                 <div className="flex items-center gap-2">
                                                   <span className="text-[12px] font-medium">{who?.name ?? "Someone"}</span>

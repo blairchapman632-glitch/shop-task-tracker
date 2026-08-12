@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import supabase from "../lib/supabaseClient";
+import Avatar from "../components/Avatar";
 
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -405,10 +406,10 @@ function StaffForm({ member, onSave, onCancel }) {
 
         {/* Photo */}
         <div className="flex items-center gap-4">
-          <img
-            src={form.photo_url || "/placeholder.png"}
-            alt="Photo"
-            className="w-16 h-16 rounded-full object-cover border"
+          <Avatar
+            name={form.name}
+            photoUrl={form.photo_url}
+            className="w-16 h-16 rounded-full border"
           />
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Photo</label>
@@ -962,6 +963,7 @@ function LocumForm({ member, onSave, onCancel }) {
     phone: member?.phone || "",
     address: member?.address || "",
     ahpra_number: member?.ahpra_number || "",
+    photo_url: member?.photo_url || "",
     pdl_cert: member?.pdl_cert ?? false,
     hourly_rate: member?.hourly_rate || "",
     rate_weekday: member?.rate_weekday ?? 70,
@@ -991,10 +993,31 @@ function LocumForm({ member, onSave, onCancel }) {
   const [documents, setDocuments] = useState([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [copiedBookings, setCopiedBookings] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPhoto(true);
+    setError("");
+    const ext = file.name.split(".").pop();
+    const filename = `locum_${(form.name.toLowerCase().replace(/[^a-z0-9]+/g, "_") || "new")}_${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from("staff-photos")
+      .upload(filename, file, { upsert: true });
+    if (upErr) {
+      setError("Photo upload failed: " + upErr.message);
+      setUploadingPhoto(false);
+      return;
+    }
+    const { data: urlData } = supabase.storage.from("staff-photos").getPublicUrl(filename);
+    set("photo_url", urlData.publicUrl);
+    setUploadingPhoto(false);
+  };
 
   useEffect(() => {
     if (!member?.id) return;
@@ -1031,7 +1054,7 @@ function LocumForm({ member, onSave, onCancel }) {
       phone: form.phone.trim() || null,
       address: form.address.trim() || null,
       ahpra_number: form.ahpra_number.trim() || null,
-      
+      photo_url: form.photo_url || null,
       hourly_rate: form.hourly_rate ? Number(form.hourly_rate) : null,
       rate_weekday: form.rate_weekday ? Number(form.rate_weekday) : 70,
       rate_saturday: form.rate_saturday ? Number(form.rate_saturday) : 75,
@@ -1162,6 +1185,16 @@ function LocumForm({ member, onSave, onCancel }) {
         <div>
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Professional</div>
           <div className="space-y-3">
+            <div className="flex items-center gap-4">
+              <Avatar name={form.name} photoUrl={form.photo_url} className="w-16 h-16 rounded-full border" />
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Photo</label>
+                <label className="cursor-pointer inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
+                  {uploadingPhoto ? "Uploading…" : "Upload photo"}
+                  <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} disabled={uploadingPhoto} />
+                </label>
+              </div>
+            </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
               <input value={form.name} onChange={(e) => set("name", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="Full name" />
@@ -1802,9 +1835,7 @@ function LocumsTab() {
           ) : (
             visible.map((s) => (
               <button key={s.id} onClick={() => { setSelected(s); setFormKey((k) => k + 1); }} className={`w-full flex items-center gap-3 px-3 py-2.5 border-b hover:bg-gray-50 text-left ${selected?.id === s.id ? "bg-blue-50" : ""}`}>
-                <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-semibold text-sm shrink-0">
-                  {s.name.charAt(0)}
-                </div>
+                <Avatar name={s.name} photoUrl={s.photo_url} className="w-9 h-9 rounded-full shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-gray-800 truncate">{s.name}</div>
                   <div className="text-xs text-gray-400 truncate">{s.ahpra_number || "No AHPRA"}{s.hourly_rate ? ` · $${s.hourly_rate}/hr` : ""}</div>
@@ -2009,10 +2040,10 @@ export default function AdminPage() {
                         onClick={() => { setSelected(s); setFormKey((k) => k + 1); }}
                         className={`w-full flex items-center gap-3 px-3 py-2.5 border-b hover:bg-gray-50 text-left transition-colors ${isSelected ? "bg-blue-50" : ""}`}
                       >
-                        <img
-                          src={s.photo_url || "/placeholder.png"}
-                          alt={s.name}
-                          className="w-9 h-9 rounded-full object-cover shrink-0"
+                        <Avatar
+                          name={s.name}
+                          photoUrl={s.photo_url}
+                          className="w-9 h-9 rounded-full shrink-0"
                         />
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-gray-800 truncate">{s.name}</div>
