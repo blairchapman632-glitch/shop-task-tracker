@@ -794,6 +794,11 @@ function NotesTab({ staff }) {
   const [pollsByNote, setPollsByNote] = useState({});
   const [customOptDraft, setCustomOptDraft] = useState({});
   const [customOptSaving, setCustomOptSaving] = useState(null);
+  const [showPollComposer, setShowPollComposer] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState("");
+  const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [pollAllowCustom, setPollAllowCustom] = useState(false);
+  const [pollSaving, setPollSaving] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -878,6 +883,33 @@ function NotesTab({ staff }) {
       alert("Couldn't post note: " + (err?.message || String(err)));
     } finally {
       setPosting(false);
+    }
+  };
+
+  const createPoll = async () => {
+    const q = pollQuestion.trim();
+    const opts = pollOptions.map((o) => o.trim()).filter(Boolean);
+    if (!q) { alert("Enter a poll question."); return; }
+    if (opts.length < 2) { alert("Add at least 2 options."); return; }
+    setPollSaving(true);
+    try {
+      const { data: note, error: noteErr } = await supabase.from("kiosk_notes")
+        .insert({ body: q, poll_question: q, type: "poll", allow_custom_options: pollAllowCustom, staff_id: Number(me.id), deleted: false, last_activity_at: new Date().toISOString(), pharmacy_id: PHARMACY_ID })
+        .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, type, poll_question, allow_custom_options").single();
+      if (noteErr) throw noteErr;
+      const optRows = opts.map((label, i) => ({ kiosk_note_id: note.id, pharmacy_id: PHARMACY_ID, label, display_order: i }));
+      const { data: savedOpts, error: optErr } = await supabase.from("poll_options").insert(optRows).select("id, kiosk_note_id, label, display_order, added_by_staff_id");
+      if (optErr) throw optErr;
+      setNotes((prev) => [note, ...prev]);
+      setPollsByNote((prev) => ({ ...prev, [note.id]: { options: savedOpts || [], votes: [] } }));
+      setPollQuestion("");
+      setPollOptions(["", ""]);
+      setPollAllowCustom(false);
+      setShowPollComposer(false);
+    } catch (err) {
+      alert("Couldn't create poll: " + (err?.message || String(err)));
+    } finally {
+      setPollSaving(false);
     }
   };
 
@@ -1141,10 +1173,71 @@ function NotesTab({ staff }) {
           className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
         />
-        <button onClick={postNote} disabled={!noteText.trim() || posting} className="rounded-lg px-3 py-2 text-sm font-medium bg-blue-600 text-white disabled:opacity-40">
-          {posting ? "…" : "Post"}
-        </button>
+        <div className="flex flex-col gap-1">
+          <button onClick={postNote} disabled={!noteText.trim() || posting} className="rounded-lg px-3 py-2 text-sm font-medium bg-blue-600 text-white disabled:opacity-40">
+            {posting ? "…" : "Post"}
+          </button>
+          <button
+            onClick={() => setShowPollComposer((o) => !o)}
+            className={`rounded-lg px-3 py-2 text-sm font-medium border transition-colors ${showPollComposer ? "border-purple-600 bg-purple-600 text-white" : "border-purple-300 bg-white text-purple-700 hover:bg-purple-50"}`}
+          >
+            📊 Poll
+          </button>
+        </div>
       </div>
+
+      {/* Poll composer */}
+      {showPollComposer && (
+        <div className="bg-purple-50 rounded-2xl border border-purple-200 p-3 space-y-2">
+          <input
+            type="text"
+            value={pollQuestion}
+            onChange={(e) => setPollQuestion(e.target.value)}
+            maxLength={200}
+            placeholder="Poll question…"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-300"
+          />
+          {pollOptions.map((opt, i) => (
+            <div key={i} className="flex gap-2 items-center">
+              <input
+                type="text"
+                value={opt}
+                onChange={(e) => setPollOptions((prev) => prev.map((o, idx) => idx === i ? e.target.value : o))}
+                maxLength={100}
+                placeholder={`Option ${i + 1}`}
+                className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-300"
+              />
+              {pollOptions.length > 2 && (
+                <button
+                  onClick={() => setPollOptions((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="h-7 w-7 inline-flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-200"
+                >✕</button>
+              )}
+            </div>
+          ))}
+          <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={pollAllowCustom}
+              onChange={(e) => setPollAllowCustom(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-gray-300"
+            />
+            Let staff add their own options
+          </label>
+          <div className="flex items-center justify-between">
+            {pollOptions.length < 4 ? (
+              <button onClick={() => setPollOptions((prev) => [...prev, ""])} className="text-xs text-purple-700 hover:underline">+ Add option</button>
+            ) : <span />}
+            <button
+              onClick={createPoll}
+              disabled={pollSaving || !pollQuestion.trim() || pollOptions.filter((o) => o.trim()).length < 2}
+              className="rounded-lg px-4 py-1.5 text-xs font-medium bg-purple-600 text-white disabled:opacity-40"
+            >
+              {pollSaving ? "Creating…" : "Create poll"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-sm text-gray-400 text-center mt-6">Loading notes…</div>

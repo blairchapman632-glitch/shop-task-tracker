@@ -1958,7 +1958,7 @@ const handleDeliveryTap = async (d) => {
                 >
                   {notesSaving ? "..." : "Post"}
                 </button>
-                {selectedStaff?.can_access_admin && (
+                {selectedStaffId && (
                   <button
                     onClick={() => setShowPollComposer((o) => !o)}
                     className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${showPollComposer ? "border-purple-600 bg-purple-600 text-white" : "border-purple-300 bg-white text-purple-700 hover:bg-purple-50"}`}
