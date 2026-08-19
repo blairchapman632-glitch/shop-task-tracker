@@ -771,6 +771,8 @@ export default function HomePage() {
             if (task.specific_date?.slice(0, 10) !== todayStr) return false;
           }
           // monthly_anytime → no date gate, shows all month
+          // ...but hide it once it's been completed this month
+          if (freq === "monthly_anytime" && monthlyCompMap[task.id]) return false;
 
           // Assignment gate — who is rostered
           // Role-based — show if anyone in that role is rostered today
