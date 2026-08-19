@@ -773,11 +773,11 @@ function StaffForm({ member, onSave, onCancel }) {
           </div>
         </div>
 
-        {/* Onboarding link — existing staff only, for collecting payroll details */}
+        {/* Onboarding / details link — existing staff, for collecting or updating payroll details */}
         {!isNew && member?.onboarding_token && (
           <div className="border rounded-lg p-3 bg-amber-50 border-amber-100">
-            <div className="text-xs font-semibold text-amber-700 mb-1">📋 Onboarding Link</div>
-            <div className="text-[11px] text-amber-600 mb-2">Send this to a new staff member to collect their payroll details.</div>
+            <div className="text-xs font-semibold text-amber-700 mb-1">📋 Details Link</div>
+            <div className="text-[11px] text-amber-600 mb-2">Send this to the staff member to collect or update their payroll details (e.g. new bank account).</div>
             <div className="text-[11px] text-amber-600 break-all mb-2">
               {typeof window !== "undefined" ? `${window.location.origin}/staff-onboard?token=${member.onboarding_token}` : ""}
             </div>
