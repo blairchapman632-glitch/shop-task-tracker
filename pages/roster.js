@@ -268,7 +268,9 @@ const selectedDayShifts = selectedDate
       const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
       const dayShifts = monthShifts.filter((s) => s.shift_date === dateStr);
       if (dayShifts.length === 0) {
-        issues.push({ key: `nostaff:${dateStr}`, type: "nostaff", date: dateStr, shift: null, label: "No staff rostered", sub: new Date(dateStr + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long" }) });
+        if (!holidayDates.has(dateStr)) {
+          issues.push({ key: `nostaff:${dateStr}`, type: "nostaff", date: dateStr, shift: null, label: "No staff rostered", sub: new Date(dateStr + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long" }) });
+        }
       } else {
         const hasPharmacist = dayShifts.some((s) => s.role === "Pharmacist" || s.role === "Locum");
         if (!hasPharmacist) {
@@ -885,6 +887,7 @@ const refreshLeave = useCallback(async () => {
         date: newHolidayDate,
         name: newHolidayName.trim(),
         image_key: newHolidayKey,
+        pharmacy_id: pharmacyId,
       }]);
       if (error) throw error;
       const { data } = await supabase.from("public_holidays").select("*");
