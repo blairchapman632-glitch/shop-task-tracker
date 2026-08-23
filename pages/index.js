@@ -902,6 +902,8 @@ export default function HomePage() {
       }
     };
     loadHireDueBack();
+    const interval = setInterval(loadHireDueBack, 30000);
+    return () => clearInterval(interval);
   }, [authChecked, currentPharmacyId]);
   // ── Wage approval reminders ──
   useEffect(() => {
@@ -2588,6 +2590,11 @@ const handleDeliveryTap = async (d) => {
                           <div className="font-medium text-sm text-gray-800">{h.item || "Equipment"}</div>
                           <div className="text-xs text-gray-600">{h.customer_name}</div>
                           {h.phone && <div className="text-xs text-gray-500">{h.phone}</div>}
+                          {h.notes && (
+                            <div className="mt-1 text-xs text-gray-700 bg-amber-50 border border-amber-100 rounded px-2 py-1 whitespace-pre-wrap">
+                              📝 {h.notes}
+                            </div>
+                          )}
                         </div>
                         <div className="shrink-0 text-right">
                           {h.overdue ? (
