@@ -394,6 +394,44 @@ function TimeOffTab({ staff }) {
   const handleSubmitLeave = async () => {
     if (!leaveFrom || !leaveTo) { alert("Please choose dates."); return; }
     if (leaveTo < leaveFrom) { alert("End date can't be before start date."); return; }
+
+    // Warn (don't block) if another staff member of the same role already has
+    // pending or approved leave overlapping these dates.
+    try {
+      const pharmacistRoles = ["Pharmacist", "Intern Pharmacist"];
+      const myRole = staff.role;
+      const roleGroup = pharmacistRoles.includes(myRole) ? pharmacistRoles : [myRole];
+
+      const { data: sameRoleStaff } = await supabase
+        .from("staff").select("id, name")
+        .eq("pharmacy_id", PHARMACY_ID)
+        .in("role", roleGroup)
+        .neq("id", staff.id);
+      const sameRoleIds = (sameRoleStaff || []).map((s) => s.id);
+      const nameById = Object.fromEntries((sameRoleStaff || []).map((s) => [s.id, s.name]));
+
+      if (sameRoleIds.length) {
+        const { data: clashes } = await supabase
+          .from("leave_requests")
+          .select("staff_id, from_date, to_date, status")
+          .in("staff_id", sameRoleIds)
+          .in("status", ["pending", "approved"])
+          .lte("from_date", leaveTo)
+          .gte("to_date", leaveFrom);
+        if (clashes && clashes.length) {
+          const who = [...new Set(clashes.map((c) => nameById[c.staff_id]).filter(Boolean))].join(", ");
+          const roleLabel = pharmacistRoles.includes(myRole) ? "pharmacist" : (myRole || "staff member").toLowerCase();
+          const ok = window.confirm(
+            `⚠️ Another ${roleLabel} (${who}) already has leave on some of these dates.\n\nYour request may not be approved. Submit anyway?`
+          );
+          if (!ok) return;
+        }
+      }
+    } catch (err) {
+      // If the check fails for any reason, don't block the submission.
+      console.error("Leave clash check failed:", err);
+    }
+
     setSavingLeave(true);
     try {
       const partial = !leaveAllDay && !isMultiDay;

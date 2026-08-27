@@ -437,7 +437,12 @@ function RosterModal({ onClose }) {
     if (!publishedMonths[monthIndex]) return;
     const m = publishedMonths[monthIndex];
     const start = m.month;
-    const end = new Date(new Date(start).getFullYear(), new Date(start).getMonth() + 1, 1).toISOString().slice(0, 10);
+    // Build the end boundary from the date parts directly — avoid new Date(string)+toISOString,
+    // which shifts by a day in +08:00 and drops the last day of the month (e.g. 31 Aug).
+    const [sy, sm] = start.split("-").map(Number);
+    const endYear = sm === 12 ? sy + 1 : sy;
+    const endMonth = sm === 12 ? 1 : sm + 1;
+    const end = `${endYear}-${String(endMonth).padStart(2, "0")}-01`;
     supabase.from("roster_shifts")
       .select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, staff:staff_id(id, name)`)
       .gte("shift_date", start)
