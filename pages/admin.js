@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
+import { getLeaveCover } from "../lib/leaveCover";
 
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -1740,6 +1741,10 @@ function LocumsTab() {
   const [allBookings, setAllBookings] = useState([]);
   const [loadingBookings, setLoadingBookings] = useState(true);
   const [copiedAll, setCopiedAll] = useState(false);
+  const [coverEntries, setCoverEntries] = useState([]);
+  const [loadingCover, setLoadingCover] = useState(true);
+  const [coverMonths, setCoverMonths] = useState(3);
+  const [copiedCover, setCopiedCover] = useState(false);
 
   const loadAllBookings = async () => {
     setLoadingBookings(true);
@@ -1751,6 +1756,17 @@ function LocumsTab() {
       .order("shift_date");
     setAllBookings(data || []);
     setLoadingBookings(false);
+  };
+
+  const loadCover = async (months = coverMonths) => {
+    setLoadingCover(true);
+    const from = new Date().toISOString().slice(0, 10);
+    const toD = new Date();
+    toD.setMonth(toD.getMonth() + months);
+    const to = toD.toISOString().slice(0, 10);
+    const entries = await getLeaveCover({ fromDate: from, toDate: to });
+    setCoverEntries(entries);
+    setLoadingCover(false);
   };
 
   useEffect(() => {
@@ -1767,6 +1783,7 @@ function LocumsTab() {
     };
     load();
     loadAllBookings();
+    loadCover();
   }, []);
 
   const fmtAllDate = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
@@ -1777,6 +1794,16 @@ function LocumsTab() {
     navigator.clipboard.writeText(text);
     setCopiedAll(true);
     setTimeout(() => setCopiedAll(false), 2000);
+  };
+
+  // Only the unfilled (needs-locum) dates go into the copyable list — dates + times only
+  const coverGaps = coverEntries.filter((e) => !e.filled);
+  const handleCopyCover = () => {
+    const lines = coverGaps.map((e) => `${fmtAllDate(e.date)} · ${formatTime(e.start)} – ${formatTime(e.end)}`);
+    const text = `Shifts needing a locum\n\n${lines.join("\n")}\n\n${coverGaps.length} shift${coverGaps.length !== 1 ? "s" : ""}`;
+    navigator.clipboard.writeText(text);
+    setCopiedCover(true);
+    setTimeout(() => setCopiedCover(false), 2000);
   };
 
   const handleSave = (saved) => {
@@ -1889,6 +1916,67 @@ function LocumsTab() {
                 </div>
               )}
               <p className="text-xs text-gray-400 mt-4">Select a locum on the left to edit, or add a new one.</p>
+
+              {/* ── Locum cover needed ── */}
+              <div className="mt-8 max-w-2xl">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-gray-800">Shifts needing a locum</h3>
+                    {!loadingCover && coverGaps.length > 0 && (
+                      <span className="text-xs bg-red-100 text-red-700 rounded-full px-2 py-0.5 font-medium">{coverGaps.length}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={coverMonths}
+                      onChange={(e) => { const m = Number(e.target.value); setCoverMonths(m); loadCover(m); }}
+                      className="text-xs border rounded-lg px-2 py-1"
+                    >
+                      <option value={1}>Next 1 month</option>
+                      <option value={2}>Next 2 months</option>
+                      <option value={3}>Next 3 months</option>
+                      <option value={6}>Next 6 months</option>
+                    </select>
+                    {coverGaps.length > 0 && (
+                      <button
+                        onClick={handleCopyCover}
+                        className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${copiedCover ? "bg-green-50 border-green-200 text-green-700" : "border-gray-200 text-gray-600 hover:bg-gray-50"}`}
+                      >
+                        {copiedCover ? "✓ Copied" : "📋 Copy gap list"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 mb-3">
+                  Pharmacist leave (pending or approved) that falls on a day they'd normally work. Dates with a locum already booked are marked filled.
+                </p>
+                {loadingCover ? (
+                  <div className="text-sm text-gray-400">Loading…</div>
+                ) : coverEntries.length === 0 ? (
+                  <div className="text-sm text-gray-400">No pharmacist leave needing cover in this window.</div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {coverEntries.map((e, i) => (
+                      <div
+                        key={`${e.date}-${e.staffName}-${i}`}
+                        className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${e.filled ? "border-green-100 bg-green-50" : "border-red-100 bg-red-50"}`}
+                      >
+                        <span className="text-sm">{e.filled ? "✅" : "🔴"}</span>
+                        <div className="text-sm text-gray-700 w-48 shrink-0">{fmtAllDate(e.date)}</div>
+                        <div className="text-sm text-gray-600 w-32 shrink-0">{formatTime(e.start)} – {formatTime(e.end)}</div>
+                        <div className="text-xs text-gray-500 flex-1 min-w-0 truncate">
+                          {e.staffName} off{e.status === "pending" ? " (pending)" : ""}
+                        </div>
+                        <div className="text-xs shrink-0">
+                          {e.filled
+                            ? <span className="text-green-700 font-medium">{e.locumName}</span>
+                            : <span className="text-red-600 font-medium">Needs locum</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         ) : (

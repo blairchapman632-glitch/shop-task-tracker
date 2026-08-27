@@ -68,6 +68,13 @@ const toMinutes = (timeStr) => {
 
 const minutesToHours = (mins) => Math.round((mins / 60) * 100) / 100;
 
+// Returns a correct "YYYY-MM-01" string for the given zero-based month index,
+// rolling over into the next year when monthIndex goes past December (11).
+const monthStartStr = (year, monthIndex) => {
+  const d = new Date(year, monthIndex, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+};
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function RosterPage() {
@@ -335,7 +342,7 @@ const selectedDayShifts = selectedDate
   const refreshDayNotes = useCallback(async () => {
     const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
     const startDate = `${monthStr}-01`;
-    const endDate = `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`;
+    const endDate = monthStartStr(currentYear, currentMonth + 1);
     const { data } = await supabase.from("roster_day_notes").select("*").gte("date", startDate).lt("date", endDate);
     const map = {};
     (data || []).forEach((n) => { map[n.date] = n.note; });
@@ -402,7 +409,7 @@ const refreshLeave = useCallback(async () => {
     const load = async () => {
       const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
       const startDate = `${monthStr}-01`;
-      const endDate = `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`;
+      const endDate = monthStartStr(currentYear, currentMonth + 1);
       const monthDate = `${monthStr}-01`;
 
       const [
@@ -700,8 +707,8 @@ const refreshLeave = useCallback(async () => {
       const prevYear = prevMonth.getFullYear();
       const prevMonthIndex = prevMonth.getMonth();
       const prevMonthDate = `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-01`;
-      const targetEnd = `${currentYear}-${String(currentMonth + 2).padStart(2, "0")}-01`;
-      const prevEnd = `${prevYear}-${String(prevMonthIndex + 2).padStart(2, "0")}-01`;
+      const targetEnd = monthStartStr(currentYear, currentMonth + 1);
+      const prevEnd = monthStartStr(prevYear, prevMonthIndex + 1);
 
       // Snapshot the non-locum shifts we're about to delete, so the copy can be undone this session
       const { data: snapshot } = await supabase.from("roster_shifts")
@@ -997,7 +1004,7 @@ const refreshLeave = useCallback(async () => {
     const monthStart = `${monthStr}-01`;
     const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
     const monthLast = `${monthStr}-${String(lastDay).padStart(2, "0")}`;
-    const monthEndExclusive = `${d.getFullYear()}-${String(d.getMonth() + 2).padStart(2, "0")}-01`;
+    const monthEndExclusive = monthStartStr(d.getFullYear(), d.getMonth() + 1);
     const [{ data: pats }, { data: ovrs }, { data: mNote }, { data: leave }] = await Promise.all([
       // All ranges overlapping the viewed month
       supabase.from("availability_patterns").select("*").eq("staff_id", staffId)
