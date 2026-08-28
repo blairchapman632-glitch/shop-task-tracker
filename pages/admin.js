@@ -3,6 +3,7 @@ import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import { getLeaveCover } from "../lib/leaveCover";
+import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle } from "../lib/qspp";
 
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -214,6 +215,17 @@ function StaffForm({ member, onSave, onCancel }) {
     no_lunch_deduction: member?.no_lunch_deduction ?? false,
     is_roster_manager: member?.is_roster_manager ?? false,
     is_driver: member?.is_driver ?? false,
+    uniforms_supplied: member?.uniforms_supplied ?? "",
+    badge_supplied: member?.badge_supplied ?? false,
+    keys_supplied: member?.keys_supplied ?? false,
+    last_day: member?.last_day || "",
+    reason_for_leaving: member?.reason_for_leaving || "",
+    exit_interview_date: member?.exit_interview_date || "",
+    statement_of_service_provided: member?.statement_of_service_provided ?? false,
+    training_record_provided: member?.training_record_provided ?? false,
+    uniforms_returned: member?.uniforms_returned ?? false,
+    badge_returned: member?.badge_returned ?? false,
+    keys_returned: member?.keys_returned ?? false,
     pin: member?.pin || "",
     photo_url: member?.photo_url || "",
     weekly_schedule: member?.weekly_schedule || defaultSchedule(),
@@ -226,6 +238,16 @@ function StaffForm({ member, onSave, onCancel }) {
   const [sickDays, setSickDays] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [training, setTraining] = useState([]);
+  const [qsppAnchor, setQsppAnchor] = useState(null);
+
+  useEffect(() => {
+    supabase.from("pharmacy_settings")
+      .select("qspp_cycle_start_date")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .maybeSingle()
+      .then(({ data }) => setQsppAnchor(data?.qspp_cycle_start_date || null));
+  }, []);
 
   useEffect(() => {
     if (!member?.id) return;
@@ -239,9 +261,78 @@ function StaffForm({ member, onSave, onCancel }) {
       .eq("staff_id", member.id)
       .order("uploaded_at", { ascending: false })
       .then(({ data }) => setDocuments(data || []));
+    supabase.from("training_records")
+      .select("*")
+      .eq("staff_id", member.id)
+      .order("training_date", { ascending: false })
+      .then(({ data }) => setTraining(data || []));
   }, [member?.id]);
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
+
+  // ── Training records ──
+  const [trTopic, setTrTopic] = useState("");
+  const [trDate, setTrDate] = useState("");
+  const [trHours, setTrHours] = useState("");
+  const [trProvider, setTrProvider] = useState("");
+  const [trFile, setTrFile] = useState(null);
+  const [savingTraining, setSavingTraining] = useState(false);
+  const [trainingError, setTrainingError] = useState("");
+
+  const handleAddTraining = async () => {
+    if (!member?.id) return;
+    setTrainingError("");
+    if (!trTopic.trim()) { setTrainingError("Topic is required."); return; }
+    if (!trDate) { setTrainingError("Date is required."); return; }
+    if (trHours === "" || isNaN(Number(trHours))) { setTrainingError("Hours is required."); return; }
+    setSavingTraining(true);
+    try {
+      let certUrl = null, certName = null;
+      if (trFile) {
+        const ext = trFile.name.split(".").pop();
+        const filename = `${member.id}_${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("training-certificates")
+          .upload(filename, trFile, { upsert: true });
+        if (upErr) throw upErr;
+        const { data: urlData } = supabase.storage.from("training-certificates").getPublicUrl(filename);
+        certUrl = urlData.publicUrl;
+        certName = trFile.name;
+      }
+      const { data: rec, error: insErr } = await supabase.from("training_records").insert([{
+        pharmacy_id: PHARMACY_ID,
+        staff_id: member.id,
+        topic: trTopic.trim(),
+        training_date: trDate,
+        hours: Number(trHours),
+        provider: trProvider.trim() || null,
+        certificate_url: certUrl,
+        certificate_filename: certName,
+      }]).select().single();
+      if (insErr) throw insErr;
+      setTraining((prev) => [rec, ...prev].sort((a, b) => b.training_date.localeCompare(a.training_date)));
+      setTrTopic(""); setTrDate(""); setTrHours(""); setTrProvider(""); setTrFile(null);
+    } catch (err) {
+      setTrainingError("Couldn't save: " + (err?.message || String(err)));
+    } finally {
+      setSavingTraining(false);
+    }
+  };
+
+  const trCertPath = (url) => {
+    if (!url) return null;
+    const marker = "/training-certificates/";
+    const i = url.indexOf(marker);
+    return i === -1 ? null : url.slice(i + marker.length).split("?")[0];
+  };
+
+  const handleDeleteTraining = async (rec) => {
+    if (!window.confirm("Delete this training record?")) return;
+    const path = trCertPath(rec.certificate_url);
+    if (path) await supabase.storage.from("training-certificates").remove([path]);
+    await supabase.from("training_records").delete().eq("id", rec.id);
+    setTraining((prev) => prev.filter((r) => r.id !== rec.id));
+  };
 
   const handleDocUpload = async (file, type) => {
     if (!file || !member?.id) return;
@@ -358,6 +449,17 @@ function StaffForm({ member, onSave, onCancel }) {
       no_lunch_deduction: form.no_lunch_deduction,
       is_roster_manager: form.is_roster_manager,
       is_driver: form.is_driver,
+      uniforms_supplied: form.uniforms_supplied === "" ? null : Number(form.uniforms_supplied),
+      badge_supplied: form.badge_supplied,
+      keys_supplied: form.keys_supplied,
+      last_day: form.last_day || null,
+      reason_for_leaving: form.reason_for_leaving.trim() || null,
+      exit_interview_date: form.exit_interview_date || null,
+      statement_of_service_provided: form.statement_of_service_provided,
+      training_record_provided: form.training_record_provided,
+      uniforms_returned: form.uniforms_returned,
+      badge_returned: form.badge_returned,
+      keys_returned: form.keys_returned,
       pin: form.pin || null,
       photo_url: form.photo_url || null,
       pharmacy_id: PHARMACY_ID,
@@ -387,6 +489,8 @@ function StaffForm({ member, onSave, onCancel }) {
           { key: "profile", label: "Profile" },
           { key: "payroll", label: "Payroll" },
           { key: "documents", label: "Documents" },
+          { key: "training", label: "Training" },
+          { key: "offboarding", label: "Offboarding" },
         ].map((t) => (
           <button
             key={t.key}
@@ -584,6 +688,38 @@ function StaffForm({ member, onSave, onCancel }) {
               </button>
             </div>
           ))}
+        </div>
+
+        {/* Issued items */}
+        <div className="border-t pt-4">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Issued Items</div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Uniforms Supplied</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={form.uniforms_supplied}
+              onChange={(e) => set("uniforms_supplied", e.target.value.replace(/\D/g, ""))}
+              className="w-28 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="e.g. 3"
+            />
+          </div>
+          <div className="space-y-3 mt-3">
+            {[
+              { field: "badge_supplied", label: "Badge supplied" },
+              { field: "keys_supplied", label: "Keys supplied" },
+            ].map(({ field, label }) => (
+              <div key={field} className="flex items-center justify-between">
+                <div className="text-sm font-medium text-gray-700">{label}</div>
+                <button
+                  onClick={() => set(field, !form[field])}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form[field] ? "bg-blue-600" : "bg-gray-200"}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form[field] ? "translate-x-6" : "translate-x-1"}`} />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
 
         </div>
@@ -844,6 +980,7 @@ function StaffForm({ member, onSave, onCancel }) {
                   { type: "first_aid_cert", label: "First Aid Certificate", multi: false },
                   { type: "cpr_cert", label: "CPR Certificate", multi: false },
                   { type: "induction_checklist", label: "Induction Checklist", multi: false },
+                  { type: "confidentiality_policy", label: "Signed Confidentiality Policy", multi: false },
                   ...(isPharmacist
                     ? [
                         { type: "ahpra_cert", label: "AHPRA Certificate", multi: false },
@@ -895,6 +1032,169 @@ function StaffForm({ member, onSave, onCancel }) {
               </div>
             </>
           )}
+        </div>
+        )}
+
+        {/* ── TRAINING TAB ── */}
+        {activeTab === "training" && (
+        <div className="space-y-4">
+          {isNew ? (
+            <p className="text-xs text-gray-400">Save the staff member first, then you can add training records.</p>
+          ) : (
+            <>
+              {/* QSPP progress — pharmacy assistants only */}
+              {qsppApplies(form.role) && (() => {
+                const cycle = getCurrentCycle(qsppAnchor);
+                if (!cycle) {
+                  return (
+                    <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-700">
+                      Set a QSPP cycle start date in Settings to track training progress.
+                    </div>
+                  );
+                }
+                const done = hoursInCycle(training, cycle);
+                const pct = Math.min(100, Math.round((done / QSPP_HOURS_REQUIRED) * 100));
+                const met = done >= QSPP_HOURS_REQUIRED;
+                return (
+                  <div className="rounded-lg border border-gray-200 p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-gray-600">QSPP Training</span>
+                      <span className={`text-xs font-medium ${met ? "text-green-600" : "text-gray-700"}`}>
+                        {done} / {QSPP_HOURS_REQUIRED} hrs {met ? "✓" : ""}
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div className={`h-2 rounded-full ${met ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="text-[11px] text-gray-400 mt-1.5">Current cycle: {formatCycle(cycle)}</div>
+                  </div>
+                );
+              })()}
+
+              {/* Existing records */}
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Records {training.length > 0 && <span className="text-gray-400 font-normal">({training.length})</span>}
+              </div>
+              {training.length === 0 ? (
+                <p className="text-xs text-gray-400">No training recorded yet.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {training.map((r) => (
+                    <div key={r.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                      <div className="flex items-start gap-2">
+                        <span className="text-sm">📚</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-gray-700">{r.topic}</div>
+                          <div className="text-[11px] text-gray-500 mt-0.5">
+                            {new Date(r.training_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
+                            {" · "}{Number(r.hours)} hr{Number(r.hours) === 1 ? "" : "s"}
+                            {r.provider ? ` · ${r.provider}` : ""}
+                          </div>
+                        </div>
+                        {r.certificate_url && (
+                          <a href={r.certificate_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Certificate</a>
+                        )}
+                        <button type="button" onClick={() => handleDeleteTraining(r)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add record */}
+              <div className="border rounded-lg p-3 bg-gray-50 space-y-3">
+                <div className="text-xs font-semibold text-gray-600">Add training record</div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Topic *</label>
+                  <input value={trTopic} onChange={(e) => setTrTopic(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="e.g. Wound care workshop" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+                    <input type="date" value={trDate} onChange={(e) => setTrDate(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Hours *</label>
+                    <input type="text" inputMode="decimal" value={trHours} onChange={(e) => setTrHours(e.target.value.replace(/[^\d.]/g, ""))} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="e.g. 1.5" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Training Provider</label>
+                  <input value={trProvider} onChange={(e) => setTrProvider(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="e.g. Guild Training" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Certificate (optional)</label>
+                  <label className="flex items-center gap-2 w-full border-2 border-dashed rounded-lg px-3 py-2.5 cursor-pointer border-gray-200 hover:border-blue-300 hover:bg-blue-50">
+                    <span className="text-gray-400">📎</span>
+                    <span className="text-xs text-gray-500 truncate">{trFile ? trFile.name : "Attach certificate"}</span>
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => setTrFile(e.target.files?.[0] || null)} />
+                  </label>
+                </div>
+                {trainingError && <p className="text-sm text-red-500">{trainingError}</p>}
+                <button onClick={handleAddTraining} disabled={savingTraining} className="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
+                  {savingTraining ? "Saving…" : "Add training record"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+        )}
+
+        {/* ── OFFBOARDING TAB ── */}
+        {activeTab === "offboarding" && (
+        <div className="space-y-4">
+          <p className="text-xs text-gray-400">Complete this section when a staff member leaves. Set them to inactive on the Profile tab once finalised.</p>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Last Day of Employment</label>
+            <input
+              type="date"
+              value={form.last_day}
+              onChange={(e) => set("last_day", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Reason for Leaving</label>
+            <textarea
+              value={form.reason_for_leaving}
+              onChange={(e) => set("reason_for_leaving", e.target.value)}
+              rows={2}
+              className="w-full border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="e.g. Resignation, moved interstate"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Exit Interview Date</label>
+            <input
+              type="date"
+              value={form.exit_interview_date}
+              onChange={(e) => set("exit_interview_date", e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+
+          <div className="space-y-3 pt-1">
+            {[
+              { field: "statement_of_service_provided", label: "Statement of service provided" },
+              { field: "training_record_provided", label: "Training record provided" },
+              { field: "uniforms_returned", label: "Uniforms returned" },
+              { field: "badge_returned", label: "Badge returned" },
+              { field: "keys_returned", label: "Keys returned" },
+            ].map(({ field, label }) => (
+              <div key={field} className="flex items-center justify-between">
+                <div className="text-sm font-medium text-gray-700">{label}</div>
+                <button
+                  onClick={() => set(field, !form[field])}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form[field] ? "bg-blue-600" : "bg-gray-200"}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form[field] ? "translate-x-6" : "translate-x-1"}`} />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
         )}
 
@@ -1525,6 +1825,7 @@ function SettingsTab() {
         phone: "",
         address: "",
         payroll_start_date: "",
+        qspp_cycle_start_date: "",
         hours_monday: "",
         hours_tuesday: "",
         hours_wednesday: "",
@@ -1550,6 +1851,7 @@ function SettingsTab() {
         phone: form.phone,
         address: form.address,
         payroll_start_date: form.payroll_start_date || null,
+        qspp_cycle_start_date: form.qspp_cycle_start_date || null,
         hours_monday: form.hours_monday,
         hours_tuesday: form.hours_tuesday,
         hours_wednesday: form.hours_wednesday,
@@ -1710,6 +2012,21 @@ function SettingsTab() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* QSPP training */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">QSPP Training</h3>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Cycle Start Date</label>
+            <p className="text-xs text-gray-400 mb-2">The fixed date your 3-year QSPP cycle starts. Pharmacy assistants need 3 hours of training per year (9 hours per cycle). All future cycles are calculated automatically from this date.</p>
+            <input
+              type="date"
+              value={form.qspp_cycle_start_date || ""}
+              onChange={(e) => set("qspp_cycle_start_date", e.target.value)}
+              className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
         </div>
 
         {error && <p className="text-sm text-red-500">{error}</p>}
