@@ -2348,11 +2348,12 @@ function DocumentsTab() {
 
   useEffect(() => { load(); }, []);
 
-  const folderDocs = docs.filter(
-    (d) =>
-      d.folder_id === activeFolder &&
-      (!search.trim() || (d.title || "").toLowerCase().includes(search.trim().toLowerCase()))
-  );
+  const term = search.trim().toLowerCase();
+  const searching = term.length > 0;
+  const folderName = (id) => folders.find((f) => f.id === id)?.name || "";
+  const folderDocs = searching
+    ? docs.filter((d) => (d.title || "").toLowerCase().includes(term))
+    : docs.filter((d) => d.folder_id === activeFolder);
   const activeFolderObj = folders.find((f) => f.id === activeFolder);
 
   const storagePathFromUrl = (url) => {
@@ -2544,7 +2545,7 @@ function DocumentsTab() {
       <div className="flex-1 bg-white overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b shrink-0 gap-3">
           <h2 className="font-semibold text-gray-800 truncate">
-            {activeFolderObj?.name || "Documents"}
+            {searching ? "Search results" : activeFolderObj?.name || "Documents"}
             <span className="text-gray-400 font-normal text-sm ml-2">({folderDocs.length})</span>
           </h2>
           <div className="flex items-center gap-2 shrink-0">
@@ -2578,6 +2579,7 @@ function DocumentsTab() {
                         onBlur={(e) => e.target.value !== doc.title && handleRenameDoc(doc, e.target.value)}
                         className="w-full bg-transparent text-sm font-medium text-gray-800 focus:outline-none focus:bg-white focus:border focus:rounded px-1 py-0.5"
                       />
+                      {searching && <div className="text-[11px] text-gray-400 px-1">{folderName(doc.folder_id)}</div>}
                     </div>
                     <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Open</a>
                   </div>
