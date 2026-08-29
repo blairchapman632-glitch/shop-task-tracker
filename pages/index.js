@@ -289,6 +289,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       <NavLink href="/availability" icon="🗓️" label="Time off" />
       <NavLink href="/messages" icon="💬" label="Messages" />
       <NavLink href="/training" icon="📚" label="Training" />
+      <NavLink href="/documents" icon="📁" label="QSPP" />
       <NavLink href="/deliveries" icon="🚚" label="Deliveries" />
       <div className="border-t my-1" />
       <NavLink href="/roster" icon="📅" label="Roster" />

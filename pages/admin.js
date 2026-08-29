@@ -2308,7 +2308,311 @@ function LocumsTab() {
     </div>
   );
 }
+// ─── Documents Tab ────────────────────────────────────────────────────────────
 
+const DOC_BUCKET = "pharmacy-documents";
+const slugify = (s) =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "folder";
+
+function DocumentsTab() {
+  const [folders, setFolders] = useState([]);
+  const [docs, setDocs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeFolder, setActiveFolder] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const [newFolderName, setNewFolderName] = useState("");
+  const [addingFolder, setAddingFolder] = useState(false);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [search, setSearch] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    const { data: f } = await supabase
+      .from("document_folders")
+      .select("*")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .order("sort_order");
+    const { data: d } = await supabase
+      .from("pharmacy_documents")
+      .select("*")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .eq("active", true)
+      .order("title");
+    setFolders(f || []);
+    setDocs(d || []);
+    if (!activeFolder && f && f.length) setActiveFolder(f[0].id);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const folderDocs = docs.filter(
+    (d) =>
+      d.folder_id === activeFolder &&
+      (!search.trim() || (d.title || "").toLowerCase().includes(search.trim().toLowerCase()))
+  );
+  const activeFolderObj = folders.find((f) => f.id === activeFolder);
+
+  const storagePathFromUrl = (url) => {
+    if (!url) return null;
+    const marker = `/${DOC_BUCKET}/`;
+    const i = url.indexOf(marker);
+    return i === -1 ? null : decodeURIComponent(url.slice(i + marker.length).split("?")[0]);
+  };
+
+  const handleAddFolder = async () => {
+    if (!newFolderName.trim()) return;
+    setAddingFolder(true);
+    const maxSort = folders.reduce((m, f) => Math.max(m, f.sort_order || 0), 0);
+    const { data, error: err } = await supabase
+      .from("document_folders")
+      .insert([{ pharmacy_id: PHARMACY_ID, name: newFolderName.trim(), sort_order: maxSort + 1 }])
+      .select()
+      .single();
+    setAddingFolder(false);
+    if (err) { setError(err.message); return; }
+    setFolders((prev) => [...prev, data]);
+    setNewFolderName("");
+    setActiveFolder(data.id);
+  };
+
+  const handleRenameFolder = async (id) => {
+    if (!renameValue.trim()) { setRenamingId(null); return; }
+    await supabase.from("document_folders").update({ name: renameValue.trim() }).eq("id", id);
+    setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: renameValue.trim() } : f)));
+    setRenamingId(null);
+  };
+
+  const handleDeleteFolder = async (id) => {
+    const count = docs.filter((d) => d.folder_id === id).length;
+    if (count > 0) {
+      alert(`This folder still has ${count} document${count === 1 ? "" : "s"}. Move or delete them first.`);
+      return;
+    }
+    if (!window.confirm("Delete this empty folder?")) return;
+    await supabase.from("document_folders").delete().eq("id", id);
+    setFolders((prev) => prev.filter((f) => f.id !== id));
+    if (activeFolder === id) setActiveFolder(folders.find((f) => f.id !== id)?.id || null);
+  };
+
+  const handleUpload = async (fileList) => {
+    if (!fileList || !activeFolderObj) return;
+    const files = Array.from(fileList);
+    setUploading(true);
+    setError("");
+    const slug = slugify(activeFolderObj.name);
+    try {
+      for (const file of files) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "_");
+        const path = `${slug}/${Date.now()}_${safeName}`;
+        const { error: upErr } = await supabase.storage.from(DOC_BUCKET).upload(path, file, { upsert: true });
+        if (upErr) throw upErr;
+        const { data: urlData } = supabase.storage.from(DOC_BUCKET).getPublicUrl(path);
+        const { data: row, error: insErr } = await supabase
+          .from("pharmacy_documents")
+          .insert([{
+            pharmacy_id: PHARMACY_ID,
+            folder_id: activeFolderObj.id,
+            title: file.name,
+            file_url: urlData.publicUrl,
+            file_name: path,
+          }])
+          .select()
+          .single();
+        if (insErr) throw insErr;
+        setDocs((prev) => [...prev, row]);
+      }
+    } catch (err) {
+      setError("Upload failed: " + (err?.message || String(err)));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleReplace = async (doc, file) => {
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    try {
+      const oldPath = storagePathFromUrl(doc.file_url);
+      const slug = (doc.file_name && doc.file_name.includes("/")) ? doc.file_name.split("/")[0] : slugify(activeFolderObj?.name || "folder");
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const path = `${slug}/${Date.now()}_${safeName}`;
+      const { error: upErr } = await supabase.storage.from(DOC_BUCKET).upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from(DOC_BUCKET).getPublicUrl(path);
+      await supabase.from("pharmacy_documents").update({
+        file_url: urlData.publicUrl,
+        file_name: path,
+        title: file.name,
+        uploaded_at: new Date().toISOString(),
+      }).eq("id", doc.id);
+      if (oldPath) await supabase.storage.from(DOC_BUCKET).remove([oldPath]);
+      setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, file_url: urlData.publicUrl, file_name: path, title: file.name } : d)));
+    } catch (err) {
+      setError("Replace failed: " + (err?.message || String(err)));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleMove = async (doc, folderId) => {
+    await supabase.from("pharmacy_documents").update({ folder_id: folderId }).eq("id", doc.id);
+    setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, folder_id: folderId } : d)));
+  };
+
+  const handleSetReview = async (doc, date) => {
+    await supabase.from("pharmacy_documents").update({ review_date: date || null }).eq("id", doc.id);
+    setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, review_date: date || null } : d)));
+  };
+
+  const handleRenameDoc = async (doc, title) => {
+    if (!title.trim()) return;
+    await supabase.from("pharmacy_documents").update({ title: title.trim() }).eq("id", doc.id);
+    setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, title: title.trim() } : d)));
+  };
+
+  const handleDeleteDoc = async (doc) => {
+    if (!window.confirm("Delete this document? This removes the file permanently.")) return;
+    const path = storagePathFromUrl(doc.file_url);
+    if (path) await supabase.storage.from(DOC_BUCKET).remove([path]);
+    await supabase.from("pharmacy_documents").delete().eq("id", doc.id);
+    setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+  };
+
+  if (loading) return <div className="p-6 text-sm text-gray-400">Loading…</div>;
+
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      {/* Folder list */}
+      <div className="w-[240px] min-w-[240px] bg-white border-r flex flex-col overflow-hidden">
+        <div className="px-3 py-2 border-b shrink-0 text-xs font-semibold text-gray-500 uppercase tracking-wide">Folders</div>
+        <div className="flex-1 overflow-y-auto">
+          {folders.map((f) => {
+            const count = docs.filter((d) => d.folder_id === f.id).length;
+            return (
+              <div key={f.id} className={`border-b ${activeFolder === f.id ? "bg-blue-50" : ""}`}>
+                {renamingId === f.id ? (
+                  <div className="flex items-center gap-1 px-2 py-2">
+                    <input
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleRenameFolder(f.id)}
+                      className="flex-1 min-w-0 border rounded px-2 py-1 text-sm"
+                      autoFocus
+                    />
+                    <button onClick={() => handleRenameFolder(f.id)} className="text-xs text-blue-600">✓</button>
+                    <button onClick={() => setRenamingId(null)} className="text-xs text-gray-400">✕</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setActiveFolder(f.id)}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-50"
+                  >
+                    <span>📁</span>
+                    <span className="flex-1 min-w-0 text-sm font-medium text-gray-800 truncate">{f.name}</span>
+                    <span className="text-xs text-gray-400">{count}</span>
+                  </button>
+                )}
+                {activeFolder === f.id && renamingId !== f.id && (
+                  <div className="flex gap-3 px-3 pb-2 -mt-1">
+                    <button onClick={() => { setRenamingId(f.id); setRenameValue(f.name); }} className="text-[11px] text-gray-500 hover:text-gray-700">Rename</button>
+                    <button onClick={() => handleDeleteFolder(f.id)} className="text-[11px] text-red-500 hover:text-red-700">Delete</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="border-t p-2 shrink-0 space-y-1.5">
+          <input
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAddFolder()}
+            placeholder="New folder name"
+            className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <button onClick={handleAddFolder} disabled={addingFolder || !newFolderName.trim()} className="w-full text-xs bg-blue-600 text-white rounded-lg py-1.5 disabled:opacity-40">
+            {addingFolder ? "Adding…" : "+ Add folder"}
+          </button>
+        </div>
+      </div>
+
+      {/* Document list */}
+      <div className="flex-1 bg-white overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b shrink-0 gap-3">
+          <h2 className="font-semibold text-gray-800 truncate">
+            {activeFolderObj?.name || "Documents"}
+            <span className="text-gray-400 font-normal text-sm ml-2">({folderDocs.length})</span>
+          </h2>
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              className="border rounded-lg px-3 py-1.5 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+            <label className={`text-xs px-3 py-1.5 rounded-lg cursor-pointer font-medium ${uploading ? "bg-blue-200 text-white" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
+              {uploading ? "Uploading…" : "+ Upload"}
+              <input type="file" multiple className="hidden" disabled={uploading || !activeFolderObj} onChange={(e) => handleUpload(e.target.files)} />
+            </label>
+          </div>
+        </div>
+
+        {error && <div className="px-5 py-2 text-sm text-red-500 shrink-0">{error}</div>}
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {folderDocs.length === 0 ? (
+            <p className="text-sm text-gray-400">No documents in this folder{search ? " matching your search" : ""}.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {folderDocs.map((doc) => (
+                <div key={doc.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">📄</span>
+                    <div className="min-w-0 flex-1">
+                      <input
+                        defaultValue={doc.title}
+                        onBlur={(e) => e.target.value !== doc.title && handleRenameDoc(doc, e.target.value)}
+                        className="w-full bg-transparent text-sm font-medium text-gray-800 focus:outline-none focus:bg-white focus:border focus:rounded px-1 py-0.5"
+                      />
+                    </div>
+                    <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Open</a>
+                  </div>
+                  <div className="flex items-center gap-3 mt-2 pl-6 flex-wrap">
+                    <label className="text-[11px] text-gray-500 flex items-center gap-1">
+                      Review:
+                      <input
+                        type="date"
+                        defaultValue={doc.review_date || ""}
+                        onChange={(e) => handleSetReview(doc, e.target.value)}
+                        className="border rounded px-1.5 py-0.5 text-[11px]"
+                      />
+                    </label>
+                    <select
+                      value={doc.folder_id}
+                      onChange={(e) => handleMove(doc, e.target.value)}
+                      className="text-[11px] border rounded px-1.5 py-0.5 text-gray-600"
+                    >
+                      {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    </select>
+                    <label className="text-[11px] text-blue-600 hover:underline cursor-pointer">
+                      Replace
+                      <input type="file" className="hidden" disabled={uploading} onChange={(e) => handleReplace(doc, e.target.files?.[0])} />
+                    </label>
+                    <button onClick={() => handleDeleteDoc(doc)} className="text-[11px] text-red-500 hover:text-red-700">Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 
@@ -2472,7 +2776,7 @@ export default function AdminPage() {
 
           {/* Top tabs */}
           <div className="flex border-b shrink-0 px-4">
-            {["staff", "locums", "settings"].map((t) => (
+            {["staff", "locums", "documents", "settings"].map((t) => (
               <button
                 key={t}
                 onClick={() => {
@@ -2482,7 +2786,7 @@ export default function AdminPage() {
                 }}
                 className={`mr-4 py-3 text-sm font-medium ${tab === t ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
               >
-                {t === "staff" ? "👥 Staff" : t === "locums" ? "💊 Locums" : "⚙️ Settings"}
+                {t === "staff" ? "👥 Staff" : t === "locums" ? "💊 Locums" : t === "documents" ? "📁 QSPP" : "⚙️ Settings"}
               </button>
             ))}
           </div>
@@ -2495,6 +2799,8 @@ export default function AdminPage() {
             )}
             {tab === "settings" ? (
               <SettingsTab />
+            ) : tab === "documents" ? (
+              <DocumentsTab />
             ) : tab === "locums" ? (
               <LocumsTab key={locumFormKey} />
             ) : !selected ? (
