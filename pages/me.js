@@ -1242,36 +1242,16 @@ function NotesTab({ staff }) {
     <div className="max-w-lg mx-auto space-y-3">
       {/* Composer */}
       <div className="bg-white rounded-2xl shadow-sm border p-3">
-        <div className="flex gap-2 items-end">
-          <textarea
-            value={noteText}
-            onChange={(e) => setNoteText(e.target.value)}
-            maxLength={500}
-            rows={2}
-            placeholder="Post a note to the team…"
-            className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
-          />
-          <div className="flex flex-col gap-1">
-            <button onClick={postNote} disabled={(!noteText.trim() && !noteImageFile) || posting} className="rounded-lg px-3 py-2 text-sm font-medium bg-blue-600 text-white disabled:opacity-40">
-              {posting ? "…" : "Post"}
-            </button>
-            <input ref={noteFileRef} type="file" accept="image/*" onChange={handleNotePick} className="hidden" />
-            <button
-              onClick={() => noteFileRef.current?.click()}
-              className="rounded-lg px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-              title="Attach photo"
-            >
-              📷
-            </button>
-            <button
-              onClick={() => setShowPollComposer((o) => !o)}
-              className={`rounded-lg px-3 py-2 text-sm font-medium border transition-colors ${showPollComposer ? "border-purple-600 bg-purple-600 text-white" : "border-purple-300 bg-white text-purple-700 hover:bg-purple-50"}`}
-            >
-              📊 Poll
-            </button>
-          </div>
-        </div>
+        <textarea
+          value={noteText}
+          onChange={(e) => setNoteText(e.target.value)}
+          maxLength={500}
+          rows={3}
+          placeholder="Post a note to the team…"
+          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
+        />
+
         {noteImagePreview && (
           <div className="mt-2 relative inline-block">
             <img src={noteImagePreview} alt="" className="rounded-lg max-h-40 object-cover border" />
@@ -1284,6 +1264,28 @@ function NotesTab({ staff }) {
             </button>
           </div>
         )}
+
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <input ref={noteFileRef} type="file" accept="image/*" onChange={handleNotePick} className="hidden" />
+            <button
+              onClick={() => noteFileRef.current?.click()}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+              title="Attach photo"
+            >
+              📷 <span className="hidden sm:inline">Photo</span>
+            </button>
+            <button
+              onClick={() => setShowPollComposer((o) => !o)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium border transition-colors ${showPollComposer ? "border-purple-600 bg-purple-600 text-white" : "border-purple-300 bg-white text-purple-700 hover:bg-purple-50"}`}
+            >
+              📊 Poll
+            </button>
+          </div>
+          <button onClick={postNote} disabled={(!noteText.trim() && !noteImageFile) || posting} className="rounded-lg px-5 py-2 text-sm font-semibold bg-blue-600 text-white disabled:opacity-40">
+            {posting ? "…" : "Post"}
+          </button>
+        </div>
       </div>
 
       {/* Poll composer */}
