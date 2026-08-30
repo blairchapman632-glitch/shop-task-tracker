@@ -837,6 +837,24 @@ function NotesTab({ staff }) {
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [pollAllowCustom, setPollAllowCustom] = useState(false);
   const [pollSaving, setPollSaving] = useState(false);
+  const [noteImageFile, setNoteImageFile] = useState(null);
+  const [noteImagePreview, setNoteImagePreview] = useState(null);
+  const [noteImageUploading, setNoteImageUploading] = useState(false);
+  const noteFileRef = useRef(null);
+
+  const handleNotePick = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { alert("Please choose an image."); return; }
+    setNoteImageFile(file);
+    setNoteImagePreview(URL.createObjectURL(file));
+  };
+
+  const clearNoteImage = () => {
+    setNoteImageFile(null);
+    setNoteImagePreview(null);
+  };
 
   const load = async () => {
     setLoading(true);
@@ -847,7 +865,7 @@ function NotesTab({ staff }) {
 
       const { data, error } = await supabase
         .from("kiosk_notes")
-        .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, type, poll_question, allow_custom_options")
+        .select("id, body, image_url, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, type, poll_question, allow_custom_options")
         .eq("pharmacy_id", PHARMACY_ID)
         .or("deleted.is.null,deleted.eq.false")
         .order("pinned", { ascending: false })
@@ -908,19 +926,32 @@ function NotesTab({ staff }) {
 
   const postNote = async () => {
     const body = noteText.trim();
-    if (!body) return;
+    if (!body && !noteImageFile) return;
     setPosting(true);
     try {
+      let imageUrl = null;
+      if (noteImageFile) {
+        setNoteImageUploading(true);
+        const ext = noteImageFile.name.split(".").pop() || "jpg";
+        const path = `${me.id}/${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage.from("message-images").upload(path, noteImageFile, { upsert: false });
+        if (upErr) throw upErr;
+        const { data: pub } = supabase.storage.from("message-images").getPublicUrl(path);
+        imageUrl = pub.publicUrl;
+        setNoteImageUploading(false);
+      }
       const { data, error } = await supabase.from("kiosk_notes")
-        .insert({ body, staff_id: Number(me.id), deleted: false, pharmacy_id: PHARMACY_ID })
-        .select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved").single();
+        .insert({ body: body || null, image_url: imageUrl, staff_id: Number(me.id), deleted: false, pharmacy_id: PHARMACY_ID })
+        .select("id, body, image_url, staff_id, created_at, pinned, deleted, last_activity_at, resolved").single();
       if (error) throw error;
       setNotes((prev) => [data, ...prev]);
       setNoteText("");
+      clearNoteImage();
     } catch (err) {
       alert("Couldn't post note: " + (err?.message || String(err)));
     } finally {
       setPosting(false);
+      setNoteImageUploading(false);
     }
   };
 
@@ -1122,8 +1153,17 @@ function NotesTab({ staff }) {
                 })()}
               </div>
             ) : (
-              <div className="text-sm text-gray-800 whitespace-pre-wrap break-words mt-1" onClick={() => setExpandedId(isOpen ? null : n.id)}>
-                {isOpen ? n.body : noteTrunc(n.body)}
+              <div className="mt-1">
+                {n.body && (
+                  <div className="text-sm text-gray-800 whitespace-pre-wrap break-words" onClick={() => setExpandedId(isOpen ? null : n.id)}>
+                    {isOpen ? n.body : noteTrunc(n.body)}
+                  </div>
+                )}
+                {n.image_url && (
+                  <a href={n.image_url} target="_blank" rel="noopener noreferrer" className="block mt-2">
+                    <img src={n.image_url} alt="" className="rounded-lg max-h-64 object-cover border" />
+                  </a>
+                )}
               </div>
             )}
 
@@ -1201,27 +1241,49 @@ function NotesTab({ staff }) {
   return (
     <div className="max-w-lg mx-auto space-y-3">
       {/* Composer */}
-      <div className="bg-white rounded-2xl shadow-sm border p-3 flex gap-2 items-end">
-        <textarea
-          value={noteText}
-          onChange={(e) => setNoteText(e.target.value)}
-          maxLength={500}
-          rows={2}
-          placeholder="Post a note to the team…"
-          className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
-        />
-        <div className="flex flex-col gap-1">
-          <button onClick={postNote} disabled={!noteText.trim() || posting} className="rounded-lg px-3 py-2 text-sm font-medium bg-blue-600 text-white disabled:opacity-40">
-            {posting ? "…" : "Post"}
-          </button>
-          <button
-            onClick={() => setShowPollComposer((o) => !o)}
-            className={`rounded-lg px-3 py-2 text-sm font-medium border transition-colors ${showPollComposer ? "border-purple-600 bg-purple-600 text-white" : "border-purple-300 bg-white text-purple-700 hover:bg-purple-50"}`}
-          >
-            📊 Poll
-          </button>
+      <div className="bg-white rounded-2xl shadow-sm border p-3">
+        <div className="flex gap-2 items-end">
+          <textarea
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            maxLength={500}
+            rows={2}
+            placeholder="Post a note to the team…"
+            className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
+          />
+          <div className="flex flex-col gap-1">
+            <button onClick={postNote} disabled={(!noteText.trim() && !noteImageFile) || posting} className="rounded-lg px-3 py-2 text-sm font-medium bg-blue-600 text-white disabled:opacity-40">
+              {posting ? "…" : "Post"}
+            </button>
+            <input ref={noteFileRef} type="file" accept="image/*" onChange={handleNotePick} className="hidden" />
+            <button
+              onClick={() => noteFileRef.current?.click()}
+              className="rounded-lg px-3 py-2 text-sm font-medium border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+              title="Attach photo"
+            >
+              📷
+            </button>
+            <button
+              onClick={() => setShowPollComposer((o) => !o)}
+              className={`rounded-lg px-3 py-2 text-sm font-medium border transition-colors ${showPollComposer ? "border-purple-600 bg-purple-600 text-white" : "border-purple-300 bg-white text-purple-700 hover:bg-purple-50"}`}
+            >
+              📊 Poll
+            </button>
+          </div>
         </div>
+        {noteImagePreview && (
+          <div className="mt-2 relative inline-block">
+            <img src={noteImagePreview} alt="" className="rounded-lg max-h-40 object-cover border" />
+            <button
+              onClick={clearNoteImage}
+              className="absolute -top-2 -right-2 h-6 w-6 inline-flex items-center justify-center rounded-full bg-gray-800 text-white text-xs shadow"
+              title="Remove photo"
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Poll composer */}
