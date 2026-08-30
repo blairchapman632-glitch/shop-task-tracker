@@ -2315,6 +2315,7 @@ const slugify = (s) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "folder";
 
 function DocumentsTab() {
+  const [subTab, setSubTab] = useState("documents");
   const [folders, setFolders] = useState([]);
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2486,7 +2487,27 @@ function DocumentsTab() {
   if (loading) return <div className="p-6 text-sm text-gray-400">Loading…</div>;
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {/* Sub tabs */}
+      <div className="flex border-b shrink-0 px-4 bg-white">
+        {[
+          { key: "documents", label: "📄 Documents" },
+          { key: "incidents", label: "⚠️ Incidents" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setSubTab(t.key)}
+            className={`mr-4 py-3 text-sm font-medium ${subTab === t.key ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-700"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === "incidents" ? (
+        <IncidentsTab />
+      ) : (
+      <div className="flex flex-1 overflow-hidden">
       {/* Folder list */}
       <div className="w-[240px] min-w-[240px] bg-white border-r flex flex-col overflow-hidden">
         <div className="px-3 py-2 border-b shrink-0 text-xs font-semibold text-gray-500 uppercase tracking-wide">Folders</div>
@@ -2612,9 +2633,237 @@ function DocumentsTab() {
           )}
         </div>
       </div>
+      </div>
+      )}
     </div>
   );
 }
+// ─── Incidents Tab ────────────────────────────────────────────────────────────
+
+function IncidentsTab() {
+  const [incidents, setIncidents] = useState([]);
+  const [staffList, setStaffList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [showHidden, setShowHidden] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    const { data: staff } = await supabase
+      .from("staff")
+      .select("id, name")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .or("role.is.null,role.neq.Locum")
+      .order("name");
+    setStaffList(staff || []);
+
+    const { data: inc } = await supabase
+      .from("incidents")
+      .select("*")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .order("incident_date", { ascending: false });
+    setIncidents(inc || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const staffName = (id) => staffList.find((s) => s.id === id)?.name || "";
+  const visible = incidents.filter((i) => showHidden ? true : !i.hidden);
+
+  const handleUpdate = async (id, patch) => {
+    const { data, error } = await supabase
+      .from("incidents")
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) { alert("Save failed: " + error.message); return; }
+    setIncidents((prev) => prev.map((i) => (i.id === id ? data : i)));
+    setSelected(data);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this incident permanently? This cannot be undone.")) return;
+    await supabase.from("incidents").delete().eq("id", id);
+    setIncidents((prev) => prev.filter((i) => i.id !== id));
+    setSelected(null);
+  };
+
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      {/* Left list */}
+      <div className="w-[280px] min-w-[280px] bg-white border-r flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Register</span>
+          <button onClick={() => setShowHidden((v) => !v)} className="text-xs text-gray-400 hover:text-gray-600">
+            {showHidden ? "Hide hidden" : "Show hidden"}
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="p-4 text-sm text-gray-400">Loading…</div>
+          ) : visible.length === 0 ? (
+            <div className="p-4 text-sm text-gray-400">No incidents.</div>
+          ) : (
+            visible.map((inc) => {
+              const resolved = !!inc.date_resolved;
+              const isSelected = selected?.id === inc.id;
+              return (
+                <button
+                  key={inc.id}
+                  onClick={() => setSelected(inc)}
+                  className={`w-full text-left px-3 py-2.5 border-b hover:bg-gray-50 ${isSelected ? "bg-blue-50" : ""} ${inc.hidden ? "opacity-50" : ""}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-gray-400">#{inc.report_number}</span>
+                    <div className="flex items-center gap-1">
+                      {inc.hidden && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">Hidden</span>}
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${resolved ? "bg-green-50 text-green-600" : "bg-amber-50 text-amber-600"}`}>
+                        {resolved ? "RESOLVED" : "OPEN"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-sm font-medium text-gray-800 truncate mt-0.5">{inc.nature_of_incident}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">{inc.incident_date}</div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Right detail */}
+      <div className="flex-1 bg-white overflow-hidden flex flex-col">
+        {!selected ? (
+          <div className="h-full flex items-center justify-center text-sm text-gray-400">
+            Select an incident to view or edit.
+          </div>
+        ) : (
+          <IncidentDetail
+            incident={selected}
+            staffList={staffList}
+            onUpdate={handleUpdate}
+            onDelete={handleDelete}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IncidentDetail({ incident, staffList, onUpdate, onDelete }) {
+  const [actionNeeded, setActionNeeded] = useState(incident.action_needed || "");
+  const [actionedById, setActionedById] = useState(incident.actioned_by_staff_id || "");
+  const [qualityImprovement, setQualityImprovement] = useState(incident.quality_improvement || "");
+  const [followUpRequired, setFollowUpRequired] = useState(incident.follow_up_required || "");
+  const [assignedToId, setAssignedToId] = useState(incident.assigned_to_staff_id || "");
+  const [dateResolved, setDateResolved] = useState(incident.date_resolved || "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setActionNeeded(incident.action_needed || "");
+    setActionedById(incident.actioned_by_staff_id || "");
+    setQualityImprovement(incident.quality_improvement || "");
+    setFollowUpRequired(incident.follow_up_required || "");
+    setAssignedToId(incident.assigned_to_staff_id || "");
+    setDateResolved(incident.date_resolved || "");
+  }, [incident.id]);
+
+  const reporterName = staffList.find((s) => s.id === incident.reporter_staff_id)?.name || "Unknown";
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onUpdate(incident.id, {
+      action_needed: actionNeeded || null,
+      actioned_by_staff_id: actionedById || null,
+      quality_improvement: qualityImprovement || null,
+      follow_up_required: followUpRequired || null,
+      assigned_to_staff_id: assignedToId || null,
+      date_resolved: dateResolved || null,
+    });
+    setSaving(false);
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+        <h2 className="font-semibold text-gray-800">Incident #{incident.report_number}</h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onUpdate(incident.id, { hidden: !incident.hidden })}
+            className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
+          >
+            {incident.hidden ? "Unhide" : "Hide"}
+          </button>
+          <button
+            onClick={() => onDelete(incident.id)}
+            className="text-xs px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+          <p className="text-xs text-gray-400">Reported by {reporterName} · {incident.incident_date}{incident.incident_time ? ` · ${incident.incident_time}` : ""}</p>
+          <p className="text-sm text-gray-800">{incident.nature_of_incident}</p>
+        </div>
+
+        {(incident.person_name || incident.witnesses) && (
+          <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-xs text-gray-600">
+            {incident.person_name && <p><span className="font-medium">Person involved:</span> {incident.person_name}</p>}
+            {incident.witnesses && <p><span className="font-medium">Witnesses:</span> {incident.witnesses}</p>}
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Specific action taken</label>
+          <textarea value={actionNeeded} onChange={(e) => setActionNeeded(e.target.value)} rows={2} placeholder="What was done" className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Follow-up required</label>
+          <textarea value={followUpRequired} onChange={(e) => setFollowUpRequired(e.target.value)} rows={2} placeholder="Anything still needing to happen" className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Actioned by</label>
+          <select value={actionedById} onChange={(e) => setActionedById(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">Not yet actioned</option>
+            {staffList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Quality improvements</label>
+          <textarea value={qualityImprovement} onChange={(e) => setQualityImprovement(e.target.value)} rows={2} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Assigned to</label>
+          <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">No one yet</option>
+            {staffList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Date resolved</label>
+          <input type="date" value={dateResolved} onChange={(e) => setDateResolved(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        </div>
+      </div>
+
+      <div className="px-5 py-4 border-t shrink-0">
+        <button onClick={handleSave} disabled={saving} className="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
+          {saving ? "Saving…" : "Save Changes"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 

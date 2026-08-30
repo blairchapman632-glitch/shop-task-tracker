@@ -638,6 +638,7 @@ export default function HomePage() {
   const [approvalReminderIds, setApprovalReminderIds] = useState(new Set());
   const [unreadByStaff, setUnreadByStaff] = useState({}); // staffId -> unread message count
   const [leaveUpdateIds, setLeaveUpdateIds] = useState(new Set()); // staff with unseen leave status changes
+  const [incidentReviewMap, setIncidentReviewMap] = useState({}); // staffId -> incident id to review
 
   // ── Leaderboard ──
   const [leadersWeek, setLeadersWeek] = useState([]);
@@ -999,6 +1000,30 @@ export default function HomePage() {
       }
     };
     loadUnread();
+  }, [authChecked, currentPharmacyId]);
+
+  // ── Incidents assigned to a staff member, not yet resolved, not yet opened by them ──
+  useEffect(() => {
+    if (!authChecked || !currentPharmacyId) return;
+    const loadIncidentReview = async () => {
+      try {
+        const { data } = await supabase
+          .from("incidents")
+          .select("id, assigned_to_staff_id")
+          .eq("pharmacy_id", currentPharmacyId)
+          .is("date_resolved", null)
+          .eq("assigned_seen", false)
+          .not("assigned_to_staff_id", "is", null);
+        const map = {};
+        for (const inc of data || []) {
+          if (!map[inc.assigned_to_staff_id]) map[inc.assigned_to_staff_id] = inc.id;
+        }
+        setIncidentReviewMap(map);
+      } catch (err) {
+        console.error("Incident review load failed:", err);
+      }
+    };
+    loadIncidentReview();
   }, [authChecked, currentPharmacyId]);
 
   // ── Leave request status updates (status changed, not yet seen by staff) ──
@@ -1883,8 +1908,27 @@ const handleDeliveryTap = async (d) => {
                     {approvalReminderIds.has(s.id) && (
                       <span className="absolute -top-1 -right-1 z-10 text-base" title="Approve your timesheet">⚠️</span>
                     )}
-                    
-                    
+                    {incidentReviewMap[s.id] && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const incId = incidentReviewMap[s.id];
+                          await supabase.from("incidents").update({ assigned_seen: true }).eq("id", incId);
+                          setIncidentReviewMap((prev) => {
+                            const next = { ...prev };
+                            delete next[s.id];
+                            return next;
+                          });
+                          router.push("/documents?tab=incidents");
+                        }}
+                        className="absolute -bottom-1 -left-1 z-10 text-base cursor-pointer"
+                        title="Incident to review"
+                      >
+                        📋
+                      </span>
+                    )}
                     <Avatar
                       name={s.name}
                       photoUrl={s.photo_url}
