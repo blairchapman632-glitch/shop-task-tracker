@@ -2059,9 +2059,15 @@ function LocumsTab() {
   const [loadingBookings, setLoadingBookings] = useState(true);
   const [copiedAll, setCopiedAll] = useState(false);
   const [coverEntries, setCoverEntries] = useState([]);
+  const [manualGaps, setManualGaps] = useState([]);
   const [loadingCover, setLoadingCover] = useState(true);
   const [coverMonths, setCoverMonths] = useState(3);
   const [copiedCover, setCopiedCover] = useState(false);
+  const [assigningKey, setAssigningKey] = useState(null);
+  const [newGapDate, setNewGapDate] = useState("");
+  const [newGapStart, setNewGapStart] = useState("09:00");
+  const [newGapEnd, setNewGapEnd] = useState("17:00");
+  const [addingGap, setAddingGap] = useState(false);
 
   const loadAllBookings = async () => {
     setLoadingBookings(true);
@@ -2083,6 +2089,26 @@ function LocumsTab() {
     const to = toD.toISOString().slice(0, 10);
     const entries = await getLeaveCover({ fromDate: from, toDate: to });
     setCoverEntries(entries);
+
+    // Manual "we could use a locum" slots — live in locum_gaps, off the roster until assigned
+    const { data: gaps } = await supabase
+      .from("locum_gaps")
+      .select("id, gap_date, start_time, end_time")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .gte("gap_date", from)
+      .lte("gap_date", to)
+      .order("gap_date");
+    setManualGaps((gaps || []).map((g) => ({
+      gapId: g.id,
+      date: g.gap_date,
+      start: String(g.start_time).slice(0, 5),
+      end: String(g.end_time).slice(0, 5),
+      staffName: null,
+      status: null,
+      filled: false,
+      locumName: null,
+      manual: true,
+    })));
     setLoadingCover(false);
   };
 
@@ -2113,8 +2139,78 @@ function LocumsTab() {
     setTimeout(() => setCopiedAll(false), 2000);
   };
 
+  // Merge leave-derived gaps + manual slots, sorted by date/time
+  const allCover = [...coverEntries, ...manualGaps].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start)
+  );
   // Only the unfilled (needs-locum) dates go into the copyable list — dates + times only
-  const coverGaps = coverEntries.filter((e) => !e.filled);
+  const coverGaps = allCover.filter((e) => !e.filled);
+
+  const handleAddGap = async () => {
+    if (!newGapDate) return;
+    setAddingGap(true);
+    try {
+      const { error } = await supabase.from("locum_gaps").insert([{
+        pharmacy_id: PHARMACY_ID,
+        gap_date: newGapDate,
+        start_time: newGapStart,
+        end_time: newGapEnd,
+      }]);
+      if (error) throw error;
+      setNewGapDate("");
+      setNewGapStart("09:00");
+      setNewGapEnd("17:00");
+      await loadCover();
+    } catch (err) {
+      alert("Couldn't add slot: " + (err?.message || String(err)));
+    } finally {
+      setAddingGap(false);
+    }
+  };
+
+  const handleDeleteGap = async (gapId) => {
+    if (!window.confirm("Remove this slot from the list?")) return;
+    await supabase.from("locum_gaps").delete().eq("id", gapId);
+    await loadCover();
+  };
+
+  const handleAssignLocum = async (entry, locumId) => {
+    if (!locumId) return;
+    const key = entry.gapId ? `m${entry.gapId}` : `${entry.date}-${entry.start}`;
+    setAssigningKey(key);
+    try {
+      // Both types create a real Locum booking (this is what puts it on the roster)
+      const monthDate = entry.date.slice(0, 7) + "-01";
+      const { data: monthData } = await supabase.from("roster_months").select("id").eq("month", monthDate).maybeSingle();
+      let rosterMonthId = monthData?.id;
+      if (!rosterMonthId) {
+        const { data: created } = await supabase.from("roster_months").insert([{ month: monthDate, status: "draft", pharmacy_id: PHARMACY_ID }]).select("id").single();
+        rosterMonthId = created?.id;
+      }
+      const { error } = await supabase.from("roster_shifts").insert([{
+        staff_id: Number(locumId),
+        shift_date: entry.date,
+        start_time: entry.start,
+        end_time: entry.end,
+        role: "Locum",
+        roster_month_id: rosterMonthId,
+        pharmacy_id: PHARMACY_ID,
+      }]);
+      if (error) throw error;
+
+      // Manual slot is consumed once assigned — remove the gap row
+      if (entry.manual && entry.gapId) {
+        await supabase.from("locum_gaps").delete().eq("id", entry.gapId);
+      }
+
+      await loadCover();
+      await loadAllBookings();
+    } catch (err) {
+      alert("Couldn't assign locum: " + (err?.message || String(err)));
+    } finally {
+      setAssigningKey(null);
+    }
+  };
   const handleCopyCover = () => {
     const lines = coverGaps.map((e) => `${fmtAllDate(e.date)} · ${formatTime(e.start)} – ${formatTime(e.end)}`);
     const text = `Shifts needing a locum\n\n${lines.join("\n")}\n\n${coverGaps.length} shift${coverGaps.length !== 1 ? "s" : ""}`;
@@ -2265,32 +2361,73 @@ function LocumsTab() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-400 mb-3">
-                  Pharmacist leave (pending or approved) that falls on a day they'd normally work. Dates with a locum already booked are marked filled.
+                  Pharmacist leave (pending or approved) that falls on a day they'd normally work, plus any slots you add manually. Dates with a locum already booked are marked filled.
                 </p>
+
+                {/* Add a manual slot */}
+                <div className="flex flex-wrap items-end gap-2 mb-4 p-3 rounded-lg border border-gray-100 bg-gray-50">
+                  <div>
+                    <label className="block text-[10px] font-medium text-gray-500 mb-1">Date</label>
+                    <input type="date" value={newGapDate} onChange={(e) => setNewGapDate(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-gray-500 mb-1">Start</label>
+                    <input type="time" value={newGapStart} onChange={(e) => setNewGapStart(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-gray-500 mb-1">End</label>
+                    <input type="time" value={newGapEnd} onChange={(e) => setNewGapEnd(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm" />
+                  </div>
+                  <button onClick={handleAddGap} disabled={addingGap || !newGapDate} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40">
+                    {addingGap ? "Adding…" : "+ Add slot"}
+                  </button>
+                </div>
                 {loadingCover ? (
                   <div className="text-sm text-gray-400">Loading…</div>
-                ) : coverEntries.length === 0 ? (
-                  <div className="text-sm text-gray-400">No pharmacist leave needing cover in this window.</div>
+                ) : allCover.length === 0 ? (
+                  <div className="text-sm text-gray-400">No shifts needing a locum in this window. Add one above.</div>
                 ) : (
                   <div className="space-y-1.5">
-                    {coverEntries.map((e, i) => (
+                    {allCover.map((e, i) => {
+                      const rowKey = e.gapId ? `m${e.gapId}` : `${e.date}-${e.staffName}-${i}`;
+                      return (
                       <div
-                        key={`${e.date}-${e.staffName}-${i}`}
+                        key={rowKey}
                         className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${e.filled ? "border-green-100 bg-green-50" : "border-red-100 bg-red-50"}`}
                       >
                         <span className="text-sm">{e.filled ? "✅" : "🔴"}</span>
                         <div className="text-sm text-gray-700 w-48 shrink-0">{fmtAllDate(e.date)}</div>
                         <div className="text-sm text-gray-600 w-32 shrink-0">{formatTime(e.start)} – {formatTime(e.end)}</div>
                         <div className="text-xs text-gray-500 flex-1 min-w-0 truncate">
-                          {e.staffName} off{e.status === "pending" ? " (pending)" : ""}
+                          {e.manual ? "Manual slot" : `${e.staffName} off${e.status === "pending" ? " (pending)" : ""}`}
                         </div>
-                        <div className="text-xs shrink-0">
-                          {e.filled
-                            ? <span className="text-green-700 font-medium">{e.locumName}</span>
-                            : <span className="text-red-600 font-medium">Needs locum</span>}
-                        </div>
+                        {e.filled ? (
+                          <div className="text-xs shrink-0 text-green-700 font-medium">{e.locumName}</div>
+                        ) : (
+                          <select
+                            defaultValue=""
+                            disabled={assigningKey === rowKey}
+                            onChange={(ev) => handleAssignLocum(e, ev.target.value)}
+                            className="text-xs border rounded-lg px-2 py-1 shrink-0 disabled:opacity-40"
+                          >
+                            <option value="">{assigningKey === rowKey ? "Assigning…" : "Assign locum…"}</option>
+                            {locums.filter((l) => l.active !== false).map((l) => (
+                              <option key={l.id} value={l.id}>{l.name}</option>
+                            ))}
+                          </select>
+                        )}
+                        {e.manual && e.gapId && (
+                          <button
+                            onClick={() => handleDeleteGap(e.gapId)}
+                            className="text-xs text-red-500 hover:text-red-700 shrink-0"
+                            title="Remove this slot"
+                          >
+                            ✕
+                          </button>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
