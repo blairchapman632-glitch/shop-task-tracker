@@ -1104,7 +1104,7 @@ export default function HomePage() {
     if (!authChecked || !currentPharmacyId) return;
     const loadNotes = async () => {
       try {
-        const { data, error } = await supabase.from("kiosk_notes").select("id, body, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, pharmacy_id, type, poll_question, allow_custom_options").eq("pharmacy_id", currentPharmacyId).or("deleted.is.null,deleted.eq.false").order("pinned", { ascending: false }).order("last_activity_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(200);
+        const { data, error } = await supabase.from("kiosk_notes").select("id, body, image_url, staff_id, created_at, pinned, deleted, last_activity_at, resolved, resolved_at, resolved_by_staff_id, pharmacy_id, type, poll_question, allow_custom_options").eq("pharmacy_id", currentPharmacyId).or("deleted.is.null,deleted.eq.false").order("pinned", { ascending: false }).order("last_activity_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(200);
         if (error) throw error;
         setNotes(data || []);
 
@@ -2162,8 +2162,17 @@ const handleDeliveryTap = async (d) => {
                               })()}
                             </div>
                           ) : (
-                            <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">
-                              {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
+                            <div>
+                              {n.body && (
+                                <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">
+                                  {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
+                                </div>
+                              )}
+                              {n.image_url && (
+                                <a href={n.image_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="block mt-2">
+                                  <img src={n.image_url} alt="" className="rounded-lg max-h-64 object-cover border" />
+                                </a>
+                              )}
                             </div>
                           )}
 
