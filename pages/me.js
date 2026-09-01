@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { toISO, buildWageRows, fmt as wageFmt } from "../lib/wageCalc";
 import { getShiftConflict, getDayAvailability } from "../lib/availability";
+import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib/leaveCalendar";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -232,6 +233,9 @@ function TimeOffTab({ staff }) {
   const [myLeave, setMyLeave] = useState([]);
   const [savingLeave, setSavingLeave] = useState(false);
   const [leaveSaved, setLeaveSaved] = useState(false);
+  const [allLeave, setAllLeave] = useState([]);
+  const [blackouts, setBlackouts] = useState([]);
+  const [leaveMonthOffset, setLeaveMonthOffset] = useState(0);
 
   const isMultiDay = leaveFrom && leaveTo && leaveFrom !== leaveTo;
   const rangeKey = (r) => `${r.from_date || ""}|${r.to_date || ""}`;
@@ -242,7 +246,20 @@ function TimeOffTab({ staff }) {
       .then(({ data }) => setPublishedMonths(new Set((data || []).map((r) => r.month.slice(0, 7)))));
     if (!leaveOnly) loadExisting(selectedMonth);
     loadMyLeave();
+    loadCalendarData();
   }, []);
+
+  const loadCalendarData = async () => {
+    const [{ data: leave }, { data: bo }] = await Promise.all([
+      supabase
+        .from("leave_requests")
+        .select("id, staff_id, from_date, to_date, status, leave_type, staff:staff_id(id, name, role)")
+        .in("status", ["pending", "approved"]),
+      supabase.from("leave_blackouts").select("*").order("from_date"),
+    ]);
+    setAllLeave(leave || []);
+    setBlackouts(bo || []);
+  };
 
   const loadExisting = async (yearMonth) => {
     setLoading(true);
@@ -392,8 +409,29 @@ function TimeOffTab({ staff }) {
   };
 
   const handleSubmitLeave = async () => {
-    if (!leaveFrom || !leaveTo) { alert("Please choose dates."); return; }
-    if (leaveTo < leaveFrom) { alert("End date can't be before start date."); return; }
+    if (!leaveFrom) { alert("Please choose dates."); return; }
+    const effLeaveTo = leaveTo || leaveFrom;
+    if (effLeaveTo < leaveFrom) { alert("End date can't be before start date."); return; }
+
+    // Final guard — walk the range and block if any day is a blackout or same-role clash
+    {
+      const dsArgs = { blackouts, allLeave, selfId: staff.id, selfRole: staff.role };
+      let cs = leaveFrom;
+      while (cs <= effLeaveTo) {
+        const st = dayState({ dateStr: cs, ...dsArgs });
+        if (st === "blackout") {
+          const b = blackoutOn(blackouts, cs);
+          alert(`Your dates include a blackout period (${toFmtDate(cs)}) where leave can't be requested.${b?.reason ? `\n\n${b.reason}` : ""}`);
+          return;
+        }
+        if (st === "clash") {
+          const who = [...new Set(leaveOn(allLeave, staff.id, cs).map((lr) => lr.staff?.name).filter(Boolean))].join(", ");
+          alert(`Someone in your role (${who}) has already requested leave on ${toFmtDate(cs)}, so this can't be submitted.`);
+          return;
+        }
+        cs = nextDayStr(cs);
+      }
+    }
 
     // Warn (don't block) if another staff member of the same role already has
     // pending or approved leave overlapping these dates.
@@ -416,7 +454,7 @@ function TimeOffTab({ staff }) {
           .select("staff_id, from_date, to_date, status")
           .in("staff_id", sameRoleIds)
           .in("status", ["pending", "approved"])
-          .lte("from_date", leaveTo)
+          .lte("from_date", effLeaveTo)
           .gte("to_date", leaveFrom);
         if (clashes && clashes.length) {
           const who = [...new Set(clashes.map((c) => nameById[c.staff_id]).filter(Boolean))].join(", ");
@@ -437,7 +475,7 @@ function TimeOffTab({ staff }) {
       const partial = !leaveAllDay && !isMultiDay;
       const { error } = await supabase.from("leave_requests").insert([{
         staff_id: staff.id, pharmacy_id: PHARMACY_ID, leave_type: leaveType,
-        from_date: leaveFrom, to_date: leaveTo,
+        from_date: leaveFrom, to_date: effLeaveTo,
         all_day: isMultiDay ? true : leaveAllDay,
         start_time: partial ? leaveStart : null,
         end_time: partial ? leaveEnd : null,
@@ -445,7 +483,7 @@ function TimeOffTab({ staff }) {
       }]);
       if (error) throw error;
       await loadMyLeave();
-      const dateLabel = leaveFrom === leaveTo ? leaveFrom : `${leaveFrom} – ${leaveTo}`;
+      const dateLabel = leaveFrom === effLeaveTo ? leaveFrom : `${leaveFrom} – ${effLeaveTo}`;
       await notifyRosterManagers(
         `Leave request from ${staff.name}`,
         `${staff.name} has requested ${leaveType} (${dateLabel})`
@@ -690,14 +728,25 @@ function TimeOffTab({ staff }) {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
-                <input type="date" value={leaveFrom} onChange={(e) => setLeaveFrom(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white min-w-0" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
-                <input type="date" value={leaveTo} onChange={(e) => setLeaveTo(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white min-w-0" />
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Dates</label>
+              <LeaveCalendar
+                monthOffset={leaveMonthOffset}
+                setMonthOffset={setLeaveMonthOffset}
+                leaveFrom={leaveFrom}
+                leaveTo={leaveTo}
+                setLeaveFrom={setLeaveFrom}
+                setLeaveTo={setLeaveTo}
+                allLeave={allLeave}
+                blackouts={blackouts}
+                selfId={staff.id}
+                selfRole={staff.role}
+              />
+              <div className="flex flex-wrap gap-2 mt-2 text-[10px] text-gray-500">
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600 inline-block"></span> Selected</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-200 inline-block"></span> Leave requested</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-200 inline-block"></span> Unavailable (same role)</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-300 inline-block"></span> Blackout</span>
               </div>
             </div>
 

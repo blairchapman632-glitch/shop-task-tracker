@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
+import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib/leaveCalendar";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -244,180 +245,8 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
     setBlackouts(bo || []);
   };
 
-  // ── Leave calendar helpers ──
-  const pharmacistRoles = ["Pharmacist", "Intern Pharmacist"];
-  const roleGroupOf = (role) =>
-    pharmacistRoles.includes(role) ? "pharmacist" : (role || "other");
-
-  // Step a "YYYY-MM-DD" string forward one day without touching Date/UTC (avoids UTC+8 off-by-one)
-  const nextDayStr = (dateStr) => {
-    const [y, m, d] = dateStr.split("-").map(Number);
-    const dt = new Date(y, m - 1, d + 1); // local midnight, rolls over safely
-    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-  };
-
-  // Is this date inside any manager blackout period?
-  const blackoutOn = (dateStr) =>
-    blackouts.find((b) => dateStr >= b.from_date && dateStr <= b.to_date) || null;
-
-  // Everyone else's leave covering this date (excludes the logged-in staff member)
-  const leaveOn = (dateStr) => {
-    if (!selectedStaff) return [];
-    return allLeave.filter(
-      (lr) =>
-        lr.staff_id !== selectedStaff.id &&
-        dateStr >= lr.from_date &&
-        dateStr <= lr.to_date
-    );
-  };
-
-  // Classify a date for the calendar: "blackout" | "clash" (same role) | "leave" (other role) | null
-  const dayState = (dateStr) => {
-    if (blackoutOn(dateStr)) return "blackout";
-    const others = leaveOn(dateStr);
-    if (others.length === 0) return null;
-    const myGroup = roleGroupOf(selectedStaff?.role);
-    const sameRole = others.some((lr) => roleGroupOf(lr.staff?.role) === myGroup);
-    return sameRole ? "clash" : "leave";
-  };
-
   const isMultiDay = leaveFrom && leaveTo && leaveFrom !== leaveTo;
-  // ── Leave calendar component ──
-  const LeaveCalendar = () => {
-    const base = new Date();
-    base.setDate(1);
-    base.setMonth(base.getMonth() + leaveMonthOffset);
-    const year = base.getFullYear();
-    const month = base.getMonth();
-    const monthLabel = base.toLocaleDateString("en-AU", { month: "long", year: "numeric" });
 
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const startOffset = (new Date(year, month, 1).getDay() + 6) % 7; // Mon-first
-    const todayStr = new Date().toISOString().slice(0, 10);
-
-    const cells = [];
-    for (let i = 0; i < startOffset; i++) cells.push(null);
-    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-
-    const handleDayTap = (dateStr) => {
-      const state = dayState(dateStr);
-      if (state === "blackout") {
-        const b = blackoutOn(dateStr);
-        alert(`Leave can't be requested for this date.${b?.reason ? `\n\n${b.reason}` : ""}`);
-        return;
-      }
-      if (state === "clash") {
-        const who = [...new Set(leaveOn(dateStr).map((lr) => lr.staff?.name).filter(Boolean))].join(", ");
-        alert(`Someone in your role (${who}) has already requested leave on this date, so it can't be selected.`);
-        return;
-      }
-      // Selecting: first tap sets start (no end yet), second tap sets end
-      if (!leaveFrom || leaveTo) {
-        setLeaveFrom(dateStr);
-        setLeaveTo("");
-      } else if (dateStr < leaveFrom) {
-        setLeaveFrom(dateStr);
-      } else if (dateStr === leaveFrom) {
-        // Tapped the same day again — treat as a single-day selection
-        setLeaveTo(dateStr);
-      } else {
-        // Check nothing blocked sits between start and end
-        let cs = leaveFrom;
-        while (cs <= dateStr) {
-          const st = dayState(cs);
-          if (st === "blackout" || st === "clash") {
-            alert("Your selected range includes a blocked date. Pick a range that doesn't cross blocked days.");
-            return;
-          }
-          cs = nextDayStr(cs);
-        }
-        setLeaveTo(dateStr);
-      }
-    };
-
-    const inSelected = (dateStr) => {
-      if (!leaveFrom) return false;
-      if (!leaveTo) return dateStr === leaveFrom; // first tap — highlight just the start day
-      return dateStr >= leaveFrom && dateStr <= leaveTo;
-    };
-
-    return (
-      <div className="border rounded-lg p-2">
-        <div className="flex items-center justify-between mb-2">
-          <button type="button" onClick={() => setLeaveMonthOffset((m) => m - 1)} className="px-2 py-1 text-xs border rounded hover:bg-gray-50">←</button>
-          <span className="text-xs font-medium text-gray-700">{monthLabel}</span>
-          <button type="button" onClick={() => setLeaveMonthOffset((m) => m + 1)} className="px-2 py-1 text-xs border rounded hover:bg-gray-50">→</button>
-        </div>
-        <div className="grid grid-cols-7 gap-0.5 text-center">
-          {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
-            <div key={i} className="text-[9px] font-semibold text-gray-400 py-1">{d}</div>
-          ))}
-          {cells.map((day, i) => {
-            if (!day) return <div key={i} />;
-            const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-            const isPast = dateStr < todayStr;
-            const state = dayState(dateStr);
-            const selected = inSelected(dateStr);
-            const blocked = state === "blackout" || state === "clash";
-
-            let cls = "bg-white text-gray-700 hover:bg-gray-100";
-            if (isPast) cls = "bg-white text-gray-300 cursor-not-allowed";
-            else if (selected) cls = "bg-blue-600 text-white font-semibold";
-            else if (state === "blackout") cls = "bg-gray-300 text-gray-500 cursor-not-allowed line-through";
-            else if (state === "clash") cls = "bg-red-200 text-red-700 cursor-not-allowed";
-            else if (state === "leave") cls = "bg-amber-200 text-amber-800 hover:bg-amber-300";
-
-            return (
-              <button
-                key={i}
-                type="button"
-                disabled={isPast || blocked}
-                onClick={() => handleDayTap(dateStr)}
-                className={`aspect-square rounded text-[11px] flex items-center justify-center ${cls}`}
-              >
-                {day}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Month summary — who has requested leave this month */}
-        {(() => {
-          const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
-          const byStaff = {};
-          allLeave.forEach((lr) => {
-            if (!selectedStaff || lr.staff_id === selectedStaff.id) return;
-            if (lr.to_date < `${monthPrefix}-01` || lr.from_date > `${monthPrefix}-31`) return;
-            const name = lr.staff?.name;
-            if (!name) return;
-            if (!byStaff[name]) byStaff[name] = [];
-            byStaff[name].push(lr);
-          });
-          const names = Object.keys(byStaff).sort();
-          if (names.length === 0) return null;
-          const fmtShort = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" });
-          return (
-            <div className="mt-2 pt-2 border-t text-[11px] text-gray-600">
-              <div className="font-medium text-gray-500 mb-1">Leave requested this month:</div>
-              <div className="space-y-0.5">
-                {names.map((name) => (
-                  <div key={name}>
-                    <span className="font-medium text-gray-700">{name}</span>{" "}
-                    {byStaff[name]
-                      .sort((a, b) => a.from_date.localeCompare(b.from_date))
-                      .map((lr) => (lr.from_date === lr.to_date ? fmtShort(lr.from_date) : `${fmtShort(lr.from_date)}–${fmtShort(lr.to_date)}`))
-                      .join(", ")}
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-      </div>
-    );
-  };
-
- 
   const handleSubmitLeave = async () => {
     if (!leaveFrom) { alert("Please choose dates."); return; }
     // A single tap selects one day — treat a blank end as same-day
@@ -426,16 +255,17 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
 
     // Final guard — walk the range and block if any day is a blackout or same-role clash
     {
+      const dsArgs = { blackouts, allLeave, selfId: selectedStaff.id, selfRole: selectedStaff.role };
       let cs = leaveFrom;
       while (cs <= effLeaveTo) {
-        const st = dayState(cs);
+        const st = dayState({ dateStr: cs, ...dsArgs });
         if (st === "blackout") {
-          const b = blackoutOn(cs);
+          const b = blackoutOn(blackouts, cs);
           alert(`Your dates include a blackout period (${fmtDate(cs)}) where leave can't be requested.${b?.reason ? `\n\n${b.reason}` : ""}`);
           return;
         }
         if (st === "clash") {
-          const who = [...new Set(leaveOn(cs).map((lr) => lr.staff?.name).filter(Boolean))].join(", ");
+          const who = [...new Set(leaveOn(allLeave, selectedStaff.id, cs).map((lr) => lr.staff?.name).filter(Boolean))].join(", ");
           alert(`Someone in your role (${who}) has already requested leave on ${fmtDate(cs)}, so this can't be submitted.`);
           return;
         }
@@ -870,21 +700,24 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                 {/* Calendar picker */}
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Dates</label>
-                  <LeaveCalendar />
+                  <LeaveCalendar
+                    monthOffset={leaveMonthOffset}
+                    setMonthOffset={setLeaveMonthOffset}
+                    leaveFrom={leaveFrom}
+                    leaveTo={leaveTo}
+                    setLeaveFrom={setLeaveFrom}
+                    setLeaveTo={setLeaveTo}
+                    allLeave={allLeave}
+                    blackouts={blackouts}
+                    selfId={selectedStaff.id}
+                    selfRole={selectedStaff.role}
+                  />
                   <div className="flex flex-wrap gap-2 mt-2 text-[10px] text-gray-500">
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600 inline-block"></span> Selected</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-200 inline-block"></span> Leave requested</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-200 inline-block"></span> Unavailable (same role)</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-300 inline-block"></span> Blackout</span>
                   </div>
-                  {leaveFrom && (
-                    <div className="mt-2 text-xs text-gray-700">
-                      {leaveFrom === leaveTo || !leaveTo
-                        ? <>Selected: <span className="font-medium">{fmtDate(leaveFrom)}</span></>
-                        : <>Selected: <span className="font-medium">{fmtDate(leaveFrom)} → {fmtDate(leaveTo)}</span></>}
-                      <button onClick={() => { setLeaveFrom(""); setLeaveTo(""); }} className="ml-2 text-blue-600 hover:underline">Clear</button>
-                    </div>
-                  )}
                 </div>
 
                 {!isMultiDay && (
