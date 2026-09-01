@@ -2068,6 +2068,11 @@ function LocumsTab() {
   const [newGapStart, setNewGapStart] = useState("09:00");
   const [newGapEnd, setNewGapEnd] = useState("17:00");
   const [addingGap, setAddingGap] = useState(false);
+  const [editingBookingId, setEditingBookingId] = useState(null);
+  const [editBookingStart, setEditBookingStart] = useState("");
+  const [editBookingEnd, setEditBookingEnd] = useState("");
+  const [editBookingLocumId, setEditBookingLocumId] = useState("");
+  const [savingBookingEdit, setSavingBookingEdit] = useState(false);
 
   const loadAllBookings = async () => {
     setLoadingBookings(true);
@@ -2172,6 +2177,50 @@ function LocumsTab() {
     if (!window.confirm("Remove this slot from the list?")) return;
     await supabase.from("locum_gaps").delete().eq("id", gapId);
     await loadCover();
+  };
+
+  const startEditBooking = async (entry) => {
+    setEditingBookingId(entry.bookingId);
+    setEditBookingStart(entry.bookingStart || entry.start);
+    setEditBookingEnd(entry.bookingEnd || entry.end);
+    // Look up the current locum on this booking so the dropdown pre-selects them
+    const { data } = await supabase.from("roster_shifts").select("staff_id").eq("id", entry.bookingId).maybeSingle();
+    setEditBookingLocumId(data?.staff_id ? String(data.staff_id) : "");
+  };
+
+  const handleSaveBookingEdit = async () => {
+    if (!editingBookingId) return;
+    setSavingBookingEdit(true);
+    try {
+      const patch = { start_time: editBookingStart, end_time: editBookingEnd };
+      if (editBookingLocumId) patch.staff_id = Number(editBookingLocumId);
+      const { error } = await supabase.from("roster_shifts").update(patch).eq("id", editingBookingId);
+      if (error) throw error;
+      setEditingBookingId(null);
+      await loadCover();
+      await loadAllBookings();
+    } catch (err) {
+      alert("Couldn't update booking: " + (err?.message || String(err)));
+    } finally {
+      setSavingBookingEdit(false);
+    }
+  };
+
+  const handleUnassignBooking = async () => {
+    if (!editingBookingId) return;
+    if (!window.confirm("Unassign this locum? The shift is removed and goes back to needing a locum.")) return;
+    setSavingBookingEdit(true);
+    try {
+      const { error } = await supabase.from("roster_shifts").delete().eq("id", editingBookingId);
+      if (error) throw error;
+      setEditingBookingId(null);
+      await loadCover();
+      await loadAllBookings();
+    } catch (err) {
+      alert("Couldn't unassign: " + (err?.message || String(err)));
+    } finally {
+      setSavingBookingEdit(false);
+    }
   };
 
   const handleAssignLocum = async (entry, locumId) => {
@@ -2397,12 +2446,44 @@ function LocumsTab() {
                       >
                         <span className="text-sm">{e.filled ? "✅" : "🔴"}</span>
                         <div className="text-sm text-gray-700 w-48 shrink-0">{fmtAllDate(e.date)}</div>
-                        <div className="text-sm text-gray-600 w-32 shrink-0">{formatTime(e.start)} – {formatTime(e.end)}</div>
-                        <div className="text-xs text-gray-500 flex-1 min-w-0 truncate">
-                          {e.manual ? "Manual slot" : `${e.staffName} off${e.status === "pending" ? " (pending)" : ""}`}
-                        </div>
+                        {e.filled && editingBookingId === e.bookingId ? (
+                          <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
+                            <input type="time" value={editBookingStart} onChange={(ev) => setEditBookingStart(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0" />
+                            <span className="text-gray-400 text-xs">–</span>
+                            <input type="time" value={editBookingEnd} onChange={(ev) => setEditBookingEnd(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0" />
+                            <select value={editBookingLocumId} onChange={(ev) => setEditBookingLocumId(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0">
+                              <option value="">— locum —</option>
+                              {locums.filter((l) => l.active !== false).map((l) => (
+                                <option key={l.id} value={l.id}>{l.name}</option>
+                              ))}
+                            </select>
+                            <div className="flex items-center gap-1 shrink-0 ml-auto">
+                              <button onClick={handleSaveBookingEdit} disabled={savingBookingEdit} className="text-xs px-2 py-1 bg-blue-600 text-white rounded disabled:opacity-40">{savingBookingEdit ? "…" : "Save"}</button>
+                              <button onClick={() => setEditingBookingId(null)} className="text-xs px-2 py-1 border rounded">Cancel</button>
+                              <button onClick={handleUnassignBooking} disabled={savingBookingEdit} className="text-xs px-2 py-1 border border-red-200 text-red-600 rounded hover:bg-red-50 disabled:opacity-40">Unassign</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-sm text-gray-600 w-32 shrink-0">
+                              {e.filled
+                                ? `${formatTime(e.bookingStart || e.start)} – ${formatTime(e.bookingEnd || e.end)}`
+                                : `${formatTime(e.start)} – ${formatTime(e.end)}`}
+                            </div>
+                            <div className="text-xs text-gray-500 flex-1 min-w-0 truncate">
+                              {e.manual ? "Manual slot" : `${e.staffName} off${e.status === "pending" ? " (pending)" : ""}`}
+                            </div>
+                          </>
+                        )}
                         {e.filled ? (
-                          <div className="text-xs shrink-0 text-green-700 font-medium">{e.locumName}</div>
+                          editingBookingId === e.bookingId ? null : (
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-xs text-green-700 font-medium">{e.locumName}</span>
+                              {e.bookingId && (
+                                <button onClick={() => startEditBooking(e)} className="text-xs text-blue-600 hover:underline">Edit</button>
+                              )}
+                            </div>
+                          )
                         ) : (
                           <select
                             defaultValue=""

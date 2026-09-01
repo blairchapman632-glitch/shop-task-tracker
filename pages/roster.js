@@ -360,6 +360,45 @@ const selectedDayShifts = selectedDate
     setDismissedIssues(new Set((data || []).map((d) => d.issue_key)));
   }, []);
 
+  const refreshBlackouts = useCallback(async () => {
+    const { data } = await supabase.from("leave_blackouts").select("*").order("from_date");
+    setBlackouts(data || []);
+  }, []);
+
+  const handleAddBlackout = async () => {
+    if (!newBlackoutFrom || !newBlackoutTo) { alert("Please choose from and to dates."); return; }
+    if (newBlackoutTo < newBlackoutFrom) { alert("'To' can't be before 'From'."); return; }
+    try {
+      setSavingBlackout(true);
+      const { error } = await supabase.from("leave_blackouts").insert([{
+        pharmacy_id: pharmacyId,
+        from_date: newBlackoutFrom,
+        to_date: newBlackoutTo,
+        reason: newBlackoutReason.trim() || null,
+      }]);
+      if (error) throw error;
+      setNewBlackoutFrom("");
+      setNewBlackoutTo("");
+      setNewBlackoutReason("");
+      await refreshBlackouts();
+    } catch (err) {
+      alert("Couldn't save blackout: " + (err?.message || String(err)));
+    } finally {
+      setSavingBlackout(false);
+    }
+  };
+
+  const handleDeleteBlackout = async (id) => {
+    if (!window.confirm("Delete this blackout period?")) return;
+    try {
+      const { error } = await supabase.from("leave_blackouts").delete().eq("id", id);
+      if (error) throw error;
+      await refreshBlackouts();
+    } catch (err) {
+      alert("Couldn't delete blackout: " + (err?.message || String(err)));
+    }
+  };
+
   const dismissIssue = async (key) => {
     setDismissedIssues((prev) => new Set(prev).add(key));
     const { error } = await supabase.from("roster_issue_dismissals").insert([{ issue_key: key, pharmacy_id: pharmacyId }]);
@@ -452,6 +491,7 @@ const refreshLeave = useCallback(async () => {
       setShifts(shiftData || []);
       refreshSick();
       refreshDismissals();
+      refreshBlackouts();
       setStaffOptions((staffData || []).filter((s) => s.active !== false));
       setTemplates(templateData || []);
       setHolidays(holidayData || []);
@@ -1229,6 +1269,15 @@ const handleLeaveDecision = async (lr, decision) => {
   const [showHolidays, setShowHolidays] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showMonthNotes, setShowMonthNotes] = useState(false);
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("holidays"); // holidays | templates | blackouts
+
+  // Blackout periods
+  const [blackouts, setBlackouts] = useState([]);
+  const [newBlackoutFrom, setNewBlackoutFrom] = useState("");
+  const [newBlackoutTo, setNewBlackoutTo] = useState("");
+  const [newBlackoutReason, setNewBlackoutReason] = useState("");
+  const [savingBlackout, setSavingBlackout] = useState(false);
 
   // Availability panel
   const [showAvailability, setShowAvailability] = useState(false);
@@ -1364,11 +1413,8 @@ const handleLeaveDecision = async (lr, decision) => {
       <div className="border-t my-1" />
 
       {/* Roster tools */}
-      <button onClick={() => { setShowHolidays(true); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
-        📅 Holidays
-      </button>
-      <button onClick={() => { setShowTemplates(true); setShowHolidays(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
-        📝 Templates
+      <button onClick={() => { setShowSettingsPanel(true); setShowHolidays(false); setShowTemplates(false); setShowMonthNotes(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
+        ⚙️ Settings
       </button>
       <button onClick={() => { setShowMonthNotes(true); setShowHolidays(false); setShowTemplates(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-gray-700 hover:bg-gray-100 w-full text-left">
         📓 Month Notes
@@ -1400,6 +1446,19 @@ const handleLeaveDecision = async (lr, decision) => {
 
     const handleSave = async () => {
       setSavingInline(true);
+      // Locum shifts: time-only edit. Locums aren't in staffOptions, so re-matching
+      // would strip staff_id and flip the role — keep the existing booking intact.
+      if (shift.role === "Locum") {
+        await supabase.from("roster_shifts").update({
+          start_time: inlineStartRef.current,
+          end_time: inlineEndRef.current,
+        }).eq("id", shift.id);
+        await refreshShifts();
+        setInlineEdit(null);
+        setInlineSuggestions([]);
+        setSavingInline(false);
+        return;
+      }
       const name = inlineEditName.trim();
       const matched = staffOptions.find((s) => s.name.toLowerCase() === name.toLowerCase());
       const staffId = matched ? matched.id : null;
@@ -1438,6 +1497,7 @@ const handleLeaveDecision = async (lr, decision) => {
           <div className="relative mb-2">
             <input
               value={inlineEditName}
+              disabled={shift.role === "Locum"}
               onChange={(e) => {
                 const val = e.target.value;
                 setInlineEditName(val);
@@ -1449,8 +1509,11 @@ const handleLeaveDecision = async (lr, decision) => {
               }}
               onKeyDown={(e) => { if (e.key === "Enter") { setInlineSuggestions([]); handleSave(); } if (e.key === "Escape") { setInlineEdit(null); setInlineSuggestions([]); } }}
               placeholder="Name (blank = TBC)"
-              className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
+              className={`w-full rounded border border-gray-300 px-2 py-1.5 text-xs ${shift.role === "Locum" ? "bg-gray-100 text-gray-500" : ""}`}
             />
+            {shift.role === "Locum" && (
+              <div className="text-[10px] text-gray-400 mt-1">Locum — edit time only. Change who in Admin → Locums.</div>
+            )}
             {inlineSuggestions.length > 0 && (
               <div className="absolute z-10 w-full bg-white border border-gray-200 rounded shadow text-xs mt-0.5">
                 {inlineSuggestions.map((s) => (
@@ -1950,7 +2013,184 @@ const handleLeaveDecision = async (lr, decision) => {
         </div>
       )}
       <InlineEditPopup />
-   {/* ── Holidays modal ── */}
+   {/* ── Settings panel ── */}
+      {showSettingsPanel && (
+        <div className="no-print fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/20" onClick={() => setShowSettingsPanel(false)} />
+          <div className="w-full max-w-md bg-white shadow-2xl flex flex-col h-full overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+              <div className="font-semibold text-gray-900 text-sm">⚙️ Settings</div>
+              <button onClick={() => setShowSettingsPanel(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            </div>
+
+            {/* Sub-tabs */}
+            <div className="flex gap-1 px-4 py-2 border-b bg-gray-50 shrink-0">
+              {[
+                { key: "holidays", label: "📅 Holidays" },
+                { key: "templates", label: "📝 Templates" },
+                { key: "blackouts", label: "🚫 Leave blackouts" },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setSettingsSection(t.key)}
+                  className={`flex-1 text-[11px] rounded-lg py-1.5 font-medium ${settingsSection === t.key ? "bg-blue-600 text-white" : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-100"}`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+              {/* ── Holidays section ── */}
+              {settingsSection === "holidays" && (
+                <>
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Add Public Holiday</div>
+                  <div className="space-y-2">
+                    <input type="date" value={newHolidayDate} onChange={(e) => setNewHolidayDate(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                    <input type="text" value={newHolidayName} onChange={(e) => setNewHolidayName(e.target.value)} placeholder="Holiday name (e.g. Christmas Day)" className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                    <select value={newHolidayKey} onChange={(e) => setNewHolidayKey(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs">
+                      <option value="default">🏖️ Generic</option>
+                      <option value="newyear">🎆 New Year</option>
+                      <option value="australia">🦘 Australia Day</option>
+                      <option value="easter">🐣 Easter</option>
+                      <option value="anzac">🌺 ANZAC Day</option>
+                      <option value="wa">⚓ WA Day</option>
+                      <option value="christmas">🎅 Christmas</option>
+                    </select>
+                    <button onClick={handleAddHoliday} disabled={savingHoliday} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                      {savingHoliday ? "Saving..." : "Add Holiday"}
+                    </button>
+                  </div>
+                  <div className="border-t pt-3">
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Existing Holidays</div>
+                    <div className="space-y-1.5">
+                      {[...holidays].sort((a, b) => a.date.localeCompare(b.date)).map((h) => (
+                        <div key={h.id} className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 bg-gray-50">
+                          <div>
+                            <span className="mr-1">{holidayEmoji[h.image_key] || holidayEmoji.default}</span>
+                            <span className="text-xs font-medium text-gray-800">{h.name}</span>
+                            <span className="text-[10px] text-gray-400 ml-2">{h.date}</span>
+                          </div>
+                          <button onClick={() => handleDeleteHoliday(h.id)} className="text-[10px] text-red-500 hover:text-red-700 shrink-0">Delete</button>
+                        </div>
+                      ))}
+                      {holidays.length === 0 && <div className="text-xs text-gray-400">No holidays added yet.</div>}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ── Templates section ── */}
+              {settingsSection === "templates" && (
+                <>
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Add Shift Template</div>
+                  <div className="space-y-2">
+                    <input type="text" value={newTemplateName} onChange={(e) => setNewTemplateName(e.target.value)} placeholder="Template name (e.g. Early shift)" className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                    <select value={newTemplateRole} onChange={(e) => setNewTemplateRole(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs">
+                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                    <div className="flex gap-2">
+                      <input type="time" value={newTemplateStart} onChange={(e) => setNewTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                      <input type="time" value={newTemplateEnd} onChange={(e) => setNewTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                    </div>
+                    <button onClick={handleAddTemplate} disabled={savingTemplate} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                      {savingTemplate ? "Saving..." : "Add Template"}
+                    </button>
+                  </div>
+                  <div className="border-t pt-3">
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Existing Templates</div>
+                    <div className="space-y-1.5">
+                      {templates.map((t) => (
+                        <div key={t.id} className="rounded border px-2 py-1.5 bg-gray-50">
+                          {editingTemplateId === t.id ? (
+                            <div className="space-y-2">
+                              <input type="text" value={editTemplateName} onChange={(e) => setEditTemplateName(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1 text-xs" />
+                              <select value={editTemplateRole} onChange={(e) => setEditTemplateRole(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1 text-xs">
+                                {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                              </select>
+                              <div className="flex gap-2">
+                                <input type="time" value={editTemplateStart} onChange={(e) => setEditTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                                <input type="time" value={editTemplateEnd} onChange={(e) => setEditTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                              </div>
+                              <div className="flex gap-2 justify-end">
+                                <button onClick={handleCancelEditTemplate} className="px-2 py-1 text-xs border rounded hover:bg-gray-100">Cancel</button>
+                                <button onClick={handleUpdateTemplate} disabled={savingTemplateEdit} className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                                  {savingTemplateEdit ? "Saving..." : "Save"}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <span className={`text-xs font-medium ${roleColour[t.role] || "text-gray-800"}`}>{t.name}</span>
+                                <span className="text-[10px] text-gray-400 ml-2">{formatTime(t.start_time)}–{formatTime(t.end_time)} · {t.role}</span>
+                              </div>
+                              <div className="flex gap-1 shrink-0">
+                                <button onClick={() => handleStartEditTemplate(t)} className="text-[10px] text-blue-500 hover:text-blue-700">Edit</button>
+                                <button onClick={() => handleDeleteTemplate(t.id)} className="text-[10px] text-red-500 hover:text-red-700">Delete</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {templates.length === 0 && <div className="text-xs text-gray-400">No templates added yet.</div>}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ── Leave blackouts section ── */}
+              {settingsSection === "blackouts" && (
+                <>
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Add Blackout Period</div>
+                  <p className="text-[11px] text-gray-400">Staff can't submit leave requests for dates inside a blackout period.</p>
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-600 mb-1">From</label>
+                        <input type="date" value={newBlackoutFrom} onChange={(e) => setNewBlackoutFrom(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-600 mb-1">To</label>
+                        <input type="date" value={newBlackoutTo} onChange={(e) => setNewBlackoutTo(e.target.value)} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                      </div>
+                    </div>
+                    <input type="text" value={newBlackoutReason} onChange={(e) => setNewBlackoutReason(e.target.value)} placeholder="Reason (optional, shown to staff)" className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                    <button onClick={handleAddBlackout} disabled={savingBlackout} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                      {savingBlackout ? "Saving..." : "Add Blackout"}
+                    </button>
+                  </div>
+                  <div className="border-t pt-3">
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Existing Blackouts</div>
+                    <div className="space-y-1.5">
+                      {blackouts.map((b) => {
+                        const same = b.from_date === b.to_date;
+                        const range = same
+                          ? new Date(b.from_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })
+                          : `${new Date(b.from_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" })} → ${new Date(b.to_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}`;
+                        return (
+                          <div key={b.id} className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 bg-gray-50">
+                            <div className="min-w-0">
+                              <div className="text-xs font-medium text-gray-800">{range}</div>
+                              {b.reason && <div className="text-[10px] text-gray-500 truncate">{b.reason}</div>}
+                            </div>
+                            <button onClick={() => handleDeleteBlackout(b.id)} className="text-[10px] text-red-500 hover:text-red-700 shrink-0">Delete</button>
+                          </div>
+                        );
+                      })}
+                      {blackouts.length === 0 && <div className="text-xs text-gray-400">No blackout periods yet.</div>}
+                    </div>
+                  </div>
+                </>
+              )}
+
+            </div>
+          </div>
+        </div>
+      )}
+
+   {/* ── Holidays modal (legacy — no longer opened) ── */}
       {showHolidays && (
         <div className="no-print fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/20" onClick={() => setShowHolidays(false)} />
