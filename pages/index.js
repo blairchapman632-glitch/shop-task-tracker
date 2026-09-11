@@ -688,6 +688,7 @@ export default function HomePage() {
         { data: monthlyComps },
         { data: sectionCleanData },
         { data: upcomingShifts },
+        { data: todaySickData },
       ] = await Promise.all([
         supabase.from("tasks").select("*").eq("pharmacy_id", currentPharmacyId).order("due_time", { ascending: true, nullsFirst: false }).order("title", { ascending: true }),
         supabase.from("staff").select("*").eq("pharmacy_id", currentPharmacyId).order("name", { ascending: true }),
@@ -702,6 +703,7 @@ export default function HomePage() {
           return supabase.from("section_clean_schedule").select(`id, month, completed_at, completed_by_staff_id, section:section_id(id, name, assigned_staff_id, notes, staff:assigned_staff_id(id, name))`).in("month", months);
         })(),
         supabase.from("roster_shifts").select("staff_id, shift_date").gte("shift_date", todayStr).lte("shift_date", lookAheadEnd).order("shift_date", { ascending: true }),
+        supabase.from("sick_days").select("roster_shift_id").eq("sick_date", todayStr),
       ]);
 
       const activeStaff = (s || []).filter((x) => x.active !== false);
@@ -728,14 +730,17 @@ export default function HomePage() {
       }));
       setSectionCleans(enriched);
 
-      // On shift staff
-      const onShift = (rosterShifts || []).map((sh) => ({
-        id: sh.staff?.id || sh.staff_id,
-        name: sh.staff?.name || sh.staff_name || "?",
-        photo_url: sh.staff?.photo_url || null,
-        start_time: sh.start_time,
-        end_time: sh.end_time,
-      })).filter((x) => x.id);
+      // On shift staff — exclude shifts marked sick/absent today
+      const sickShiftIds = new Set((todaySickData || []).map((s) => String(s.roster_shift_id)));
+      const onShift = (rosterShifts || [])
+        .filter((sh) => !sickShiftIds.has(String(sh.id)))
+        .map((sh) => ({
+          id: sh.staff?.id || sh.staff_id,
+          name: sh.staff?.name || sh.staff_name || "?",
+          photo_url: sh.staff?.photo_url || null,
+          start_time: sh.start_time,
+          end_time: sh.end_time,
+        })).filter((x) => x.id);
 
       // Deduplicate by staff id
       const seen = new Set();
