@@ -90,6 +90,7 @@ const roleColour = {
   "pharmacy assistant": "text-teal-700",
   "Pharmacy Assistant": "text-teal-700",
   "Intern Pharmacist": "text-purple-500",
+  "Retail Manager": "text-pink-600",
   Manager: "text-gray-700",
 };
 
@@ -406,6 +407,7 @@ function RosterModal({ onClose }) {
   const [monthIndex, setMonthIndex] = useState(0);
   const [shifts, setShifts] = useState([]);
   const [holidays, setHolidays] = useState([]);
+  const [sickByShift, setSickByShift] = useState({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -450,6 +452,15 @@ function RosterModal({ onClose }) {
       .gte("shift_date", start)
       .lt("shift_date", end)
       .then(({ data }) => setShifts(data || []));
+    supabase.from("sick_days")
+      .select("roster_shift_id, leave_type")
+      .gte("sick_date", start)
+      .lt("sick_date", end)
+      .then(({ data }) => {
+        const map = {};
+        (data || []).forEach((s) => { map[s.roster_shift_id] = s; });
+        setSickByShift(map);
+      });
   }, [monthIndex, publishedMonths]);
 
   if (loading) return (
@@ -504,6 +515,7 @@ function RosterModal({ onClose }) {
             { label: "Locum", cls: "text-blue-700" },
             { label: "DAA", cls: "text-orange-600" },
             { label: "Pharmacy Assistant", cls: "text-teal-700" },
+            { label: "Retail Manager", cls: "text-pink-600" },
           ].map(({ label, cls }) => (
             <span key={label} className={`font-medium ${cls}`}>{label}</span>
           ))}
@@ -552,9 +564,11 @@ function RosterModal({ onClose }) {
                       <div className="space-y-px">
                         {dayShifts.map((s) => {
                           const name = s.staff?.name || s.staff_name || "?";
+                          const sick = sickByShift[s.id];
+                          const sickCls = sick?.leave_type === "compassionate" ? "text-purple-400 line-through" : sick ? "text-red-400 line-through" : roleColour[s.role] || "text-gray-700";
                           return (
-                            <div key={s.id} className={`text-[10px] leading-tight truncate ${roleColour[s.role] || "text-gray-700"}`}>
-                              {name} <span className="opacity-70">{formatRosterTime(s.start_time)}–{formatRosterTime(s.end_time)}</span>
+                            <div key={s.id} className={`text-[10px] leading-tight truncate ${sickCls}`}>
+                              {sick?.leave_type === "compassionate" ? "🕊️ " : sick ? "🤒 " : ""}{name} <span className="opacity-70">{formatRosterTime(s.start_time)}–{formatRosterTime(s.end_time)}</span>
                             </div>
                           );
                         })}
