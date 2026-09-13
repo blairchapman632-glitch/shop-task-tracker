@@ -336,7 +336,7 @@ const selectedDayShifts = selectedDate
           const dow = new Date(dateStr + "T00:00:00").getDay();
           const closeTime = (dow === 0 || dow === 6) ? "17:00" : "18:30";
           const closeLabel = (dow === 0 || dow === 6) ? "5pm" : "6:30pm";
-          const assistants = dayShifts.filter((s) => s.role === "Pharmacy Assistant" || s.role === "DAA Coordinator");
+          const assistants = dayShifts.filter((s) => s.role === "Pharmacy Assistant" || s.role === "DAA Coordinator" || s.role === "Retail Manager");
           const blairOpening = dow === 0 && dayShifts.some((s) => (s.staff?.name || s.staff_name || "").toLowerCase().includes("blair") && String(s.start_time).slice(0, 5) <= "08:00");
           const openTime = blairOpening ? "09:00" : "08:00";
           const openLabel = blairOpening ? "9am" : "8am";
