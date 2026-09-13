@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
-import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle } from "../lib/qspp";
+import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle, hoursInYear, currentTrainingYear } from "../lib/qspp";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -125,6 +125,35 @@ function TrainingView({ staff }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [certUploadingId, setCertUploadingId] = useState(null);
+  const [certError, setCertError] = useState("");
+
+  const handleCertUpload = async (record, selectedFile) => {
+    if (!selectedFile) return;
+    setCertError("");
+    setCertUploadingId(record.id);
+    try {
+      const ext = selectedFile.name.split(".").pop();
+      const filename = `${staff.id}_${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from("training-certificates")
+        .upload(filename, selectedFile, { upsert: true });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from("training-certificates").getPublicUrl(filename);
+      const { data: updated, error: updErr } = await supabase
+        .from("training_records")
+        .update({ certificate_url: urlData.publicUrl, certificate_filename: selectedFile.name })
+        .eq("id", record.id)
+        .select()
+        .single();
+      if (updErr) throw updErr;
+      setTraining((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    } catch (err) {
+      setCertError("Couldn't attach certificate: " + (err?.message || String(err)));
+    } finally {
+      setCertUploadingId(null);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -144,6 +173,10 @@ function TrainingView({ staff }) {
     if (!topic.trim()) { setError("Topic is required."); return; }
     if (!date) { setError("Date is required."); return; }
     if (hours === "" || isNaN(Number(hours))) { setError("Hours is required."); return; }
+    const dup = training.find((r) => r.topic?.trim().toLowerCase() === topic.trim().toLowerCase() && r.training_date === date);
+    if (dup) {
+      if (!window.confirm(`You already have a record for "${topic.trim()}" on that date. Add it again anyway?`)) return;
+    }
     setSaving(true);
     try {
       let certUrl = null, certName = null;
@@ -202,6 +235,53 @@ function TrainingView({ staff }) {
 
       <main className="max-w-lg mx-auto px-4 py-5 space-y-4">
 
+        {/* Training requirements info */}
+        <div className="bg-white rounded-2xl shadow-sm border p-4 space-y-3">
+          <div className="text-sm font-bold text-gray-800">Training requirements</div>
+          <p className="text-sm text-gray-600">
+            You need <span className="font-semibold">3 hours of training per year</span> — over a full QSPP 3-year cycle that's <span className="font-semibold">9 hours total</span>.
+          </p>
+          <p className="text-xs text-gray-500">
+            This applies to pharmacy assistants and covers the supply of Pharmacy Medicines (S2) and Pharmacist Only Medicines (S3). If you've been employed less than 12 months there's no minimum yet — but it's worth starting early.
+          </p>
+
+          <div>
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">What counts</div>
+            <ul className="text-xs text-gray-600 space-y-1 list-disc pl-4">
+              <li>Online courses and modules</li>
+              <li>In-pharmacy training — staff meetings, one-on-one sessions, or rep presentations, as long as they're about medicines and their supply</li>
+            </ul>
+          </div>
+
+          <p className="text-xs text-gray-600">
+            <span className="font-semibold">Always attach your certificate.</span> It's the evidence an assessor asks to see, so upload it against each record whenever you have one.
+          </p>
+
+          <div>
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Where to find online training</div>
+            <div className="space-y-2">
+              <a href="https://pharmacyclub.com.au" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 hover:border-blue-300 hover:bg-blue-50">
+                <span>🎓</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-blue-600">Pharmacy Club</span>
+                  <span className="block text-[11px] text-gray-500 truncate">Our main library of online topics · pharmacyclub.com.au</span>
+                </span>
+              </a>
+              <a href="https://prod-aus-app.workjam.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 hover:border-blue-300 hover:bg-blue-50">
+                <span>🎓</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-blue-600">IPA (WorkJam)</span>
+                  <span className="block text-[11px] text-gray-500 truncate">Banner-group training · prod-aus-app.workjam.com</span>
+                </span>
+              </a>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-gray-400">
+            Once you've completed a course, come back here and add it as a record (topic, date, hours, provider) and attach the certificate.
+          </p>
+        </div>
+
         {/* QSPP progress — pharmacy assistants only */}
         {qsppApplies(staff.role) && (() => {
           const cycle = getCurrentCycle(qsppAnchor);
@@ -209,6 +289,9 @@ function TrainingView({ staff }) {
           const done = hoursInCycle(training, cycle);
           const pct = Math.min(100, Math.round((done / QSPP_HOURS_REQUIRED) * 100));
           const met = done >= QSPP_HOURS_REQUIRED;
+          const year = currentTrainingYear(cycle);
+          const yearDone = hoursInYear(training, year);
+          const yearMet = yearDone >= 3;
           return (
             <div className="bg-white rounded-2xl shadow-sm border p-4">
               <div className="flex items-center justify-between mb-1.5">
@@ -219,6 +302,12 @@ function TrainingView({ staff }) {
               </div>
               <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
                 <div className={`h-2.5 rounded-full ${met ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-[11px] text-gray-500">This year ({year})</span>
+                <span className={`text-[11px] font-medium ${yearMet ? "text-green-600" : "text-gray-600"}`}>
+                  {yearDone} / 3 hrs {yearMet ? "✓" : ""}
+                </span>
               </div>
               <div className="text-[11px] text-gray-400 mt-1.5">Current cycle: {formatCycle(cycle)}</div>
               {!met && <div className="text-[11px] text-gray-500 mt-0.5">{(QSPP_HOURS_REQUIRED - done)} hr{(QSPP_HOURS_REQUIRED - done) === 1 ? "" : "s"} still needed this cycle.</div>}
@@ -277,8 +366,16 @@ function TrainingView({ staff }) {
             <p className="text-sm text-gray-400">No training recorded yet.</p>
           ) : (
             <div className="space-y-1.5">
-              {training.map((r) => (
-                <div key={r.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+              {training.map((r, i) => {
+                const yr = r.training_date ? r.training_date.slice(0, 4) : "";
+                const prevYr = i > 0 && training[i - 1].training_date ? training[i - 1].training_date.slice(0, 4) : "";
+                const showDivider = yr && yr !== prevYr;
+                return (
+                <div key={r.id}>
+                  {showDivider && (
+                    <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide pt-2 pb-1">{yr}</div>
+                  )}
+                  <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                   <div className="flex items-start gap-2">
                     <span className="text-sm">📚</span>
                     <div className="min-w-0 flex-1">
@@ -289,14 +386,28 @@ function TrainingView({ staff }) {
                         {r.provider ? ` · ${r.provider}` : ""}
                       </div>
                     </div>
-                    {r.certificate_url && (
-                      <a href={r.certificate_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Certificate</a>
-                    )}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {r.certificate_url && (
+                        <a href={r.certificate_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Certificate</a>
+                      )}
+                      <label className={`text-xs cursor-pointer hover:underline ${r.certificate_url ? "text-gray-500" : "text-blue-600"} ${certUploadingId === r.id ? "opacity-40 pointer-events-none" : ""}`}>
+                        {certUploadingId === r.id ? "Uploading…" : (r.certificate_url ? "Replace" : "📎 Add")}
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          className="hidden"
+                          onChange={(e) => { handleCertUpload(r, e.target.files?.[0] || null); e.target.value = ""; }}
+                        />
+                      </label>
+                    </div>
+                  </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
+          {certError && <p className="text-sm text-red-500 mt-2">{certError}</p>}
           <p className="text-[11px] text-gray-400 mt-3">Need to change or remove a record? Ask your manager.</p>
         </div>
       </main>
