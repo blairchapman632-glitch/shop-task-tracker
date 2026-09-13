@@ -540,7 +540,7 @@ function RosterModal({ onClose }) {
               const dayShifts = day ? [...shifts.filter((s) => s.shift_date === dateString)].sort((a, b) => {
                 const roleGroup = (role) => {
                   const r = (role || "").toLowerCase();
-                  if (r === "pharmacy assistant" || r === "daa" || r === "daa coordinator") return 0;
+                  if (r === "pharmacy assistant" || r === "daa" || r === "daa coordinator" || r === "retail manager") return 0;
                   return 1;
                 };
                 const groupDiff = roleGroup(a.role) - roleGroup(b.role);
@@ -2398,8 +2398,8 @@ const handleDeliveryTap = async (d) => {
                       <option value="Pharmacist">Pharmacist</option>
                       <option value="Pharmacy Assistant">Pharmacy Assistant</option>
                       <option value="DAA Coordinator">DAA Coordinator</option>
+                      <option value="Retail Manager">Retail Manager</option>
                       <option value="Locum">Locum</option>
-                      <option value="Manager">Manager</option>
                     </select>
                   </div>
                 )}

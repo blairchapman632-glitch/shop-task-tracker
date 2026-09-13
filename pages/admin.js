@@ -26,6 +26,7 @@ const ROLES = [
   "Pharmacy Assistant",
   "DAA Coordinator",
   "Intern Pharmacist",
+  "Retail Manager",
 ];
 
 const EMPLOYMENT_TYPES = ["Permanent", "Salary", "Casual"];

@@ -226,7 +226,7 @@ export default function RosterPage() {
   const sortShifts = (shiftsToSort) => {
     const roleGroup = (role) => {
       const r = (role || "").toLowerCase();
-      if (r === "pharmacy assistant" || r === "daa" || r === "daa coordinator") return 0;
+      if (r === "pharmacy assistant" || r === "daa" || r === "daa coordinator" || r === "retail manager") return 0;
       return 1;
     };
     return [...shiftsToSort].sort((a, b) => {

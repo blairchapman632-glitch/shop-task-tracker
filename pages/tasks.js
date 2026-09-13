@@ -1158,8 +1158,8 @@ const handleAutoBalance = async (staffId, staffName) => {
                       <option value="Pharmacist">Pharmacist</option>
                       <option value="Pharmacy Assistant">Pharmacy Assistant</option>
                       <option value="DAA Coordinator">DAA Coordinator</option>
+                      <option value="Retail Manager">Retail Manager</option>
                       <option value="Locum">Locum</option>
-                      <option value="Manager">Manager</option>
                     </select>
                   )}
                   {form.assign_type === "multiple" && (
