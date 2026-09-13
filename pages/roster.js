@@ -22,9 +22,24 @@ const formatTime = (time) => {
   return `${hour}.${String(minute).padStart(2, "0")}${suffix}`;
 };
 
+const roleHex = {
+  pharmacist: "#7e22ce",
+  Pharmacist: "#7e22ce",
+  locum: "#1d4ed8",
+  Locum: "#1d4ed8",
+  DAA: "#ea580c",
+  "DAA Coordinator": "#ea580c",
+  "pharmacy assistant": "#0f766e",
+  "Pharmacy Assistant": "#0f766e",
+  "Intern Pharmacist": "#a855f7",
+  "Retail Manager": "#db2777",
+  Manager: "#374151",
+};
+
 const roleColour = {
   pharmacist: "text-purple-700",
   Pharmacist: "text-purple-700",
+  "Retail Manager": "text-pink-600",
   locum: "text-blue-700",
   Locum: "text-blue-700",
   DAA: "text-orange-600",
@@ -38,6 +53,7 @@ const roleColour = {
 const roleBorder = {
   pharmacist: "border-purple-400",
   Pharmacist: "border-purple-400",
+  "Retail Manager": "border-pink-400",
   locum: "border-blue-400",
   Locum: "border-blue-400",
   DAA: "border-orange-400",
@@ -58,7 +74,7 @@ const holidayEmoji = {
   default: "🏖️",
 };
 
-const ROLES = ["Pharmacist", "Locum", "DAA Coordinator", "Pharmacy Assistant", "Intern Pharmacist", "Manager"];
+const ROLES = ["Pharmacist", "Locum", "DAA Coordinator", "Pharmacy Assistant", "Intern Pharmacist", "Retail Manager"];
 
 const toMinutes = (timeStr) => {
   if (!timeStr) return 0;
@@ -1609,6 +1625,8 @@ const handleLeaveDecision = async (lr, decision) => {
           .print-calendar-cell { height: 115px !important; padding: 3px 4px !important; overflow: hidden !important; }
           .print-day-number { font-size: 11px !important; font-weight: 700 !important; }
           .print-shift-line { font-size: 10px !important; line-height: 1.5 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; display: block !important; }
+          .print-conflict-icon { display: none !important; }
+          .print-shift-conflict { font-weight: normal !important; color: var(--role-print-colour) !important; }
           .print-weekend-cell { 
             background-color: #faf5ff !important; 
             -webkit-print-color-adjust: exact !important;
@@ -1645,6 +1663,7 @@ const handleLeaveDecision = async (lr, decision) => {
               <span className="text-blue-700 font-semibold">● Locum</span>
               <span className="text-orange-600 font-semibold">● DAA</span>
               <span className="text-teal-700 font-semibold">● Pharmacy Assistant</span>
+              <span className="text-pink-600 font-semibold">● Retail Manager</span>
             </div>
           </div>
 
@@ -1737,13 +1756,14 @@ const handleLeaveDecision = async (lr, decision) => {
                                   inlineEndRef.current = s.end_time?.slice(0, 5) || "";
                                   setInlineSuggestions([]);
                                 }}
-                                className={`print-shift-line text-[10px] leading-tight truncate ${sickByShift[s.id]?.leave_type === "compassionate" ? "text-purple-400 line-through" : sickByShift[s.id] ? "text-red-400 line-through" : conflict ? "text-amber-700 font-medium" : isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
+                                className={`print-shift-line text-[10px] leading-tight truncate ${sickByShift[s.id]?.leave_type === "compassionate" ? "text-purple-400 line-through" : sickByShift[s.id] ? "text-red-400 line-through" : conflict ? "text-amber-700 font-medium print-shift-conflict" : isTBC ? "text-red-500 font-medium" : roleColour[s.role] || "text-gray-700"} ${isDragging ? "opacity-30" : ""}`}
                                 style={{
-                                  fontSize: dayShifts.length > 7 ? "8px" : dayShifts.length > 5 ? "9px" : "10px"
+                                  fontSize: dayShifts.length > 7 ? "8px" : dayShifts.length > 5 ? "9px" : "10px",
+                                  "--role-print-colour": roleHex[s.role] || "#374151"
                                 }}
                                 title={`${name} ${start}–${end} (${s.role})${sickByShift[s.id] ? " — Sick" : ""}${conflict ? ` — ⚠️ ${conflict}` : ""}`}
                               >
-                                {sickByShift[s.id]?.leave_type === "compassionate" ? "🕊️ " : sickByShift[s.id] ? "🤒 " : !sickByShift[s.id] && conflict ? "⚠️ " : ""}{isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
+                                {sickByShift[s.id]?.leave_type === "compassionate" ? "🕊️ " : sickByShift[s.id] ? "🤒 " : !sickByShift[s.id] && conflict ? <span className="print-conflict-icon">⚠️ </span> : ""}{isTBC ? `TBC ${s.role}` : name} <span className="opacity-70">{start}–{end}</span>
                               </div>
                             );
                           })}
