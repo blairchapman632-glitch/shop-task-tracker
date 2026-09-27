@@ -593,6 +593,7 @@ export default function HomePage() {
 
   // ── Auth ──
   const [authChecked, setAuthChecked] = useState(false);
+  const [noPharmacy, setNoPharmacy] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [currentPharmacyId, setCurrentPharmacyId] = useState(null);
 
@@ -672,7 +673,7 @@ export default function HomePage() {
       setCurrentUser(data.user);
       const { data: profile } = await supabase.from("profiles").select("pharmacy_id").eq("id", data.user.id).single();
       if (!mounted) return;
-      if (!profile?.pharmacy_id) return;
+      if (!profile?.pharmacy_id) { setNoPharmacy(true); return; }
       setCurrentPharmacyId(profile.pharmacy_id);
       setAuthChecked(true);
     }
@@ -1469,6 +1470,9 @@ const handleDeliveryTap = async (d) => {
     return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [infoOpenId]);
 
+  if (noPharmacy) {
+    return <main className="p-6 text-sm text-gray-600">No pharmacy linked to this account.</main>;
+  }
   if (!authChecked || !currentPharmacyId) {
     return <main className="p-6 text-sm text-gray-600">Loading...</main>;
   }

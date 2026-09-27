@@ -7,6 +7,8 @@ import {
   getShiftConflict as getShiftConflictShared,
   getDayAvailability as getDayAvailabilityShared,
 } from "../lib/availability";
+import { nextDayStr } from "../lib/leaveCalendar";
+import { normalShiftFor } from "../lib/weekSchedule";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -76,6 +78,16 @@ const holidayEmoji = {
 
 const ROLES = ["Pharmacist", "Locum", "DAA Coordinator", "Pharmacy Assistant", "Intern Pharmacist", "Retail Manager"];
 
+// Map legacy lowercase/short role spellings to the canonical ones; anything else is kept as stored
+const CANONICAL_ROLE = {
+  pharmacist: "Pharmacist",
+  "pharmacy assistant": "Pharmacy Assistant",
+  locum: "Locum",
+  daa: "DAA Coordinator",
+  "daa coordinator": "DAA Coordinator",
+};
+const canonicalRole = (role) => CANONICAL_ROLE[String(role || "").trim().toLowerCase()] || role;
+
 const toMinutes = (timeStr) => {
   if (!timeStr) return 0;
   const [h, m] = String(timeStr).split(":").map(Number);
@@ -89,6 +101,25 @@ const minutesToHours = (mins) => Math.round((mins / 60) * 100) / 100;
 const monthStartStr = (year, monthIndex) => {
   const d = new Date(year, monthIndex, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+};
+
+// Load every roster shift. Supabase returns at most 1000 rows per request and
+// silently drops the rest, so page through with a stable order until done.
+const SHIFT_COLUMNS = `id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, pharmacy_id, staff:staff_id(id, name)`;
+const SHIFT_PAGE_SIZE = 1000;
+const fetchAllShifts = async () => {
+  const all = [];
+  for (let from = 0; ; from += SHIFT_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("roster_shifts")
+      .select(SHIFT_COLUMNS)
+      .order("id")
+      .range(from, from + SHIFT_PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    all.push(...(data || []));
+    if (!data || data.length < SHIFT_PAGE_SIZE) break;
+  }
+  return { data: all, error: null };
 };
 
 // ─── Main Component ──────────────────────────────────────────────────────────
@@ -449,9 +480,7 @@ const refreshLeave = useCallback(async () => {
     setApprovedLeave(all.filter((lr) => lr.status === "approved"));
   }, []);
   const refreshShifts = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("roster_shifts")
-      .select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, pharmacy_id, staff:staff_id(id, name)`);
+    const { data, error } = await fetchAllShifts();
     if (!error) {
       setShifts(data || []);
       const foundPharmacyId = (data || []).find((s) => s.pharmacy_id)?.pharmacy_id || null;
@@ -476,7 +505,7 @@ const refreshLeave = useCallback(async () => {
         { data: monthNoteData },
         { data: rosterMonthData },
       ] = await Promise.all([
-        supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, role, staff_id, staff_name, notes, pharmacy_id, staff:staff_id(id, name)`),
+        fetchAllShifts(),
         supabase.from("staff").select("id,name,active,role").neq("role", "Locum").order("name"),
         supabase.from("shift_templates").select("*").order("name"),
         supabase.from("public_holidays").select("*"),
@@ -754,27 +783,90 @@ const refreshLeave = useCallback(async () => {
   };
 
   // ── Copy previous month ──
+  // Permanent + Salary staff are generated from their regular schedule (Admin);
+  // casuals (and name-only/TBC shifts) are copied from last month; locums untouched.
   const handleCopyPreviousMonth = async () => {
-    if (!window.confirm("This will replace all shifts in this month with a copy of last month. Continue?")) return;
+    if (!window.confirm(
+      "This will replace all non-locum shifts in this month.\n\n" +
+      "• Staff with a regular pattern: generated from it\n" +
+      "• Staff without one: copied from last month\n" +
+      "• Locum bookings: kept as they are\n\nContinue?"
+    )) return;
+    // Every inserted shift must carry pharmacy_id — stop before touching anything if it's unknown
+    if (!pharmacyId) {
+      alert("Couldn't copy month: the pharmacy couldn't be identified yet. Reload the page and try again.");
+      return;
+    }
     try {
-      
-      const targetMonthDate = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`;
-      const prevMonth = new Date(currentYear, currentMonth - 1, 1);
-      const prevYear = prevMonth.getFullYear();
-      const prevMonthIndex = prevMonth.getMonth();
-      const prevMonthDate = `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-01`;
+      const targetMonthDate = monthStartStr(currentYear, currentMonth);
       const targetEnd = monthStartStr(currentYear, currentMonth + 1);
-      const prevEnd = monthStartStr(prevYear, prevMonthIndex + 1);
+      const prevMonthDate = monthStartStr(currentYear, currentMonth - 1);
+      const prevEnd = targetMonthDate;
 
       // Snapshot the non-locum shifts we're about to delete, so the copy can be undone this session
-      const { data: snapshot } = await supabase.from("roster_shifts")
-        .select("staff_id, staff_name, shift_date, start_time, end_time, role, roster_month_id")
+      const { data: snapshot, error: snapError } = await supabase.from("roster_shifts")
+        .select("staff_id, staff_name, shift_date, start_time, end_time, role, roster_month_id, pharmacy_id")
         .gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum");
+      if (snapError) throw snapError;
 
-      await supabase.from("roster_shifts").delete().gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum");
+      const settingsQuery = supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", pharmacyId);
+      const [
+        { data: prevShifts, error: prevError },
+        { data: staffRows, error: staffError },
+        { data: settingsRows, error: settingsError },
+        { data: holidayRows, error: holidayError },
+      ] = await Promise.all([
+        supabase.from("roster_shifts").select("*").gte("shift_date", prevMonthDate).lt("shift_date", prevEnd),
+        supabase.from("staff").select("id, name, role, active, employment_type, schedule_type, weekly_schedule, week_ab_schedule").or("role.is.null,role.neq.Locum"),
+        settingsQuery.limit(1),
+        supabase.from("public_holidays").select("date").gte("date", targetMonthDate).lt("date", targetEnd),
+      ]);
+      if (prevError) throw prevError;
+      if (staffError) throw staffError;
+      if (settingsError) throw settingsError;
+      if (holidayError) throw holidayError;
 
-      const { data: prevShifts } = await supabase.from("roster_shifts").select("*").gte("shift_date", prevMonthDate).lt("shift_date", prevEnd);
-      if (!prevShifts?.length) { alert("No shifts found in previous month."); return; }
+      const payrollStart = settingsRows?.[0]?.payroll_start_date || null;
+      const closedDates = new Set((holidayRows || []).map((h) => String(h.date).slice(0, 10)));
+
+      // Anyone (Permanent, Salary or Casual) with an active regular pattern gets generated
+      // shifts; everyone else is copied from last month
+      const hasActiveDay = (grid) => Object.values(grid || {}).some((d) => d?.active && d.start && d.end);
+      const hasPattern = (st) =>
+        st.schedule_type === "alternating"
+          ? hasActiveDay(st.week_ab_schedule?.a) || hasActiveDay(st.week_ab_schedule?.b)
+          : st.schedule_type === "weekly" && hasActiveDay(st.weekly_schedule);
+      const activeStaff = (staffRows || []).filter((st) => st.active !== false);
+      const generated = [];
+      const generatedIds = new Set();
+      const fallbackNames = [];
+      for (const st of activeStaff) {
+        if (!hasPattern(st)) {
+          fallbackNames.push({ id: String(st.id), label: st.name });
+          continue;
+        }
+        if (st.schedule_type === "alternating" && !payrollStart) {
+          fallbackNames.push({ id: String(st.id), label: `${st.name} (payroll start date not set)` });
+          continue;
+        }
+        for (let dateStr = targetMonthDate; dateStr < targetEnd; dateStr = nextDayStr(dateStr)) {
+          if (closedDates.has(dateStr)) continue;
+          const normal = normalShiftFor(st, dateStr, payrollStart);
+          if (!normal) continue;
+          generated.push({ staff_id: st.id, staff_name: null, shift_date: dateStr, start_time: normal.start, end_time: normal.end, role: canonicalRole(st.role) });
+        }
+        generatedIds.add(String(st.id));
+      }
+
+      // Copy last month for everyone not generated above (locums are never copied)
+      const toCopy = (prevShifts || []).filter(
+        (s) => s.role !== "Locum" && !(s.staff_id != null && generatedIds.has(String(s.staff_id)))
+      );
+
+      if (!generated.length && !toCopy.length) {
+        alert("Nothing to add: no regular patterns found and no shifts in the previous month. This month was left unchanged.");
+        return;
+      }
 
       let targetMonthId;
       const { data: existingMonth } = await supabase.from("roster_months").select("id").eq("month", targetMonthDate).maybeSingle();
@@ -791,30 +883,27 @@ const refreshLeave = useCallback(async () => {
       const findDate = (weekday, occurrence) => {
         const days = new Date(currentYear, currentMonth + 1, 0).getDate();
         let count = 0;
-        let lastFound = null;
         for (let day = 1; day <= days; day++) {
           const c = new Date(currentYear, currentMonth, day);
           if (getWeekday(c) === weekday) {
             count++;
-            lastFound = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-            if (count === occurrence) return lastFound;
+            if (count === occurrence) return `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
           }
         }
-        // Occurrence doesn't exist in target month — use last available occurrence of that weekday
-        return lastFound;
+        // Occurrence doesn't exist in target month (e.g. a 5th Saturday) — don't copy that shift
+        return null;
       };
 
-      const copied = prevShifts.map((s) => {
-        if (s.role === "Locum") return null; // locum bookings are date-specific, not copied forward
-        const orig = new Date(s.shift_date);
+      const copied = toCopy.map((s) => {
+        const [oy, om, od] = String(s.shift_date).slice(0, 10).split("-").map(Number);
+        const orig = new Date(oy, om - 1, od);
         const newDate = findDate(getWeekday(orig), getOccurrence(orig));
         if (!newDate) return null;
-        return { staff_id: s.staff_id, staff_name: s.staff_name, shift_date: newDate, start_time: s.start_time, end_time: s.end_time, role: s.role, roster_month_id: targetMonthId };
+        return { staff_id: s.staff_id, staff_name: s.staff_name, shift_date: newDate, start_time: s.start_time, end_time: s.end_time, role: s.role, roster_month_id: targetMonthId, pharmacy_id: pharmacyId };
       }).filter(Boolean);
 
-      // De-dupe: findDate falls back to the last occurrence of a weekday when the
-      // target month has fewer of that weekday, which can land two source shifts
-      // on the same date. Drop exact duplicates before inserting.
+      // De-dupe: drop exact duplicates before inserting (safety net for
+      // duplicate rows already present in last month).
       const seen = new Set();
       const deduped = copied.filter((s) => {
         const key = `${s.staff_id ?? ""}|${s.staff_name ?? ""}|${s.shift_date}|${s.start_time}|${s.end_time}|${s.role}`;
@@ -823,10 +912,30 @@ const refreshLeave = useCallback(async () => {
         return true;
       });
 
-      if (!deduped.length) { alert("No valid shifts to copy."); return; }
-      await supabase.from("roster_shifts").insert(deduped);
-      await refreshShifts();
+      const toInsert = [...generated.map((s) => ({ ...s, roster_month_id: targetMonthId, pharmacy_id: pharmacyId })), ...deduped];
+      if (!toInsert.length) { alert("No valid shifts to add. This month was left unchanged."); return; }
+
+      // Only now replace the month's non-locum shifts (nothing is wiped if there's nothing to add)
+      const { error: deleteError } = await supabase.from("roster_shifts").delete()
+        .gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum");
+      if (deleteError) throw deleteError;
       setCopyUndo({ monthLabel, targetMonthDate, targetEnd, shifts: snapshot || [] });
+
+      const { error: insertError } = await supabase.from("roster_shifts").insert(toInsert);
+      await refreshShifts();
+      if (insertError) throw insertError;
+
+      // Only name people who actually had shifts copied (not everyone without a pattern)
+      const copiedIds = new Set(deduped.filter((s) => s.staff_id != null).map((s) => String(s.staff_id)));
+      const copiedNames = fallbackNames.filter((f) => copiedIds.has(f.id)).map((f) => f.label);
+      const lines = [
+        `Generated ${generated.length} shift${generated.length === 1 ? "" : "s"} from regular patterns.`,
+        `Copied ${deduped.length} shift${deduped.length === 1 ? "" : "s"} from last month.`,
+      ];
+      if (copiedNames.length) {
+        lines.push("", "Copied from last month (no regular pattern):", ...copiedNames.map((n) => `• ${n}`));
+      }
+      alert(lines.join("\n"));
     } catch (err) {
       alert("Couldn't copy month: " + (err?.message || String(err)));
     }

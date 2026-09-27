@@ -3,7 +3,7 @@
 // and survives brief connection drops. Deliberately conservative — we are NOT
 // caching API/Supabase responses (data must stay live).
 
-const CACHE = "chalkboard-shell-v1";
+const CACHE = "chalkboard-shell-v2";
 const SHELL = ["/me", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -31,8 +31,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/")) return;
+  // Next.js build/dev chunks are content-hashed and served by Next — leave them alone.
+  if (url.pathname.startsWith("/_next/")) return;
 
   // Network-first, fall back to cache only if offline.
+  // respondWith must always get a Response — never undefined on a cache miss.
   event.respondWith(
     fetch(req)
       .then((res) => {
@@ -40,7 +43,7 @@ self.addEventListener("fetch", (event) => {
         caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         return res;
       })
-      .catch(() => caches.match(req))
+      .catch(() => caches.match(req).then((cached) => cached || Response.error()))
   );
 });
 

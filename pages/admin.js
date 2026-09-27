@@ -379,7 +379,7 @@ function StaffForm({ member, onSave, onCancel }) {
   };
 
   const showHours = form.employment_type === "Salary";
-  const showSchedule = form.employment_type === "Permanent";
+  const showSchedule = ["Permanent", "Salary", "Casual"].includes(form.employment_type);
   const isPharmacist = form.role === "Pharmacist" || form.role === "Intern Pharmacist";
 
   const handlePhotoUpload = async (e) => {
@@ -766,7 +766,7 @@ function StaffForm({ member, onSave, onCancel }) {
           </div>
         )}
 
-        {/* Permanent — schedule */}
+        {/* Permanent, Salary + Casual — regular schedule (optional for casuals) */}
         {showSchedule && (
           <div>
             <div className="flex items-center justify-between mb-2">
