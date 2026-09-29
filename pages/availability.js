@@ -269,6 +269,10 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
           alert(`Someone in your role (${who}) has already requested leave on ${fmtDate(cs)}, so this can't be submitted.`);
           return;
         }
+        if (st === "own") {
+          alert(`You've already requested leave on ${fmtDate(cs)}. To change it, cancel that request first.`);
+          return;
+        }
         cs = nextDayStr(cs);
       }
     }
@@ -326,7 +330,7 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
         staff_seen_status: "pending",
       }]);
       if (error) throw error;
-      await loadMyLeave(selectedStaff.id);
+      await Promise.all([loadMyLeave(selectedStaff.id), loadCalendarData()]);
       setLeaveFrom(""); setLeaveTo(""); setLeaveAllDay(true);
       setLeaveStart("09:00"); setLeaveEnd("17:00"); setLeaveNote("");
       setLeaveType("Annual Leave");
@@ -339,13 +343,21 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
     }
   };
 
-  const handleCancelLeave = async (id) => {
-    if (!window.confirm("Cancel this leave request?")) return;
+  // Staff withdraw their own PENDING request. Guarded in the query itself, so a request
+  // the manager has already decided can't be deleted from here.
+  const handleWithdrawLeave = async (id) => {
+    if (!window.confirm("Withdraw this leave request?")) return;
     try {
-      await supabase.from("leave_requests").delete().eq("id", id);
-      await loadMyLeave(selectedStaff.id);
+      const { data: deleted, error } = await supabase.from("leave_requests").delete()
+        .eq("id", id).eq("staff_id", selectedStaff.id).eq("status", "pending")
+        .select("id");
+      if (error) throw error;
+      if (!deleted || deleted.length === 0) {
+        alert("This request has already been decided — ask your manager to change it.");
+      }
+      await Promise.all([loadMyLeave(selectedStaff.id), loadCalendarData()]);
     } catch (err) {
-      alert("Couldn't cancel: " + (err?.message || String(err)));
+      alert("Couldn't withdraw: " + (err?.message || String(err)));
     }
   };
   const handleSave = async () => {
@@ -716,6 +728,7 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600 inline-block"></span> Selected</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-200 inline-block"></span> Leave requested</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-200 inline-block"></span> Unavailable (same role)</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-purple-200 inline-block"></span> You've already requested leave</span>
                     <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-300 inline-block"></span> Blackout</span>
                   </div>
                 </div>
@@ -781,9 +794,9 @@ const LEAVE_TYPES = ["Annual Leave", "Personal/Carer's Leave", "Unpaid Leave"];
                             {dateLabel}{!lr.all_day && lr.start_time ? ` · ${lr.start_time.slice(0,5)}–${lr.end_time?.slice(0,5)}` : ""}
                           </div>
                           {lr.note && <div className="text-xs text-gray-500 mt-0.5">{lr.note}</div>}
-                          {lr.manager_note && <div className="text-xs text-blue-600 mt-0.5">Paige: {lr.manager_note}</div>}
+                          {lr.manager_note && <div className="text-xs text-blue-600 mt-0.5">Manager: {lr.manager_note}</div>}
                           {lr.status === "pending" && (
-                            <button onClick={() => handleCancelLeave(lr.id)} className="mt-1 text-xs text-red-500 hover:text-red-700">Cancel request</button>
+                            <button onClick={() => handleWithdrawLeave(lr.id)} className="mt-1 text-xs text-red-500 hover:text-red-700">Withdraw</button>
                           )}
                         </div>
                       );

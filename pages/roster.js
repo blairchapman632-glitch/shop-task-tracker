@@ -8,7 +8,7 @@ import {
   getDayAvailability as getDayAvailabilityShared,
 } from "../lib/availability";
 import { nextDayStr } from "../lib/leaveCalendar";
-import { normalShiftFor } from "../lib/weekSchedule";
+import { normalShiftFor, payPeriodFor } from "../lib/weekSchedule";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -209,6 +209,7 @@ export default function RosterPage() {
   const [showRequests, setShowRequests] = useState(false);
   const [requestManagerNotes, setRequestManagerNotes] = useState({});
   const [processingLeaveId, setProcessingLeaveId] = useState(null);
+  const [editingLeave, setEditingLeave] = useState(null); // manager edit form for one leave request
 
   // Notes
   const [dayNotes, setDayNotes] = useState({});
@@ -218,6 +219,7 @@ export default function RosterPage() {
 
   // Settings panel
   const [pharmacyId, setPharmacyId] = useState(null);
+  const [payrollStart, setPayrollStart] = useState(null); // pay-period anchor (Leave Requests panel cutoff)
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState("holidays");
 
@@ -479,6 +481,11 @@ const refreshLeave = useCallback(async () => {
     setLeaveRequests(all);
     setApprovedLeave(all.filter((lr) => lr.status === "approved"));
   }, []);
+  useEffect(() => {
+    if (!pharmacyId) return;
+    supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", pharmacyId).limit(1)
+      .then(({ data }) => setPayrollStart(data?.[0]?.payroll_start_date ? String(data[0].payroll_start_date).slice(0, 10) : null));
+  }, [pharmacyId]);
   const refreshShifts = useCallback(async () => {
     const { data, error } = await fetchAllShifts();
     if (!error) {
@@ -1344,10 +1351,14 @@ const refreshLeave = useCallback(async () => {
 const handleLeaveDecision = async (lr, decision) => {
     setProcessingLeaveId(lr.id);
     try {
-      const { error } = await supabase.from("leave_requests").update({
-        status: decision,
-        manager_note: (requestManagerNotes[lr.id] || "").trim() || null,
-      }).eq("id", lr.id);
+      // Reset to pending leaves manager_note alone; Approve/Decline save the note box,
+      // which starts pre-filled with the existing note (so an untouched box keeps it)
+      const update = { status: decision };
+      if (decision !== "pending") {
+        const boxNote = requestManagerNotes[lr.id] ?? lr.manager_note ?? "";
+        update.manager_note = boxNote.trim() || null;
+      }
+      const { error } = await supabase.from("leave_requests").update(update).eq("id", lr.id);
       if (error) throw error;
       await refreshLeave();
 
@@ -1366,6 +1377,124 @@ const handleLeaveDecision = async (lr, decision) => {
       }
     } catch (err) {
       alert("Couldn't update request: " + (err?.message || String(err)));
+    } finally {
+      setProcessingLeaveId(null);
+    }
+  };
+
+  const startEditLeave = (lr) => {
+    setEditingLeave({
+      id: lr.id,
+      leave_type: lr.leave_type || "Annual Leave",
+      from_date: lr.from_date,
+      to_date: lr.to_date,
+      all_day: lr.all_day !== false,
+      start_time: lr.start_time ? String(lr.start_time).slice(0, 5) : "09:00",
+      end_time: lr.end_time ? String(lr.end_time).slice(0, 5) : "17:00",
+      note: lr.note || "",
+      manager_note: lr.manager_note || "",
+    });
+  };
+
+  // True if changing this APPROVED leave would touch a pay period that's already finished
+  // or has confirmed hours. `ranges` = [[from, to], ...] of every date affected.
+  const leaveTouchesClosedPayPeriod = async (lr, ranges) => {
+    if (lr.status !== "approved") return false; // only approved leave feeds wages
+    const { data: settingsRows } = await supabase
+      .from("pharmacy_settings").select("payroll_start_date")
+      .eq("pharmacy_id", lr.pharmacy_id || pharmacyId).limit(1);
+    const anchor = settingsRows?.[0]?.payroll_start_date ? String(settingsRows[0].payroll_start_date).slice(0, 10) : null;
+    if (!anchor) return false;
+    const periods = {}; // start -> end
+    for (const [a, b] of ranges) {
+      for (let cs = a; cs <= b; cs = nextDayStr(cs)) {
+        const p = payPeriodFor(cs, anchor);
+        periods[p.start] = p.end;
+      }
+    }
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    if (Object.values(periods).some((end) => end < todayStr)) return true;
+    const { data: confirmed } = await supabase
+      .from("wage_approvals").select("period_start")
+      .eq("staff_id", lr.staff_id)
+      .in("period_start", Object.keys(periods));
+    return Boolean(confirmed && confirmed.length);
+  };
+  const WAGES_WARNING = "This leave is in a pay period that's already finished/confirmed. Changing it will change wages for that period. Check Wages and let Arthur know if already sent.";
+
+  // Manager hard-delete of a leave request (any status)
+  const handleDeleteLeave = async (lr) => {
+    setProcessingLeaveId(lr.id);
+    try {
+      if (await leaveTouchesClosedPayPeriod(lr, [[lr.from_date, lr.to_date]])) {
+        if (!window.confirm(`${WAGES_WARNING}\n\nDelete anyway?`)) return;
+      }
+      if (!window.confirm("Delete this leave request? This can't be undone.")) return;
+      const { error } = await supabase.from("leave_requests").delete().eq("id", lr.id);
+      if (error) throw error;
+      if (editingLeave?.id === lr.id) setEditingLeave(null);
+      await refreshLeave();
+    } catch (err) {
+      alert("Couldn't delete request: " + (err?.message || String(err)));
+    } finally {
+      setProcessingLeaveId(null);
+    }
+  };
+
+  // Manager edit of an existing leave request. Status is never changed here.
+  // Warns (never blocks) about finished/confirmed pay periods and overlapping requests.
+  const handleSaveLeaveEdit = async (lr) => {
+    const ed = editingLeave;
+    if (!ed || ed.id !== lr.id) return;
+    if (!ed.from_date || !ed.to_date) { alert("Please choose from and to dates."); return; }
+    if (ed.to_date < ed.from_date) { alert("'To' can't be before 'From'."); return; }
+    const multiDay = ed.from_date !== ed.to_date;
+    const partial = !multiDay && !ed.all_day;
+
+    setProcessingLeaveId(lr.id);
+    try {
+      // 1. Wages warning — old and new dates
+      if (await leaveTouchesClosedPayPeriod(lr, [[lr.from_date, lr.to_date], [ed.from_date, ed.to_date]])) {
+        if (!window.confirm(`${WAGES_WARNING}\n\nSave anyway?`)) return;
+      }
+
+      // 2. Overlap warning — another pending/approved request for the same person
+      const { data: overlaps } = await supabase
+        .from("leave_requests").select("id, from_date, to_date, leave_type, status")
+        .eq("staff_id", lr.staff_id)
+        .neq("id", lr.id)
+        .in("status", ["pending", "approved"])
+        .lte("from_date", ed.to_date)
+        .gte("to_date", ed.from_date);
+      if (overlaps && overlaps.length) {
+        const list = overlaps
+          .map((o) => `• ${o.leave_type} ${o.from_date === o.to_date ? o.from_date : `${o.from_date} → ${o.to_date}`} (${o.status})`)
+          .join("\n");
+        const ok = window.confirm(
+          `⚠️ ${lr.staff?.name || "This staff member"} already has other leave overlapping these dates:\n\n${list}\n\nSave anyway?`
+        );
+        if (!ok) return;
+      }
+
+      const managerNote = ed.manager_note.trim() || null;
+      const { error } = await supabase.from("leave_requests").update({
+        leave_type: ed.leave_type,
+        from_date: ed.from_date,
+        to_date: ed.to_date,
+        all_day: multiDay ? true : ed.all_day,
+        start_time: partial ? ed.start_time : null,
+        end_time: partial ? ed.end_time : null,
+        note: ed.note.trim() || null,
+        manager_note: managerNote,
+      }).eq("id", lr.id);
+      if (error) throw error;
+      // Keep the pending card's note box in step so Approve/Decline doesn't wipe the edited note
+      setRequestManagerNotes((p) => ({ ...p, [lr.id]: managerNote || "" }));
+      setEditingLeave(null);
+      await refreshLeave();
+    } catch (err) {
+      alert("Couldn't save changes: " + (err?.message || String(err)));
     } finally {
       setProcessingLeaveId(null);
     }
@@ -2882,7 +3011,19 @@ const handleLeaveDecision = async (lr, decision) => {
 {/* ── Requests panel ── */}
       {showRequests && (() => {
         const pending = leaveRequests.filter((lr) => lr.status === "pending");
-        const decided = leaveRequests.filter((lr) => lr.status !== "pending");
+        // Approved/Declined: only those ending on or after the start of the PREVIOUS pay period
+        // (display-only — older ones live in Admin → Staff → Leave history). Pending always show.
+        let decidedCutoff = null;
+        if (payrollStart) {
+          const now = new Date();
+          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+          const currentStart = payPeriodFor(todayStr, payrollStart).start;
+          const [cy, cm, cd] = currentStart.split("-").map(Number);
+          const dayBefore = new Date(Date.UTC(cy, cm - 1, cd - 1));
+          const dayBeforeStr = `${dayBefore.getUTCFullYear()}-${String(dayBefore.getUTCMonth() + 1).padStart(2, "0")}-${String(dayBefore.getUTCDate()).padStart(2, "0")}`;
+          decidedCutoff = payPeriodFor(dayBeforeStr, payrollStart).start;
+        }
+        const decided = leaveRequests.filter((lr) => lr.status !== "pending" && (!decidedCutoff || lr.to_date >= decidedCutoff));
         const fmtD = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
         const dateRange = (lr) => {
           const same = lr.from_date === lr.to_date;
@@ -2893,6 +3034,70 @@ const handleLeaveDecision = async (lr, decision) => {
           approved: "bg-green-50 text-green-700 border-green-200",
           declined: "bg-red-50 text-red-600 border-red-200",
         };
+        const setEd = (patch) => setEditingLeave((p) => ({ ...p, ...patch }));
+        // Inline manager edit form — same leave types and partial-day rules as the staff form
+        const editForm = (lr) => {
+          const ed = editingLeave;
+          const multiDay = ed.from_date && ed.to_date && ed.from_date !== ed.to_date;
+          return (
+            <div className="mt-2 space-y-2 border-t border-gray-200 pt-2">
+              <select value={ed.leave_type} onChange={(e) => setEd({ leave_type: e.target.value })} className="w-full border rounded px-2 py-1.5 text-xs bg-white">
+                <option value="Annual Leave">Annual Leave</option>
+                <option value="Personal/Carer's Leave">Personal/Carer's Leave</option>
+                <option value="Unpaid Leave">Unpaid Leave</option>
+              </select>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-600 mb-1">From</label>
+                  <input type="date" value={ed.from_date} onChange={(e) => setEd({ from_date: e.target.value })} className="w-full border rounded px-2 py-1.5 text-xs bg-white" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-gray-600 mb-1">To</label>
+                  <input type="date" value={ed.to_date} onChange={(e) => setEd({ to_date: e.target.value })} className="w-full border rounded px-2 py-1.5 text-xs bg-white" />
+                </div>
+              </div>
+              {multiDay ? (
+                <p className="text-[10px] text-gray-400">Multi-day leave is all day.</p>
+              ) : (
+                <>
+                  <label className="flex items-center gap-2 text-xs text-gray-700">
+                    <input type="checkbox" checked={ed.all_day} onChange={(e) => setEd({ all_day: e.target.checked })} className="h-3.5 w-3.5 rounded border-gray-300" />
+                    All day
+                  </label>
+                  {!ed.all_day && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-600 mb-1">Start</label>
+                        <input type="time" value={ed.start_time} onChange={(e) => setEd({ start_time: e.target.value })} className="w-full border rounded px-2 py-1.5 text-xs bg-white" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-gray-600 mb-1">End</label>
+                        <input type="time" value={ed.end_time} onChange={(e) => setEd({ end_time: e.target.value })} className="w-full border rounded px-2 py-1.5 text-xs bg-white" />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              <div>
+                <label className="block text-[10px] font-medium text-gray-600 mb-1">Staff note</label>
+                <textarea value={ed.note} onChange={(e) => setEd({ note: e.target.value })} rows={2} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs resize-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-medium text-gray-600 mb-1">Manager note</label>
+                <textarea value={ed.manager_note} onChange={(e) => setEd({ manager_note: e.target.value })} rows={2} className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs resize-none" />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setEditingLeave(null)} disabled={processingLeaveId === lr.id} className="flex-1 py-1.5 text-xs border border-gray-300 text-gray-600 rounded hover:bg-gray-50 disabled:opacity-50">
+                  Cancel
+                </button>
+                <button onClick={() => handleSaveLeaveEdit(lr)} disabled={processingLeaveId === lr.id} className="flex-1 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                  {processingLeaveId === lr.id ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </div>
+          );
+        };
+        const isEditing = (lr) => editingLeave?.id === lr.id;
 
         return (
           <div className="no-print fixed inset-0 z-50 flex">
@@ -2921,8 +3126,19 @@ const handleLeaveDecision = async (lr, decision) => {
                           </div>
                           <div className="text-xs text-gray-600 mt-0.5">{dateRange(lr)}</div>
                           {lr.note && <div className="text-xs text-gray-500 mt-1 italic">"{lr.note}"</div>}
+                          {isEditing(lr) ? editForm(lr) : (<>
+                          <div className="flex mt-1">
+                            <button onClick={() => startEditLeave(lr)} className="text-[11px] text-blue-600 hover:underline">Edit</button>
+                            <button
+                              onClick={() => handleDeleteLeave(lr)}
+                              disabled={processingLeaveId === lr.id}
+                              className="ml-auto text-[11px] text-red-600 hover:text-red-700 hover:underline disabled:opacity-50"
+                            >
+                              Delete
+                            </button>
+                          </div>
                           <textarea
-                            value={requestManagerNotes[lr.id] || ""}
+                            value={requestManagerNotes[lr.id] ?? lr.manager_note ?? ""}
                             onChange={(e) => setRequestManagerNotes((p) => ({ ...p, [lr.id]: e.target.value }))}
                             placeholder="Note back to staff (optional)…"
                             rows={2}
@@ -2944,6 +3160,7 @@ const handleLeaveDecision = async (lr, decision) => {
                               {processingLeaveId === lr.id ? "..." : "Approve"}
                             </button>
                           </div>
+                          </>)}
                         </div>
                       ))}
                     </div>
@@ -2967,16 +3184,29 @@ const handleLeaveDecision = async (lr, decision) => {
                           </div>
                           <div className="text-xs text-gray-600 mt-0.5">{lr.leave_type} · {dateRange(lr)}</div>
                           {lr.manager_note && <div className="text-[11px] text-blue-600 mt-0.5">Note: {lr.manager_note}</div>}
-                          <button
-                            onClick={() => handleLeaveDecision(lr, "pending")}
-                            className="mt-1 text-[11px] text-gray-500 hover:text-gray-700 underline"
-                          >
-                            Reset to pending
-                          </button>
+                          {isEditing(lr) ? editForm(lr) : (
+                            <div className="flex gap-3 mt-1">
+                              <button onClick={() => startEditLeave(lr)} className="text-[11px] text-blue-600 hover:underline">Edit</button>
+                              <button
+                                onClick={() => handleLeaveDecision(lr, "pending")}
+                                className="text-[11px] text-gray-500 hover:text-gray-700 underline"
+                              >
+                                Reset to pending
+                              </button>
+                              <button
+                                onClick={() => handleDeleteLeave(lr)}
+                                disabled={processingLeaveId === lr.id}
+                                className="ml-auto text-[11px] text-red-600 hover:text-red-700 hover:underline disabled:opacity-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
                   )}
+                  <p className="mt-2 text-[11px] text-gray-400">Older leave is in Admin → Staff (Leave history).</p>
                 </div>
 
               </div>

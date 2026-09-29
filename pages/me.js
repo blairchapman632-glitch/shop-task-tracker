@@ -429,6 +429,10 @@ function TimeOffTab({ staff }) {
           alert(`Someone in your role (${who}) has already requested leave on ${toFmtDate(cs)}, so this can't be submitted.`);
           return;
         }
+        if (st === "own") {
+          alert(`You've already requested leave on ${toFmtDate(cs)}. To change it, cancel that request first.`);
+          return;
+        }
         cs = nextDayStr(cs);
       }
     }
@@ -482,7 +486,7 @@ function TimeOffTab({ staff }) {
         note: leaveNote.trim() || null, status: "pending", staff_seen_status: "pending",
       }]);
       if (error) throw error;
-      await loadMyLeave();
+      await Promise.all([loadMyLeave(), loadCalendarData()]);
       const dateLabel = leaveFrom === effLeaveTo ? leaveFrom : `${leaveFrom} – ${effLeaveTo}`;
       await notifyRosterManagers(
         `Leave request from ${staff.name}`,
@@ -499,13 +503,21 @@ function TimeOffTab({ staff }) {
     }
   };
 
-  const handleCancelLeave = async (id) => {
-    if (!window.confirm("Cancel this leave request?")) return;
+  // Staff withdraw their own PENDING request. Guarded in the query itself, so a request
+  // the manager has already decided can't be deleted from here.
+  const handleWithdrawLeave = async (id) => {
+    if (!window.confirm("Withdraw this leave request?")) return;
     try {
-      await supabase.from("leave_requests").delete().eq("id", id);
-      await loadMyLeave();
+      const { data: deleted, error } = await supabase.from("leave_requests").delete()
+        .eq("id", id).eq("staff_id", staff.id).eq("status", "pending")
+        .select("id");
+      if (error) throw error;
+      if (!deleted || deleted.length === 0) {
+        alert("This request has already been decided — ask your manager to change it.");
+      }
+      await Promise.all([loadMyLeave(), loadCalendarData()]);
     } catch (err) {
-      alert("Couldn't cancel: " + (err?.message || String(err)));
+      alert("Couldn't withdraw: " + (err?.message || String(err)));
     }
   };
 
@@ -746,6 +758,7 @@ function TimeOffTab({ staff }) {
                 <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-600 inline-block"></span> Selected</span>
                 <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-200 inline-block"></span> Leave requested</span>
                 <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-200 inline-block"></span> Unavailable (same role)</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-purple-200 inline-block"></span> You've already requested leave</span>
                 <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-gray-300 inline-block"></span> Blackout</span>
               </div>
             </div>
@@ -813,7 +826,7 @@ function TimeOffTab({ staff }) {
                       {lr.note && <div className="text-xs text-gray-500 mt-0.5">{lr.note}</div>}
                       {lr.manager_note && <div className="text-xs text-blue-600 mt-0.5">Manager: {lr.manager_note}</div>}
                       {lr.status === "pending" && (
-                        <button onClick={() => handleCancelLeave(lr.id)} className="mt-1 text-xs text-red-500 hover:text-red-700">Cancel request</button>
+                        <button onClick={() => handleWithdrawLeave(lr.id)} className="mt-1 text-xs text-red-500 hover:text-red-700">Withdraw</button>
                       )}
                     </div>
                   );

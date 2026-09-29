@@ -3,6 +3,7 @@ import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import { getLeaveCover } from "../lib/leaveCover";
+import { nextDayStr } from "../lib/leaveCalendar";
 import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle } from "../lib/qspp";
 
 
@@ -237,6 +238,7 @@ function StaffForm({ member, onSave, onCancel }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [sickDays, setSickDays] = useState([]);
+  const [leaveHistory, setLeaveHistory] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [training, setTraining] = useState([]);
@@ -257,6 +259,11 @@ function StaffForm({ member, onSave, onCancel }) {
       .eq("staff_id", member.id)
       .order("sick_date", { ascending: false })
       .then(({ data }) => setSickDays(data || []));
+    supabase.from("leave_requests")
+      .select("id, leave_type, from_date, to_date, all_day, start_time, end_time, status, note, manager_note")
+      .eq("staff_id", member.id)
+      .order("from_date", { ascending: false })
+      .then(({ data }) => setLeaveHistory(data || []));
     supabase.from("locum_documents")
       .select("*")
       .eq("staff_id", member.id)
@@ -959,6 +966,81 @@ function StaffForm({ member, onSave, onCancel }) {
             )}
           </div>
         )}
+
+        {/* Leave history — existing staff only, read-only (locums don't request leave) */}
+        {!isNew && form.role !== "Locum" && (() => {
+          // Yearly totals of APPROVED leave by type: all-day = inclusive calendar days
+          // (split across years), partial-day = hours (kept separate, not converted to days)
+          const totals = {}; // year -> type -> { days, hours }
+          const bump = (year, type) => ((totals[year] ||= {})[type] ||= { days: 0, hours: 0 });
+          leaveHistory.filter((lr) => lr.status === "approved").forEach((lr) => {
+            const type = lr.leave_type || "Leave";
+            const partial = lr.all_day === false && lr.start_time && lr.end_time && lr.from_date === lr.to_date;
+            if (partial) {
+              const [sh, sm] = String(lr.start_time).split(":").map(Number);
+              const [eh, em] = String(lr.end_time).split(":").map(Number);
+              bump(lr.from_date.slice(0, 4), type).hours += Math.max(0, (eh * 60 + em - (sh * 60 + sm)) / 60);
+              return;
+            }
+            for (let d = lr.from_date; d <= lr.to_date; d = nextDayStr(d)) bump(d.slice(0, 4), type).days += 1;
+          });
+          const years = Object.keys(totals).sort().reverse();
+          const fmtHrs = (h) => `${Math.round(h * 100) / 100} hr${h === 1 ? "" : "s"}`;
+          const fmtD = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+          const badge = {
+            approved: "bg-green-50 text-green-700 border-green-200",
+            declined: "bg-red-50 text-red-600 border-red-200",
+            pending: "bg-amber-50 text-amber-700 border-amber-200",
+          };
+          return (
+            <div className="border-t pt-4">
+              <div className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                Leave history {leaveHistory.length > 0 && <span className="text-gray-400 font-normal">({leaveHistory.length})</span>}
+              </div>
+              {leaveHistory.length === 0 ? (
+                <p className="text-xs text-gray-400">No leave requests.</p>
+              ) : (
+                <>
+                  {years.length > 0 && (
+                    <div className="mb-2 rounded-lg border border-gray-100 bg-white px-3 py-2 space-y-1">
+                      <div className="text-[11px] text-gray-400">Approved leave by year</div>
+                      {years.map((y) => (
+                        <div key={y} className="text-xs text-gray-700">
+                          <span className="font-semibold">{y}:</span>{" "}
+                          {Object.keys(totals[y]).sort().map((type) => {
+                            const t = totals[y][type];
+                            const parts = [];
+                            if (t.days) parts.push(`${t.days} day${t.days === 1 ? "" : "s"}`);
+                            if (t.hours) parts.push(fmtHrs(t.hours));
+                            return `${type} ${parts.join(" + ")}`;
+                          }).join(" · ")}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    {leaveHistory.map((lr) => (
+                      <div key={lr.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-gray-700">{lr.leave_type}</span>
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badge[lr.status] || "bg-gray-50 text-gray-600 border-gray-200"}`}>
+                            {lr.status ? lr.status.charAt(0).toUpperCase() + lr.status.slice(1) : "?"}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          {lr.from_date === lr.to_date ? fmtD(lr.from_date) : `${fmtD(lr.from_date)} → ${fmtD(lr.to_date)}`}
+                          {lr.all_day === false && lr.start_time && ` · ${String(lr.start_time).slice(0, 5)}–${String(lr.end_time || "").slice(0, 5)}`}
+                        </div>
+                        {lr.note && <div className="text-xs text-gray-500 mt-0.5 italic">"{lr.note}"</div>}
+                        {lr.manager_note && <div className="text-[11px] text-blue-600 mt-0.5">Manager: {lr.manager_note}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         </div>
         )}
