@@ -22,6 +22,14 @@ export default function StaffOnboardingPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  // Offer of employment (null = no contract issued, page behaves as before)
+  const [contract, setContract] = useState(null);
+  const [agreed, setAgreed] = useState(false);
+  const [typedName, setTypedName] = useState("");
+  const [accepting, setAccepting] = useState(false);
+  const [acceptError, setAcceptError] = useState("");
+  // Address entered at acceptance when the issued contract has none
+  const [addr, setAddr] = useState({ street: "", suburb: "", state: "WA", postcode: "" });
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -59,6 +67,11 @@ export default function StaffOnboardingPage() {
       // Load existing documents
       const { data: docs } = await supabase.from("locum_documents").select("*").eq("staff_id", data.id).order("uploaded_at", { ascending: false });
       setDocuments(docs || []);
+      // Any issued/accepted offer of employment (server route — the contracts bucket is private)
+      try {
+        const res = await fetch(`/api/contracts/onboard?token=${encodeURIComponent(token)}`);
+        if (res.ok) setContract((await res.json()).contract || null);
+      } catch (e) { /* no contract step — onboarding still works */ }
       setStep("form");
     };
     load();
@@ -126,6 +139,7 @@ export default function StaffOnboardingPage() {
         super_fund_usi: form.super_fund_usi.trim() || null,
         super_fund_abn: form.super_fund_abn.trim() || null,
         super_member_number: form.super_member_number.trim() || null,
+        onboarding_completed_at: new Date().toISOString(), // shows "Onboarding complete" in Admin
       }).eq("id", staff.id);
       if (upErr) throw upErr;
       setSaved(true);
@@ -136,6 +150,65 @@ export default function StaffOnboardingPage() {
       setSaving(false);
     }
   };
+
+  const needsAddress = contract?.status === "issued" && contract?.needs_address;
+  const addressDone = !needsAddress || (addr.street.trim() && addr.suburb.trim() && addr.state.trim() && addr.postcode.trim());
+
+  const handleAccept = async () => {
+    if (!agreed || !typedName.trim() || !contract || !addressDone) return;
+    setAccepting(true);
+    setAcceptError("");
+    try {
+      const res = await fetch("/api/contracts/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, contract_id: contract.id, typed_name: typedName, agreed: true, address: needsAddress ? addr : undefined }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Couldn't accept — please try again.");
+      setContract((c) => ({ ...c, status: "accepted", needs_address: false, accepted_at: body.accepted_at, accepted_name: body.accepted_name, accepted_url: body.accepted_url }));
+      // Saved to their staff record too — prefill the payroll form so they don't type it twice
+      if (body.address) setForm((f) => ({ ...f, address: body.address }));
+    } catch (err) {
+      setAcceptError(err?.message || String(err));
+    } finally {
+      setAccepting(false);
+    }
+  };
+
+  // Signed links expire after 10 minutes — fetch a fresh one when they tap Download
+  const downloadAccepted = async () => {
+    const win = window.open("", "_blank");
+    try {
+      const res = await fetch(`/api/contracts/onboard?token=${encodeURIComponent(token)}`);
+      const url = res.ok ? (await res.json()).contract?.accepted_url : null;
+      if (!url) throw new Error("Couldn't get your copy — please try again.");
+      if (win) win.location.href = url; else window.location.href = url;
+    } catch (err) {
+      if (win) win.close();
+      setAcceptError(err?.message || String(err));
+    }
+  };
+
+  const openIssued = async () => {
+    const win = window.open("", "_blank");
+    try {
+      const res = await fetch(`/api/contracts/onboard?token=${encodeURIComponent(token)}`);
+      const url = res.ok ? (await res.json()).contract?.issued_url : null;
+      if (!url) throw new Error("Couldn't open the contract — please try again.");
+      if (win) win.location.href = url; else window.location.href = url;
+    } catch (err) {
+      if (win) win.close();
+      setAcceptError(err?.message || String(err));
+    }
+  };
+
+  const fmtStamp = (iso) => iso
+    ? new Date(iso).toLocaleString("en-AU", { day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Australia/Perth" })
+    : "";
+
+  const contractPending = contract?.status === "issued";
+  const isCasualContract = contract?.employment_category === "casual";
 
   // ── Render ──
   if (step === "loading") return (
@@ -164,6 +237,83 @@ export default function StaffOnboardingPage() {
         </div>
 
         <div className="space-y-4">
+          {/* Offer of employment — must be accepted before the rest of onboarding */}
+          {contract && (
+            <div className="bg-white rounded-2xl shadow-sm border p-5">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Your offer of employment</div>
+              <div className="text-sm text-gray-700 mb-3">{contract.label}</div>
+
+              {contractPending ? (
+                <div className="space-y-3">
+                  <button type="button" onClick={openIssued} className="w-full border border-blue-200 text-blue-700 rounded-xl py-2.5 text-sm font-medium hover:bg-blue-50">
+                    📄 View contract
+                  </button>
+                  {(contract.info_links || []).length > 0 && (
+                    <div className="space-y-1">
+                      {contract.info_links.map((l) => (
+                        <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="block text-sm text-blue-600 hover:underline">
+                          {l.label} ↗
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {needsAddress && (
+                    <div className="space-y-3 rounded-xl border border-gray-200 p-3">
+                      <div className="text-xs font-semibold text-gray-600">Your home address</div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Street address</label>
+                        <input value={addr.street} onChange={(e) => setAddr((a) => ({ ...a, street: e.target.value }))} placeholder="e.g. 12 Example Street" autoComplete="address-line1" className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Suburb</label>
+                        <input value={addr.suburb} onChange={(e) => setAddr((a) => ({ ...a, suburb: e.target.value }))} placeholder="e.g. Byford" autoComplete="address-level2" className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">State</label>
+                          <select value={addr.state} onChange={(e) => setAddr((a) => ({ ...a, state: e.target.value }))} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+                            {["WA", "NSW", "VIC", "QLD", "SA", "TAS", "ACT", "NT"].map((s) => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Postcode</label>
+                          <input value={addr.postcode} onChange={(e) => setAddr((a) => ({ ...a, postcode: e.target.value.replace(/\D/g, "").slice(0, 4) }))} inputMode="numeric" placeholder="e.g. 6122" autoComplete="postal-code" className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <label className="flex items-start gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      I have read the offer of employment, its attachments and the Fair Work Information Statement
+                      {isCasualContract ? " and the Casual Employment Information Statement" : ""}, and I agree to accept this offer electronically.
+                    </span>
+                  </label>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Type your full name</label>
+                    <input value={typedName} onChange={(e) => setTypedName(e.target.value)} placeholder="Full legal name" autoComplete="name" className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  </div>
+                  {acceptError && <p className="text-sm text-red-500">{acceptError}</p>}
+                  <button type="button" onClick={handleAccept} disabled={!agreed || !typedName.trim() || !addressDone || accepting} className="w-full bg-blue-600 text-white rounded-xl py-3 text-sm font-medium disabled:opacity-40">
+                    {accepting ? "Accepting…" : "Accept offer"}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="rounded-xl bg-green-50 border border-green-200 px-4 py-3">
+                    <div className="text-sm font-semibold text-green-700">✅ Accepted {fmtStamp(contract.accepted_at)}</div>
+                    {contract.accepted_name && <div className="text-xs text-green-600 mt-0.5">by {contract.accepted_name}</div>}
+                  </div>
+                  <button type="button" onClick={downloadAccepted} className="w-full border border-green-300 text-green-700 rounded-xl py-2.5 text-sm font-medium hover:bg-green-50">
+                    ↓ Download your copy
+                  </button>
+                  {acceptError && <p className="text-sm text-red-500">{acceptError}</p>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!contractPending && (<>
           {/* Personal */}
           <div className="bg-white rounded-2xl shadow-sm border p-5">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Personal Details</div>
@@ -269,7 +419,6 @@ export default function StaffOnboardingPage() {
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Documents</div>
             <div className="space-y-4">
               {[
-                { type: "signed_contract", label: "Signed Employment Contract", multi: false },
                 { type: "resume", label: "Resume", multi: false },
                 ...(isPharmacist
                   ? [
@@ -337,6 +486,7 @@ export default function StaffOnboardingPage() {
               <div className="text-xs text-green-600 mt-0.5">Byford Pharmacy has your information. You can safely close this page.</div>
             </div>
           )}
+          </>)}
         </div>
       </div>
     </div>

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
+import ContractForm, { ContractHistory, ContractSignatureSettings } from "../components/ContractTab";
+import EmploymentContractsList from "../components/EmploymentContractsList";
 import { getLeaveCover } from "../lib/leaveCover";
 import { nextDayStr } from "../lib/leaveCalendar";
 import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle } from "../lib/qspp";
@@ -243,6 +245,31 @@ function StaffForm({ member, onSave, onCancel }) {
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [training, setTraining] = useState([]);
   const [qsppAnchor, setQsppAnchor] = useState(null);
+  const [contracts, setContracts] = useState([]);
+  const [onboardingDoneAt, setOnboardingDoneAt] = useState(null);
+
+  const loadDocuments = async () => {
+    if (!member?.id) return;
+    const { data } = await supabase.from("locum_documents")
+      .select("*")
+      .eq("staff_id", member.id)
+      .order("uploaded_at", { ascending: false });
+    setDocuments(data || []);
+  };
+
+  const loadContracts = async () => {
+    if (!member?.id) return;
+    const [{ data }, { data: st }] = await Promise.all([
+      supabase.from("employment_contracts")
+        .select("id, template_id, status, field_values, issued_at, issued_file_path, accepted_at, accepted_name, accepted_file_path, created_at, updated_at, contract_templates:template_id(label)")
+        .eq("staff_id", member.id)
+        .order("created_at", { ascending: false }),
+      // Fresh read — set by the onboarding page when they submit their payroll details
+      supabase.from("staff").select("onboarding_completed_at").eq("id", member.id).maybeSingle(),
+    ]);
+    setContracts(data || []);
+    setOnboardingDoneAt(st?.onboarding_completed_at || null);
+  };
 
   useEffect(() => {
     supabase.from("pharmacy_settings")
@@ -264,16 +291,14 @@ function StaffForm({ member, onSave, onCancel }) {
       .eq("staff_id", member.id)
       .order("from_date", { ascending: false })
       .then(({ data }) => setLeaveHistory(data || []));
-    supabase.from("locum_documents")
-      .select("*")
-      .eq("staff_id", member.id)
-      .order("uploaded_at", { ascending: false })
-      .then(({ data }) => setDocuments(data || []));
+    loadDocuments();
     supabase.from("training_records")
       .select("*")
       .eq("staff_id", member.id)
       .order("training_date", { ascending: false })
       .then(({ data }) => setTraining(data || []));
+    loadContracts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [member?.id]);
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
@@ -391,10 +416,12 @@ function StaffForm({ member, onSave, onCancel }) {
 
   const handlePhotoUpload = async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = ""; // allow picking the same file again
     if (!file) return;
     setUploading(true);
-    const ext = file.name.split(".").pop();
-    const filename = `staff_${form.name.toLowerCase().replace(/\s+/g, "_") || "new"}.${ext}`;
+    setError("");
+    const ext = file.name.split(".").pop().toLowerCase();
+    const filename = `staff_${form.name.toLowerCase().replace(/[^a-z0-9]+/g, "_") || "new"}_${Date.now()}.${ext}`;
     const { error: upErr } = await supabase.storage
       .from("staff-photos")
       .upload(filename, file, { upsert: true });
@@ -499,6 +526,7 @@ function StaffForm({ member, onSave, onCancel }) {
           { key: "documents", label: "Documents" },
           { key: "training", label: "Training" },
           { key: "offboarding", label: "Offboarding" },
+          ...(form.role !== "Locum" ? [{ key: "newstarter", label: "New starter" }] : []),
         ].map((t) => (
           <button
             key={t.key}
@@ -923,6 +951,15 @@ function StaffForm({ member, onSave, onCancel }) {
           <div className="border rounded-lg p-3 bg-amber-50 border-amber-100">
             <div className="text-xs font-semibold text-amber-700 mb-1">📋 Details Link</div>
             <div className="text-[11px] text-amber-600 mb-2">Send this to the staff member to collect or update their payroll details (e.g. new bank account).</div>
+            {(() => {
+              const latest = contracts.find((c) => c.status === "issued" || c.status === "accepted");
+              if (!latest) return null;
+              return latest.status === "accepted" ? (
+                <div className="text-[11px] font-medium text-green-700 mb-2">✓ Contract accepted {new Date(latest.accepted_at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "Australia/Perth" })}</div>
+              ) : (
+                <div className="text-[11px] font-medium text-amber-700 mb-2">Contract issued — awaiting acceptance</div>
+              );
+            })()}
             <div className="text-[11px] text-amber-600 break-all mb-2">
               {typeof window !== "undefined" ? `${window.location.origin}/staff-onboard?token=${member.onboarding_token}` : ""}
             </div>
@@ -1057,8 +1094,14 @@ function StaffForm({ member, onSave, onCancel }) {
               </div>
 
               <div className="space-y-4">
+                {/* Paper + electronic contracts, newest first (replaces the single "Signed Employment Contract" slot) */}
+                <EmploymentContractsList
+                  staffId={member.id}
+                  paperDocs={documents.filter((d) => d.type === "signed_contract")}
+                  contracts={contracts}
+                  onChanged={async () => { await loadDocuments(); await loadContracts(); }}
+                />
                 {[
-                  { type: "signed_contract", label: "Signed Employment Contract", multi: false },
                   { type: "resume", label: "Resume", multi: false },
                   { type: "first_aid_cert", label: "First Aid Certificate", multi: false },
                   { type: "cpr_cert", label: "CPR Certificate", multi: false },
@@ -1217,6 +1260,97 @@ function StaffForm({ member, onSave, onCancel }) {
                 <button onClick={handleAddTraining} disabled={savingTraining} className="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
                   {savingTraining ? "Saving…" : "Add training record"}
                 </button>
+              </div>
+            </>
+          )}
+        </div>
+        )}
+
+        {/* ── NEW STARTER TAB ── (basics → contract → onboarding link → history) */}
+        {activeTab === "newstarter" && (
+        <div className="space-y-5">
+
+          {/* a) Basics — same form state + handleSave as the Profile/Payroll tabs */}
+          <div className="space-y-3">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">1. Basics</div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+              <input value={form.name} onChange={(e) => set("name", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="Full name" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+              <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="email@example.com" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+                <select value={form.role} onChange={(e) => set("role", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  <option value="">— Select role —</option>
+                  {ROLES.filter((r) => r !== "Locum").map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Employment Type</label>
+                <select value={form.employment_type} onChange={(e) => set("employment_type", e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  <option value="">— Select type —</option>
+                  {EMPLOYMENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Start Date</label>
+              <input type="date" value={form.start_date} onChange={(e) => set("start_date", e.target.value)} className="w-48 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+            <button type="button" onClick={handleSave} disabled={saving} className="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
+              {saving ? "Saving…" : isNew ? "Save new starter" : "Save basics"}
+            </button>
+            {isNew && <p className="text-[11px] text-gray-400">Save first — the contract and onboarding link appear once they're saved.</p>}
+          </div>
+
+          {!isNew && (
+            <>
+              {/* b) Contract */}
+              <div className="border-t pt-4 space-y-3">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">2. Contract</div>
+                <ContractForm member={member} contracts={contracts} onContractsChanged={loadContracts} />
+              </div>
+
+              {/* c) Onboarding link + status */}
+              <div className="border-t pt-4 space-y-2">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">3. Onboarding link</div>
+                {(() => {
+                  const latest = contracts.find((c) => c.status === "issued" || c.status === "accepted");
+                  const fmt = (iso) => new Date(iso).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "Australia/Perth" });
+                  const lines = [];
+                  if (latest?.status === "accepted") lines.push(<div key="a" className="text-xs font-medium text-green-700">✓ Contract accepted {fmt(latest.accepted_at)}</div>);
+                  else if (latest?.status === "issued") lines.push(<div key="i" className="text-xs font-medium text-amber-700">Contract issued — awaiting acceptance</div>);
+                  if (onboardingDoneAt) lines.push(<div key="o" className="text-xs font-medium text-green-700">✓ Onboarding complete {fmt(onboardingDoneAt)}</div>);
+                  return lines.length ? <div className="space-y-0.5">{lines}</div> : <div className="text-xs text-gray-400">No contract issued yet.</div>;
+                })()}
+                {member?.onboarding_token ? (
+                  <div className="border rounded-lg p-3 bg-amber-50 border-amber-100">
+                    <div className="text-[11px] text-amber-600 break-all mb-2">
+                      {typeof window !== "undefined" ? `${window.location.origin}/staff-onboard?token=${member.onboarding_token}` : ""}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/staff-onboard?token=${member.onboarding_token}`);
+                        alert("Onboarding link copied to clipboard!");
+                      }}
+                      className="text-[11px] px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700"
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400">This staff member has no onboarding link.</p>
+                )}
+              </div>
+
+              {/* d) History */}
+              <div className="border-t pt-4">
+                <ContractHistory contracts={contracts} />
               </div>
             </>
           )}
@@ -1935,6 +2069,8 @@ function SettingsTab() {
         address: form.address,
         payroll_start_date: form.payroll_start_date || null,
         qspp_cycle_start_date: form.qspp_cycle_start_date || null,
+        contract_signatory_name: (form.contract_signatory_name || "").trim() || null,
+        contract_signatory_title: (form.contract_signatory_title || "").trim() || null,
         hours_monday: form.hours_monday,
         hours_tuesday: form.hours_tuesday,
         hours_wednesday: form.hours_wednesday,
@@ -2114,6 +2250,35 @@ function SettingsTab() {
 
         {error && <p className="text-sm text-red-500">{error}</p>}
         {success && <p className="text-sm text-green-600 font-medium">✓ Settings saved.</p>}
+
+        {/* Contract sign-off: name/title save with Save Settings; the signature image saves on its own */}
+        <div className="border-t pt-5 space-y-5">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Contract Signatory</h3>
+            <p className="text-xs text-gray-400 mb-3">Printed under the signature on the offer letter, and as the employer name in the contract signature boxes. Click Save Settings after changing.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Signatory name</label>
+                <input
+                  value={form.contract_signatory_name || ""}
+                  onChange={(e) => set("contract_signatory_name", e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  placeholder="e.g. Blair Chapman"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Signatory title</label>
+                <input
+                  value={form.contract_signatory_title || ""}
+                  onChange={(e) => set("contract_signatory_title", e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  placeholder="e.g. Director"
+                />
+              </div>
+            </div>
+          </div>
+          <ContractSignatureSettings pharmacyId={PHARMACY_ID} />
+        </div>
       </div>
 
       <div className="px-6 py-4 border-t shrink-0">
