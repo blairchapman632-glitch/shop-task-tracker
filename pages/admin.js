@@ -4,6 +4,7 @@ import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import ContractForm, { ContractHistory, ContractSignatureSettings } from "../components/ContractTab";
 import EmploymentContractsList from "../components/EmploymentContractsList";
+import ReviewsTab, { ReviewsOverview } from "../components/PerformanceReviews";
 import { getLeaveCover } from "../lib/leaveCover";
 import { nextDayStr } from "../lib/leaveCalendar";
 import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle } from "../lib/qspp";
@@ -186,10 +187,10 @@ function DayScheduleGrid({ schedule, onChange }) {
 
 // ─── Staff Form ───────────────────────────────────────────────────────────────
 
-function StaffForm({ member, onSave, onCancel }) {
+function StaffForm({ member, onSave, onCancel, initialTab, adminUser }) {
 
   const isNew = !member?.id;
-  const [activeTab, setActiveTab] = useState("profile");
+  const [activeTab, setActiveTab] = useState(initialTab || "profile");
   const [form, setForm] = useState({
     name: member?.name || "",
     email: member?.email || "",
@@ -219,6 +220,8 @@ function StaffForm({ member, onSave, onCancel }) {
     no_lunch_deduction: member?.no_lunch_deduction ?? false,
     is_roster_manager: member?.is_roster_manager ?? false,
     is_driver: member?.is_driver ?? false,
+    can_conduct_reviews: member?.can_conduct_reviews ?? false,
+    exclude_from_reviews: member?.exclude_from_reviews ?? false,
     uniforms_supplied: member?.uniforms_supplied ?? "",
     badge_supplied: member?.badge_supplied ?? false,
     keys_supplied: member?.keys_supplied ?? false,
@@ -484,6 +487,8 @@ function StaffForm({ member, onSave, onCancel }) {
       no_lunch_deduction: form.no_lunch_deduction,
       is_roster_manager: form.is_roster_manager,
       is_driver: form.is_driver,
+      can_conduct_reviews: form.can_conduct_reviews,
+      exclude_from_reviews: form.exclude_from_reviews,
       uniforms_supplied: form.uniforms_supplied === "" ? null : Number(form.uniforms_supplied),
       badge_supplied: form.badge_supplied,
       keys_supplied: form.keys_supplied,
@@ -527,6 +532,7 @@ function StaffForm({ member, onSave, onCancel }) {
           { key: "training", label: "Training" },
           { key: "offboarding", label: "Offboarding" },
           ...(form.role !== "Locum" ? [{ key: "newstarter", label: "New starter" }] : []),
+          ...(form.role !== "Locum" ? [{ key: "reviews", label: "Reviews" }] : []),
         ].map((t) => (
           <button
             key={t.key}
@@ -710,6 +716,8 @@ function StaffForm({ member, onSave, onCancel }) {
             { field: "no_lunch_deduction", label: "Never deduct lunch break", desc: "Skip the 30-min lunch deduction on all shifts and public holidays" },
             { field: "is_roster_manager", label: "Roster manager", desc: "Receives push notifications for leave requests and availability changes" },
             { field: "is_driver", label: "Delivery driver", desc: "Sees the Deliveries tab on their phone app" },
+            { field: "can_conduct_reviews", label: "Can conduct performance reviews", desc: "Appears in the reviewer list when starting a review" },
+            { field: "exclude_from_reviews", label: "Exclude from performance reviews", desc: "Never shown as due for a review" },
           ].map(({ field, label, desc }) => (
             <div key={field} className="flex items-center justify-between">
               <div>
@@ -1415,10 +1423,17 @@ function StaffForm({ member, onSave, onCancel }) {
         </div>
         )}
 
+        {/* ── REVIEWS TAB ── (performance reviews; has its own save, so the staff footer is hidden) */}
+        {activeTab === "reviews" && form.role !== "Locum" && (
+          isNew
+            ? <p className="text-xs text-gray-400">Save the staff member first, then you can start a review.</p>
+            : <ReviewsTab member={member} adminUser={adminUser} />
+        )}
+
         {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
 
-      <div className="px-5 py-4 border-t shrink-0 space-y-2">
+      {activeTab !== "reviews" && <div className="px-5 py-4 border-t shrink-0 space-y-2">
         {!isNew && (
           <button
             onClick={async () => {
@@ -1467,7 +1482,7 @@ function StaffForm({ member, onSave, onCancel }) {
             {saving ? "Saving…" : isNew ? "Add Staff" : "Save Changes"}
           </button>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -3342,6 +3357,7 @@ export default function AdminPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [selected, setSelected] = useState(null); // null = none, "new" = add form, or staff object
   const [formKey, setFormKey] = useState(0);
+  const [initialStaffTab, setInitialStaffTab] = useState(null); // tab to open the staff form on (e.g. "reviews")
   const [successId, setSuccessId] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -3397,7 +3413,7 @@ export default function AdminPage() {
               {/* Add + toggle */}
               <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
                 <button
-                  onClick={() => setSelected("new")}
+                  onClick={() => { setSelected("new"); setInitialStaffTab(null); }}
                   className="text-xs font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1"
                 >
                   + Add Staff
@@ -3463,7 +3479,7 @@ export default function AdminPage() {
                     return (
                       <button
                         key={s.id}
-                        onClick={() => { setSelected(s); setFormKey((k) => k + 1); }}
+                        onClick={() => { setSelected(s); setInitialStaffTab(null); setFormKey((k) => k + 1); }}
                         className={`w-full flex items-center gap-3 px-3 py-2.5 border-b hover:bg-gray-50 text-left transition-colors ${isSelected ? "bg-blue-50" : ""}`}
                       >
                         <Avatar
@@ -3521,14 +3537,16 @@ export default function AdminPage() {
             ) : tab === "locums" ? (
               <LocumsTab key={locumFormKey} />
             ) : !selected ? (
-              <div className="h-full flex items-center justify-center text-sm text-gray-400">
-                Select a staff member to edit, or add a new one.
-
-              </div>
+              <ReviewsOverview
+                staffList={staffList}
+                onOpen={(s) => { setSelected(s); setInitialStaffTab("reviews"); setFormKey((k) => k + 1); }}
+              />
             ) : (
               <StaffForm
                 key={formKey}
                 member={selected === "new" ? null : selected}
+                initialTab={initialStaffTab}
+                adminUser={adminUser}
                 onSave={handleSave}
                 onCancel={() => setSelected(null)}
               />
