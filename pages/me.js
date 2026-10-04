@@ -3,6 +3,7 @@ import supabase from "../lib/supabaseClient";
 import { toISO, buildWageRows, fmt as wageFmt } from "../lib/wageCalc";
 import { getShiftConflict, getDayAvailability } from "../lib/availability";
 import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib/leaveCalendar";
+import { fetchMyReview, prepWaiting, MyReviewBanner, MyReviewSection } from "../components/MyReview";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -2158,7 +2159,7 @@ function DeliveriesTab({ staff }) {
   );
 }
 
-function DetailsTab({ staff }) {
+function DetailsTab({ staff, myReview, onReviewChanged, focusReview }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = async () => {
@@ -2191,6 +2192,8 @@ function DetailsTab({ staff }) {
           </div>
         )}
       </div>
+
+      <MyReviewSection data={myReview} onChanged={onReviewChanged} focus={focusReview} />
 
       <button
         onClick={handleLogout}
@@ -3217,6 +3220,16 @@ export default function MePage() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [newBoardCount, setNewBoardCount] = useState(0);
   const [leaveUpdate, setLeaveUpdate] = useState(false);
+  const [myReview, setMyReview] = useState(null); // { mode, review } — staff-facing fields only (via API)
+  const [focusReview, setFocusReview] = useState(false);
+
+  // Own performance review (banner, Profile badge, Profile section). Refreshes on tab change.
+  useEffect(() => {
+    if (!staff?.id) return;
+    let cancelled = false;
+    fetchMyReview().then((r) => { if (!cancelled) setMyReview(r); });
+    return () => { cancelled = true; };
+  }, [staff?.id, tab]);
 
   // Unread message count + new board posts for the tab badge
   useEffect(() => {
@@ -3386,7 +3399,7 @@ export default function MePage() {
     { key: "wages", label: "Wages", icon: "💰" },
     { key: "messages", label: "Messages", icon: "💬" },
     ...(staff.is_driver ? [{ key: "deliveries", label: "Deliveries", icon: "🚚" }] : []),
-    { key: "details", label: "Details", icon: "👤" },
+    { key: "details", label: "Profile", icon: "👤" },
   ];
 
   return (
@@ -3444,6 +3457,9 @@ export default function MePage() {
 
       {/* Content */}
       <main className="flex-1 p-4" style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}>
+        {tab === "roster" && (
+          <MyReviewBanner data={myReview} onOpen={() => { setFocusReview(true); setTab("details"); }} />
+        )}
         {tab === "roster" ? (
           <RosterCombinedTab staff={staff} />
         ) : tab === "timeoff" ? (
@@ -3455,7 +3471,7 @@ export default function MePage() {
         ) : tab === "deliveries" ? (
           <DeliveriesTab staff={staff} />
         ) : tab === "details" ? (
-          <DetailsTab staff={staff} />
+          <DetailsTab staff={staff} myReview={myReview} onReviewChanged={setMyReview} focusReview={focusReview} />
         ) : (
           <div className="text-sm text-gray-400 text-center mt-10">
             {TABS.find((t) => t.key === tab)?.label} tab — coming next.
@@ -3471,7 +3487,7 @@ export default function MePage() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => { setFocusReview(false); setTab(t.key); }}
             className={`relative flex-1 py-2 text-[11px] font-medium flex flex-col items-center gap-0.5 ${
               tab === t.key ? "text-blue-600" : "text-gray-400"
             }`}
@@ -3485,6 +3501,11 @@ export default function MePage() {
               )}
               {t.key === "messages" && unreadCount === 0 && newBoardCount > 0 && (
                 <span className="absolute -top-1 -right-1 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
+              )}
+              {t.key === "details" && prepWaiting(myReview) && (
+                <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none" title="Performance review waiting">
+                  1
+                </span>
               )}
               {t.key === "timeoff" && leaveUpdate && (
                 <span className="absolute -top-1 -right-2 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" title="Leave request update" />

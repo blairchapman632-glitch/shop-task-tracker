@@ -47,12 +47,12 @@ const openReviewPdf = async (id) => {
 
 // ─── Reviews tab ─────────────────────────────────────────────────────────────
 
-export default function ReviewsTab({ member, adminUser }) {
+export default function ReviewsTab({ member, adminUser, initialReviewId }) {
   const [reviews, setReviews] = useState([]);
   const [people, setPeople] = useState([]); // all staff: id, name, can_conduct_reviews, active
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [view, setView] = useState("list"); // "list" | "start" | review id
+  const [view, setView] = useState(initialReviewId || "list"); // "list" | "start" | review id
 
   const load = async () => {
     const [{ data, error }, { data: ppl }] = await Promise.all([
@@ -153,6 +153,7 @@ export default function ReviewsTab({ member, adminUser }) {
               <div className="text-xs text-gray-500 mt-0.5">
                 Reviewer: {nameOf(r.reviewer_staff_id) || "—"}
                 {r.status === "signed" && r.copy_given && " · Copy given"}
+                {r.status === "signed" && r.staff_comments && r.staff_comments_seen === false && <span className="ml-1 text-blue-600 font-medium">· New staff comment</span>}
               </div>
             </button>
           ))}
@@ -409,6 +410,14 @@ function ReviewEditor({ review, member, people, nameOf, onBack, onChanged, onDel
 
   const signedDate = perthDateOf(review.signed_at);
 
+  // Opening a review with a new staff comment clears the overview alert
+  useEffect(() => {
+    if (!signed || review.staff_comments_seen !== false) return;
+    supabase.from("performance_reviews").update({ staff_comments_seen: true }).eq("id", review.id)
+      .then(({ error }) => { if (!error) onChanged(); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [review.id, review.staff_comments_seen]);
+
   return (
     <div className="space-y-5">
       {/* Top bar */}
@@ -507,7 +516,9 @@ function ReviewEditor({ review, member, people, nameOf, onBack, onChanged, onDel
       {/* 2. Staff member's preparation (read-only — staff fill this in on their phone, Part 2) */}
       <section className="border-t pt-4 space-y-2">
         <div className={sectionTitleCls}>{SECTIONS[1]}</div>
-        {!Object.values(prep).some((v) => String(v || "").trim()) && (
+        {review.staff_prep_updated_at ? (
+          <p className="text-[11px] text-gray-400">Last updated {fmtDateShort(perthDateOf(review.staff_prep_updated_at))}</p>
+        ) : (
           <p className="text-xs text-gray-400">Not completed by the staff member yet.</p>
         )}
         {PREP_QUESTIONS.map((q, i) => (
@@ -618,7 +629,7 @@ function ReviewEditor({ review, member, people, nameOf, onBack, onChanged, onDel
         {review.staff_comments ? (
           <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
             <div className="text-sm text-gray-800 whitespace-pre-wrap">{review.staff_comments}</div>
-            {review.staff_comments_at && <div className="text-[11px] text-gray-400 mt-1">Added {fmtDateShort(perthDateOf(review.staff_comments_at))}</div>}
+            {review.staff_comments_at && <div className="text-[11px] text-gray-400 mt-1">Last updated {fmtDateShort(perthDateOf(review.staff_comments_at))}</div>}
           </div>
         ) : (
           <p className="text-xs text-gray-400">
@@ -677,7 +688,7 @@ export function ReviewsOverview({ staffList, onOpen }) {
 
   useEffect(() => {
     supabase.from("performance_reviews")
-      .select("id, staff_id, status, review_type, signed_at, created_at")
+      .select("id, staff_id, status, review_type, meeting_date, signed_at, created_at, staff_comments, staff_comments_seen")
       .eq("pharmacy_id", PHARMACY_ID)
       .then(({ data, error: err }) => {
         if (err) setError(err.message);
@@ -688,6 +699,11 @@ export function ReviewsOverview({ staffList, onOpen }) {
   const today = todayPerth();
   const soon = addDaysStr(today, 30);
   const rows = { dueNow: [], dueSoon: [], inProgress: [], noStart: [] };
+  const newComments = (reviews || [])
+    .filter((r) => r.status === "signed" && r.staff_comments && r.staff_comments_seen === false)
+    .map((r) => ({ review: r, staff: (staffList || []).find((s) => Number(s.id) === Number(r.staff_id)) }))
+    .filter((x) => x.staff)
+    .sort((a, b) => String(b.review.signed_at).localeCompare(String(a.review.signed_at)));
 
   for (const s of staffList || []) {
     const mine = (reviews || []).filter((r) => Number(r.staff_id) === Number(s.id));
@@ -747,6 +763,26 @@ export function ReviewsOverview({ staffList, onOpen }) {
             <p className="text-xs text-gray-400">Loading…</p>
           ) : (
             <>
+              {newComments.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-semibold text-blue-600 uppercase mb-1">New staff comments <span className="text-gray-400 font-normal">({newComments.length})</span></div>
+                  <div className="rounded-lg border border-blue-200 overflow-hidden">
+                    {newComments.map(({ review, staff }) => (
+                      <button
+                        key={review.id}
+                        type="button"
+                        onClick={() => onOpen(staff, review.id)}
+                        className="w-full grid grid-cols-[1fr_auto] items-center gap-2 px-3 py-2 border-b last:border-b-0 text-left hover:bg-blue-50"
+                      >
+                        <span className="text-sm font-medium text-gray-800 truncate">💬 {staff.name}</span>
+                        <span className="text-xs text-gray-600">
+                          {REVIEW_TYPE_LABEL[review.review_type]} review · {fmtDateShort(review.meeting_date || perthDateOf(review.signed_at))}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <Group title="Due now / overdue" list={rows.dueNow} empty="No one is due." />
               <Group title="Due in the next 30 days" list={rows.dueSoon} empty="No one is due in the next 30 days." />
               <Group title="In progress" list={rows.inProgress} empty="No other reviews in progress." />

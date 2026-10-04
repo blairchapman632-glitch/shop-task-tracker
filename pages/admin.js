@@ -187,7 +187,7 @@ function DayScheduleGrid({ schedule, onChange }) {
 
 // ─── Staff Form ───────────────────────────────────────────────────────────────
 
-function StaffForm({ member, onSave, onCancel, initialTab, adminUser }) {
+function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, adminUser }) {
 
   const isNew = !member?.id;
   const [activeTab, setActiveTab] = useState(initialTab || "profile");
@@ -1427,7 +1427,7 @@ function StaffForm({ member, onSave, onCancel, initialTab, adminUser }) {
         {activeTab === "reviews" && form.role !== "Locum" && (
           isNew
             ? <p className="text-xs text-gray-400">Save the staff member first, then you can start a review.</p>
-            : <ReviewsTab member={member} adminUser={adminUser} />
+            : <ReviewsTab member={member} adminUser={adminUser} initialReviewId={initialReviewId} />
         )}
 
         {error && <p className="text-sm text-red-500">{error}</p>}
@@ -2074,6 +2074,12 @@ function SettingsTab() {
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
   const handleSave = async () => {
+    const rawWindow = String(form.review_comment_window_days ?? "").trim();
+    const commentWindowDays = rawWindow === "" ? 14 : Number(rawWindow);
+    if (!Number.isInteger(commentWindowDays) || commentWindowDays < 0 || commentWindowDays > 365) {
+      setError("Performance review comment window must be a whole number of days (0–365).");
+      return;
+    }
     setSaving(true);
     setError("");
     const { error: err } = await supabase
@@ -2084,6 +2090,7 @@ function SettingsTab() {
         address: form.address,
         payroll_start_date: form.payroll_start_date || null,
         qspp_cycle_start_date: form.qspp_cycle_start_date || null,
+        review_comment_window_days: commentWindowDays,
         contract_signatory_name: (form.contract_signatory_name || "").trim() || null,
         contract_signatory_title: (form.contract_signatory_title || "").trim() || null,
         hours_monday: form.hours_monday,
@@ -2261,6 +2268,20 @@ function SettingsTab() {
               className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
             />
           </div>
+        </div>
+
+        {/* Performance reviews */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Performance Reviews</h3>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Performance review comment window (days)</label>
+          <p className="text-xs text-gray-400 mb-2">How long staff can add their own comments after a review is signed. Only affects reviews signed after you change it.</p>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={form.review_comment_window_days ?? 14}
+            onChange={(e) => set("review_comment_window_days", e.target.value.replace(/\D/g, ""))}
+            className="w-24 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
         </div>
 
         {error && <p className="text-sm text-red-500">{error}</p>}
@@ -3358,6 +3379,7 @@ export default function AdminPage() {
   const [selected, setSelected] = useState(null); // null = none, "new" = add form, or staff object
   const [formKey, setFormKey] = useState(0);
   const [initialStaffTab, setInitialStaffTab] = useState(null); // tab to open the staff form on (e.g. "reviews")
+  const [initialReviewId, setInitialReviewId] = useState(null); // review to open on that tab
   const [successId, setSuccessId] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -3539,13 +3561,14 @@ export default function AdminPage() {
             ) : !selected ? (
               <ReviewsOverview
                 staffList={staffList}
-                onOpen={(s) => { setSelected(s); setInitialStaffTab("reviews"); setFormKey((k) => k + 1); }}
+                onOpen={(s, reviewId) => { setSelected(s); setInitialStaffTab("reviews"); setInitialReviewId(reviewId || null); setFormKey((k) => k + 1); }}
               />
             ) : (
               <StaffForm
                 key={formKey}
                 member={selected === "new" ? null : selected}
                 initialTab={initialStaffTab}
+                initialReviewId={initialStaffTab === "reviews" ? initialReviewId : null}
                 adminUser={adminUser}
                 onSave={handleSave}
                 onCancel={() => setSelected(null)}
