@@ -69,3 +69,75 @@
 
 ### Not committed
 - Everything from this session: `lib/contractPdf.js`, `lib/contractServer.js`, `lib/supabaseAdmin.js`, `pages/api/contracts/*`, `components/ContractTab.js`, `components/EmploymentContractsList.js`, `pages/admin.js`, `pages/staff-onboard.js`, `docs/sql/*`, this file. (`pages/admin.js` also had a few uncommitted lines from before this session.)
+
+## 2026-10-04 — Performance reviews (QSPP-4.9-PERF-FORM v1.0, QSPP 2.4.1.3(d))
+
+### Done
+- **Part 1 — Admin (commit `8159248`).** `lib/performanceReview.js` holds the exact paper-form wording (7 all-staff areas, 3 dispensary areas, 5 Section 2 questions, labels, form version) and the shared "who is due" helper (string date maths; probation = start + 3 months, annual = last signed + 12 months; excludes Locums, inactive staff and anyone excluded from reviews; "Start date not set" when there's no start date).
+  - Staff Profile ticks: "Can conduct performance reviews" and "Exclude from performance reviews".
+  - New **Reviews tab** on the staff form (hidden for Locums): start a review (type suggested, dispensary tick, reviewer list, position), editor with autosave + Save button, sign-off (typed name + confirm; soft warnings for missing meeting date, unrated areas or summary) locks the review and files the PDF. Signed reviews: Download PDF, Copy given + date, next due date. Only in-progress reviews can be deleted.
+  - **Overview panel** replaces the empty staff screen: Due now/overdue, Due in the next 30 days, In progress, Start date not set.
+  - **PDF** drawn from scratch with pdf-lib (`lib/reviewPdf.js`): header, sections 1–6, tick-box ratings, office-use block, footer on every page, WinAnsi-safe text. Stored privately at `performance-reviews/<staff_id>/<review_id>.pdf`. Routes `sign`, `pdf-url`, `copy-given` (ticking Copy given rebuilds the PDF so the office-use block matches).
+  - `sanitise` in `lib/contractPdf.js` is now exported (no behaviour change).
+- **Part 2 — staff phone side (commit `2bff771`).** `/me` "Details" renamed **Profile** (key still `details`). "My performance review" section: Section 2 form while the review is in progress (edit and resubmit until signed); after signing, only a comment box until `comment_window_ends`; nothing otherwise. Roster banner (prep waiting / comment invite) and red "1" Profile badge while Section 2 is waiting (`components/MyReview.js`).
+  - Staff routes `my-review`, `save-prep`, `save-comment`: check the Supabase login token, find the staff row by exact email, and only act on that person's current review. They return staff-facing fields only. Saving a comment sets `staff_comments_seen = false` and rebuilds the PDF.
+  - Admin: Section 2/5 show the staff member's answers with "Last updated". Overview has a "New staff comments" list (opens that review and marks the comment seen). Settings has "Performance review comment window (days)".
+- Security check: all staff routes return 401 with no token or a fake one (tested on a temporary local server).
+
+### Schema changes
+- `docs/sql/2026-10-04_performance_reviews.sql` (run): `staff.can_conduct_reviews`, `staff.exclude_from_reviews`, `pharmacy_settings.review_comment_window_days` (default 14), new table `performance_reviews`, private bucket `performance-reviews`.
+
+### New tables (add to RLS pass)
+- `performance_reviews` (RLS off).
+- Private bucket `performance-reviews` (no policies; all access via service-role API routes).
+
+### RLS pass (#11)
+- Admin review routes (`sign`, `pdf-url`, `copy-given`) have **no server-side auth** — marked TODO, same as contracts.
+- Admin creates, edits, deletes and marks seen on `performance_reviews` straight from the browser (anon key). When RLS goes on, staff must have **no direct access** to this table; `/me` already uses only the token-checked API routes.
+
+### Follow-ups / parked
+- Staff using an old `/me?token=` link (no Auth session) don't see reviews at all.
+- A manager with a review already open doesn't see newly submitted Section 2 answers until they reopen it.
+- If the PDF rebuild after a staff comment fails, only the server log records it; the next rebuild (e.g. ticking Copy given) catches it up.
+- Office-use block often lands alone on the last PDF page; could tighten the layout.
+- Test data: delete any test reviews (`performance_reviews` rows + `performance-reviews` storage files) once testing is done.
+- Still open from earlier: Admin staff/locum PIN fields use `type="password"`; Locum "Add booking" inserts `roster_shifts` without `pharmacy_id`.
+
+### Not committed
+- Nothing. Part 1 = `8159248`, Part 2 = `2bff771`; these notes were committed with the training plan below.
+
+## 2026-10-04 (cont.) — Training & Development Plan (QSPP 2.4.1.5), Admin side
+
+### Done
+- First built a heavier version (role requirement lists, Mark done, completion history, per-person add/remove), then **reworked to a simpler design** before committing. Only the simple version is in the code.
+- **Plan = Pharmacy Assistant + DAA Coordinator** (roles configurable). Staff Training tab shows:
+  - **S2/S3:** "Done" + Open link if they have a Documents file of the configured type (`s2_s3_cert`); else "Due by start + 3 months"; then "Not done".
+  - **Hours** from training records (every record counts): "This training year: x of N" and "This QSPP cycle: x of M". 3 hrs/year (config), pro-rata in the starting year (rounded up to 0.5), 0 before they started. Cycle = 3 training years from `qspp_cycle_start_date` (2024-03-01 → current cycle ends 28 Feb 2027). "Not required this training year" tick + reason sets that year to 0.
+- **Goals** for all staff except Locums: Section 4 goals from the latest signed review (read-only, "Open review →") + manual goals (goal, notes, Done, edit, delete, "Completed goals" fold).
+- **Training record PDF** (date range, download only, built in the browser) — `lib/trainingRecordPdf.js`.
+- **Documents:** optional inline "Expires" date on each staff file (not resumes). Only the newest file of each type counts for alerts.
+- **Admin → QSPP → 🎓 Training:** QSPP anniversary date (moved from Settings — same column; Settings no longer shows or saves it), training year + cycle shown, Needs attention (S2/S3 not done; year/cycle hours short within 60 days of the end; certificates expired or expiring within 60 days, all non-locum staff), hours table, Plan settings (hours per year, S2/S3 Documents type, plan roles).
+- Removed the old "QSPP Training x / 9 hrs" box from the staff Training tab. `lib/qspp.js` kept (`pages/training.js` uses it).
+- Date rules tested: pro-rata, rounding, leap years, 29 Feb anchor, cycle boundary (28 Feb vs 1 Mar 2027), dates before the anchor.
+- Files: `lib/trainingPlan.js`, `lib/trainingRecordPdf.js`, `components/TrainingPlan.js`, `components/TrainingAdmin.js`, `pages/admin.js`.
+
+### Schema changes
+- `docs/sql/2026-10-04_training_plan.sql` (run): tables `training_requirements` (9 Byford rows seeded), `staff_training_overrides`, `staff_training_completions`.
+- `docs/sql/2026-10-04_training_plan_rework.sql` (run): backup `training_requirements_backup_20261004`; `pharmacy_settings.training_hours_per_year` / `training_s2s3_doc_type` / `training_plan_roles`; `locum_documents.expiry_date`; tables `staff_training_goals`, `staff_training_exemptions`; 7 requirement rows deactivated (2 still active, but unused).
+
+### New tables (add to RLS pass)
+- `staff_training_goals`, `staff_training_exemptions` (in use).
+- `training_requirements`, `staff_training_overrides`, `staff_training_completions` (RLS off, **unused**).
+
+### RLS pass (#11)
+- Admin reads/writes all training tables and `locum_documents.expiry_date` straight from the browser (anon key), like the rest of Admin.
+
+### Follow-ups / parked
+- **Candidates to drop later (unused, empty or seed-only):** `training_requirements`, `staff_training_overrides`, `staff_training_completions`, backup `training_requirements_backup_20261004`. Nothing reads them now.
+- Part 2: staff seeing their plan/records on `/me` Profile.
+- `lib/qspp.js` (used by `pages/training.js`) does date maths with `toISOString` — the Perth off-by-one gotcha. Consider moving `training.js` onto `lib/trainingPlan.js`.
+- Expiry can only be set on a file's row after upload (not in the upload step); onboarding uploads have no expiry.
+- For multi-file slots ("Other Documents", "Vaccination Accreditation"), only the newest file's expiry is checked.
+
+### Not committed
+- Nothing — committed with this note.

@@ -5,9 +5,10 @@ import Avatar from "../components/Avatar";
 import ContractForm, { ContractHistory, ContractSignatureSettings } from "../components/ContractTab";
 import EmploymentContractsList from "../components/EmploymentContractsList";
 import ReviewsTab, { ReviewsOverview } from "../components/PerformanceReviews";
+import StaffTrainingPlan from "../components/TrainingPlan";
+import TrainingAdminTab from "../components/TrainingAdmin";
 import { getLeaveCover } from "../lib/leaveCover";
 import { nextDayStr } from "../lib/leaveCalendar";
-import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle } from "../lib/qspp";
 
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -191,6 +192,7 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
 
   const isNew = !member?.id;
   const [activeTab, setActiveTab] = useState(initialTab || "profile");
+  const [reviewToOpen, setReviewToOpen] = useState(null); // set by the Training tab's "Open review" link
   const [form, setForm] = useState({
     name: member?.name || "",
     email: member?.email || "",
@@ -247,7 +249,6 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
   const [documents, setDocuments] = useState([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [training, setTraining] = useState([]);
-  const [qsppAnchor, setQsppAnchor] = useState(null);
   const [contracts, setContracts] = useState([]);
   const [onboardingDoneAt, setOnboardingDoneAt] = useState(null);
 
@@ -273,14 +274,6 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
     setContracts(data || []);
     setOnboardingDoneAt(st?.onboarding_completed_at || null);
   };
-
-  useEffect(() => {
-    supabase.from("pharmacy_settings")
-      .select("qspp_cycle_start_date")
-      .eq("pharmacy_id", PHARMACY_ID)
-      .maybeSingle()
-      .then(({ data }) => setQsppAnchor(data?.qspp_cycle_start_date || null));
-  }, []);
 
   useEffect(() => {
     if (!member?.id) return;
@@ -403,6 +396,14 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
     const marker = "/locum-documents/";
     const i = url.indexOf(marker);
     return i === -1 ? null : url.slice(i + marker.length).split("?")[0];
+  };
+
+  // Certificate expiry (optional) — only the newest file of each type counts for alerts (QSPP → Training)
+  const handleDocExpiry = async (doc, value) => {
+    const expiry_date = value || null;
+    const { error: err } = await supabase.from("locum_documents").update({ expiry_date }).eq("id", doc.id);
+    if (err) { setError("Couldn't save the expiry date: " + err.message); return; }
+    setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, expiry_date } : d)));
   };
 
   const handleDocDelete = async (doc, skipConfirm = false) => {
@@ -1139,6 +1140,17 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
                                 <div className="text-xs font-medium text-gray-700 truncate">{doc.filename || doc.type}</div>
                                 <div className="text-[11px] text-gray-400">{new Date(doc.uploaded_at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</div>
                               </div>
+                              {type !== "resume" && (
+                                <label className="flex items-center gap-1 text-[11px] text-gray-500 shrink-0" title="Optional — expiring certificates show in QSPP → Training">
+                                  Expires
+                                  <input
+                                    type="date"
+                                    value={doc.expiry_date || ""}
+                                    onChange={(e) => handleDocExpiry(doc, e.target.value)}
+                                    className="border rounded px-1 py-0.5 text-[11px] bg-white"
+                                  />
+                                </label>
+                              )}
                               <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
                               {!multi && (
                                 <label className="text-xs text-blue-600 hover:underline shrink-0 cursor-pointer">
@@ -1176,34 +1188,16 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
             <p className="text-xs text-gray-400">Save the staff member first, then you can add training records.</p>
           ) : (
             <>
-              {/* QSPP progress — pharmacy assistants only */}
-              {qsppApplies(form.role) && (() => {
-                const cycle = getCurrentCycle(qsppAnchor);
-                if (!cycle) {
-                  return (
-                    <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-700">
-                      Set a QSPP cycle start date in Settings to track training progress.
-                    </div>
-                  );
-                }
-                const done = hoursInCycle(training, cycle);
-                const pct = Math.min(100, Math.round((done / QSPP_HOURS_REQUIRED) * 100));
-                const met = done >= QSPP_HOURS_REQUIRED;
-                return (
-                  <div className="rounded-lg border border-gray-200 p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold text-gray-600">QSPP Training</span>
-                      <span className={`text-xs font-medium ${met ? "text-green-600" : "text-gray-700"}`}>
-                        {done} / {QSPP_HOURS_REQUIRED} hrs {met ? "✓" : ""}
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-                      <div className={`h-2 rounded-full ${met ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
-                    </div>
-                    <div className="text-[11px] text-gray-400 mt-1.5">Current cycle: {formatCycle(cycle)}</div>
-                  </div>
-                );
-              })()}
+              {/* Training & development plan + goals + training record PDF (QSPP 2.4.1.5) */}
+              {form.role !== "Locum" && (
+                <StaffTrainingPlan
+                  member={member}
+                  records={training}
+                  documents={documents}
+                  adminUser={adminUser}
+                  onOpenReview={(id) => { setReviewToOpen(id); setActiveTab("reviews"); }}
+                />
+              )}
 
               {/* Existing records */}
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -1427,7 +1421,7 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
         {activeTab === "reviews" && form.role !== "Locum" && (
           isNew
             ? <p className="text-xs text-gray-400">Save the staff member first, then you can start a review.</p>
-            : <ReviewsTab member={member} adminUser={adminUser} initialReviewId={initialReviewId} />
+            : <ReviewsTab member={member} adminUser={adminUser} initialReviewId={reviewToOpen || initialReviewId} />
         )}
 
         {error && <p className="text-sm text-red-500">{error}</p>}
@@ -2057,7 +2051,6 @@ function SettingsTab() {
         phone: "",
         address: "",
         payroll_start_date: "",
-        qspp_cycle_start_date: "",
         hours_monday: "",
         hours_tuesday: "",
         hours_wednesday: "",
@@ -2089,7 +2082,6 @@ function SettingsTab() {
         phone: form.phone,
         address: form.address,
         payroll_start_date: form.payroll_start_date || null,
-        qspp_cycle_start_date: form.qspp_cycle_start_date || null,
         review_comment_window_days: commentWindowDays,
         contract_signatory_name: (form.contract_signatory_name || "").trim() || null,
         contract_signatory_title: (form.contract_signatory_title || "").trim() || null,
@@ -2253,21 +2245,6 @@ function SettingsTab() {
               </div>
             </div>
           )}
-        </div>
-
-        {/* QSPP training */}
-        <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">QSPP Training</h3>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Cycle Start Date</label>
-            <p className="text-xs text-gray-400 mb-2">The fixed date your 3-year QSPP cycle starts. Pharmacy assistants need 3 hours of training per year (9 hours per cycle). All future cycles are calculated automatically from this date.</p>
-            <input
-              type="date"
-              value={form.qspp_cycle_start_date || ""}
-              onChange={(e) => set("qspp_cycle_start_date", e.target.value)}
-              className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-            />
-          </div>
         </div>
 
         {/* Performance reviews */}
@@ -2995,6 +2972,7 @@ function DocumentsTab() {
         {[
           { key: "documents", label: "📄 Documents" },
           { key: "incidents", label: "⚠️ Incidents" },
+          { key: "training", label: "🎓 Training" },
         ].map((t) => (
           <button
             key={t.key}
@@ -3008,6 +2986,8 @@ function DocumentsTab() {
 
       {subTab === "incidents" ? (
         <IncidentsTab />
+      ) : subTab === "training" ? (
+        <TrainingAdminTab />
       ) : (
       <div className="flex flex-1 overflow-hidden">
       {/* Folder list */}
