@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
+import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -654,6 +655,9 @@ export default function HomePage() {
   const [unreadByStaff, setUnreadByStaff] = useState({}); // staffId -> unread message count
   const [leaveUpdateIds, setLeaveUpdateIds] = useState(new Set()); // staff with unseen leave status changes
   const [incidentReviewMap, setIncidentReviewMap] = useState({}); // staffId -> incident id to review
+  const [policyJobs, setPolicyJobs] = useState([]);          // outstanding policy reads for staff rostered on today
+  const [openPolicyJob, setOpenPolicyJob] = useState(null);  // policy card tapped (shows the "I have read and understood" panel)
+  const [policyAckBusy, setPolicyAckBusy] = useState(false);
 
   // ── Leaderboard ──
   const [leadersWeek, setLeadersWeek] = useState([]);
@@ -1178,6 +1182,44 @@ export default function HomePage() {
   const selectedStaffName = selectedStaff?.name || null;
   const staffById = useMemo(() => Object.fromEntries(staff.map((s) => [s.id, s])), [staff]);
 
+  // Policy reads as Today's Jobs: projected from policy_read_requests (no task rows, no completions, no leaderboard).
+  // Outstanding requests for ACTIVE staff rostered on today, on active documents. Cancelled/read ones never show.
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    const activeIds = new Set(staff.map((st) => Number(st.id)));
+    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    if (!ids.length) { setPolicyJobs([]); return; }
+    let cancelled = false;
+    supabase.from("policy_read_requests")
+      .select(`${REQUEST_COLUMNS}, document:document_id(id, title, file_url, file_name, active)`)
+      .eq("pharmacy_id", currentPharmacyId)
+      .eq("status", "outstanding")
+      .in("staff_id", ids)
+      .order("requested_at")
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) { console.error("[policy jobs]", error); setPolicyJobs([]); return; }
+        setPolicyJobs((data || []).filter((r) => r.document && r.document.active !== false));
+      });
+    return () => { cancelled = true; };
+  }, [todayRosteredIds, currentPharmacyId, staff]);
+
+  // "I have read and understood" for the named person on the card (read_via kiosk + file snapshot)
+  const handlePolicyAck = async () => {
+    const r = openPolicyJob;
+    if (!r) return;
+    setPolicyAckBusy(true);
+    try {
+      await acknowledgeRequest(supabase, r, r.document, "kiosk"); // false = already recorded elsewhere; card goes either way
+      setPolicyJobs((prev) => prev.filter((x) => x.id !== r.id));
+      setOpenPolicyJob(null);
+    } catch (err) {
+      alert("Couldn't save: " + (err?.message || String(err)));
+    } finally {
+      setPolicyAckBusy(false);
+    }
+  };
+
   const progress = useMemo(() => {
     const total = tasks.length;
     const done = completedTaskIds.size;
@@ -1684,7 +1726,7 @@ const handleDeliveryTap = async (d) => {
                   </div>
 
                   {/* On the List section */}
-                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped") || hireDueBack.length > 0) && (
+                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped") || hireDueBack.length > 0 || policyJobs.length > 0) && (
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">Today's Jobs</div>
@@ -1730,6 +1772,17 @@ const handleDeliveryTap = async (d) => {
                             <div className="text-[10px] text-gray-400">Tap to follow up</div>
                           </button>
                         )}
+                        {policyJobs.map((r) => (
+                          <button
+                            key={`policy-${r.id}`}
+                            onClick={() => { window.open(r.document.file_url, "_blank", "noopener,noreferrer"); setOpenPolicyJob(r); }}
+                            className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-blue-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
+                          >
+                            <div className="font-semibold text-sm leading-tight text-gray-800 mb-1 break-words">📄 Read: {r.document.title}</div>
+                            <div className="text-xs text-blue-600 font-medium mb-1">👤 {staffById[r.staff_id]?.name || "Staff member"}</div>
+                            <div className="text-[10px] text-gray-400">Tap to open, then tick when read</div>
+                          </button>
+                        ))}
                         {monthlyTasks.map((task) => {
                           const isWeekly = task.frequency === "weekly";
                           const isDone = isWeekly
@@ -2588,6 +2641,33 @@ const handleDeliveryTap = async (d) => {
         document.body
       )}
       {/* Deliveries modal */}
+      {openPolicyJob && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => !policyAckBusy && setOpenPolicyJob(null)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-gray-800">📄 Read policy</h2>
+                  <p className="text-sm text-gray-700 mt-1 break-words">{openPolicyJob.document.title}</p>
+                </div>
+                <button onClick={() => setOpenPolicyJob(null)} disabled={policyAckBusy} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm text-blue-800">
+                For <span className="font-semibold">{staffById[openPolicyJob.staff_id]?.name || "this staff member"}</span>
+              </div>
+              <a href={openPolicyJob.document.file_url} target="_blank" rel="noopener noreferrer" className="block text-center border border-gray-300 rounded-lg py-2 text-sm text-gray-700 hover:bg-gray-50">
+                Open the policy again
+              </a>
+              <button onClick={handlePolicyAck} disabled={policyAckBusy} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
+                {policyAckBusy ? "Saving…" : "I have read and understood"}
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
       {showDeliveriesModal && createPortal(
         <>
           <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setShowDeliveriesModal(false)} />

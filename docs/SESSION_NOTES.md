@@ -203,4 +203,29 @@
 - A dev server left running on port 3005 from an earlier test was stopped (it was answering test requests with stale files).
 
 ### Not committed
+- Nothing (committed in `22b09d4`).
+
+## 2026-10-04 (cont.) — Policy reads move to the kiosk
+
+### Done
+- Background: policy files opened from `/me` (especially the iPhone home-screen app) stall and never load, so staff now read and tick on the kiosk only.
+- **Kiosk home → Today's Jobs** (`pages/index.js`): a "📄 Read: [policy title]" card with the person's name for each outstanding request of active staff rostered on today (sick shifts excluded; cancelled/read and inactive documents never show). Projected from `policy_read_requests` — no task rows, no completions, no leaderboard/Activity feed, not in the Today's Jobs progress count. Tap → policy opens in a new tab + panel "For [name]" → "I have read and understood" (read_via kiosk + file snapshot, via `acknowledgeRequest`). Today's Jobs also shows when policy cards are the only jobs.
+- **/me** (`components/MyPolicies.js`): read-only. Banner "📄 You have N policies to read — find them in Today's Jobs on the kiosk"; Profile → Policies: "To read" (titles only) and "Policies read" (date + phone/kiosk). Badge count unchanged.
+- Kept: QSPP Library "📄 Policies to read" (second way in); Admin, Training tab and Needs attention unchanged.
+
+### Schema changes
+- None.
+
+### New tables (add to RLS pass)
+- None.
+
+### RLS pass (#11)
+- Kiosk home now also reads and completes `policy_read_requests` with the anon key (same as the QSPP Library kiosk flow).
+
+### Follow-ups / parked
+- `/api/policies/acknowledge` is still in place but **nothing calls it** now (/me no longer acknowledges). Keep for a future phone fix or remove later.
+- Opening files on iPhone from `/me` (home-screen app) stalls — not investigated; may also affect other file links on `/me`.
+- `/me` still passes an unused `onChanged` prop to `MyPoliciesSection` (harmless).
+
+### Not committed
 - Nothing — committed with this note.
