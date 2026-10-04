@@ -1,12 +1,14 @@
 // Training & Development Plan on the Admin staff form (Training tab, above the existing records):
-//   Plan (Pharmacy Assistant / DAA only): S2/S3 certificate from Documents + training hours this year / this cycle
+//   Plan (Pharmacy Assistant / DAA / Retail Manager): S2/S3 certificate from Documents + training hours this year / this cycle
+//   Pharmacists / interns: CPD line + required certificates of their ticked services (status read from Documents)
 //   Goals (all staff except locums): Section 4 of their latest signed review + manual goals
 //   Download training record (PDF)
 // Rules live in lib/trainingPlan.js.
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
-import { SETTINGS_COLUMNS, configFrom, hasPlan, hasGoals, hoursStatus, s2s3Status, STATE_STYLE } from "../lib/trainingPlan";
+import { SETTINGS_COLUMNS, HOURS_PER_YEAR, hasPlan, hasGoals, hoursStatus, s2s3Status, STATE_STYLE } from "../lib/trainingPlan";
 import { addMonthsStr, todayPerth, perthDateOf, fmtDateShort, LABELS, REVIEW_TYPE_LABEL } from "../lib/performanceReview";
+import { isPharmacistRole, loadServiceConfig, docSections, sectionStatus, DOC_STATE_STYLE } from "../lib/staffDocuments";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -18,6 +20,7 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
   const [exemptions, setExemptions] = useState([]);
   const [goals, setGoals] = useState([]);
   const [review, setReview] = useState(null);
+  const [services, setServices] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -36,6 +39,7 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
       setExemptions(ex.data || []);
       setGoals(gl.data || []);
       setReview(rv.data?.[0] || null);
+      if (isPharmacistRole(member.role)) setServices(await loadServiceConfig(supabase, PHARMACY_ID, [member.id]));
       setError("");
     } catch (err) {
       setError(err?.message || String(err));
@@ -52,14 +56,14 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
   if (loading) return <p className="text-xs text-gray-400">Loading training plan…</p>;
   if (error) return <p className="text-xs text-red-500">Couldn't load the training plan: {error}</p>;
 
-  const cfg = configFrom(settings);
   const anchor = settings?.qspp_cycle_start_date || null;
-  const hours = hoursStatus(member, records, exemptions, anchor, cfg);
+  const hours = hoursStatus(member, records, exemptions, anchor);
 
   return (
     <div className="space-y-5">
-      {hasPlan(member, cfg) && (
-        <PlanSection member={member} cfg={cfg} hours={hours} documents={documents} adminUser={adminUser} reload={load} />
+      {isPharmacistRole(member.role) && <PharmacistSection member={member} documents={documents} services={services} />}
+      {hasPlan(member) && (
+        <PlanSection member={member} hours={hours} documents={documents} adminUser={adminUser} reload={load} />
       )}
       {hasGoals(member) && (
         <GoalsSection member={member} review={review} goals={goals} adminUser={adminUser} onOpenReview={onOpenReview} reload={load} />
@@ -70,10 +74,47 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
   );
 }
 
-// ─── Plan (assistants / DAA) ─────────────────────────────────────────────────
+// ─── Pharmacists / interns ───────────────────────────────────────────────────
 
-function PlanSection({ member, cfg, hours, documents, adminUser, reload }) {
-  const s2 = s2s3Status(member, documents, cfg);
+function PharmacistSection({ member, documents, services }) {
+  const certs = docSections(member, services).filter((sec) => sec.kind === "service");
+  return (
+    <section className="space-y-2">
+      <div className={sectionTitleCls}>Training plan</div>
+      <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-sm text-gray-700">
+        CPD managed by the pharmacist under Pharmacy Board requirements.
+      </div>
+      <div className="text-[11px] font-semibold text-gray-400 uppercase pt-1">Required certificates</div>
+      {certs.length === 0 ? (
+        <p className="text-xs text-gray-400">No services ticked on their Profile tab.</p>
+      ) : certs.map((sec, i) => {
+        const st = sectionStatus(sec, documents);
+        const header = sec.group !== certs[i - 1]?.group ? <div className="text-xs font-medium text-gray-600 pt-1">{sec.group}</div> : null;
+        return (
+          <div key={sec.key}>
+            {header}
+            <div className="rounded-lg border border-gray-200 px-3 py-2 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-sm text-gray-800">{sec.title}</div>
+                <div className="text-[11px] text-gray-400">{sec.certificate.renew_months ? `Renews every ${sec.certificate.renew_months} months` : "One-off"}</div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {st?.latest?.url && <a href={st.latest.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Open</a>}
+                {st && <span className={`text-[11px] px-2 py-0.5 rounded-full border ${DOC_STATE_STYLE[st.state]}`}>{st.label}</span>}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      {certs.length > 0 && <p className="text-[11px] text-gray-400">Upload certificates and completion dates on the Documents tab.</p>}
+    </section>
+  );
+}
+
+// ─── Plan (assistants / DAA / Retail Manager) ────────────────────────────────
+
+function PlanSection({ member, hours, documents, adminUser, reload }) {
+  const s2 = s2s3Status(member, documents);
   const badge = (state, text) => <span className={`text-[11px] px-2 py-0.5 rounded-full border shrink-0 ${STATE_STYLE[state]}`}>{text}</span>;
 
   return (
@@ -113,7 +154,7 @@ function PlanSection({ member, cfg, hours, documents, adminUser, reload }) {
           </div>
           <Exemption member={member} hours={hours} adminUser={adminUser} reload={reload} />
           <p className="text-[11px] text-gray-400">
-            Counts every training record below. {cfg.hoursPerYear} hours per training year, pro-rata in the year they started.
+            Counts every training record below. {HOURS_PER_YEAR} hours per training year, pro-rata in the year they started.
           </p>
         </div>
       )}
@@ -194,7 +235,7 @@ function GoalsSection({ member, review, goals, adminUser, onOpenReview, reload }
 
   return (
     <section className="border-t pt-4 space-y-3">
-      <div className={sectionTitleCls}>Goals</div>
+      <div className={sectionTitleCls}>Training &amp; development goals</div>
 
       {/* From the latest signed performance review (read-only) */}
       <div className="space-y-1.5">
@@ -236,7 +277,7 @@ function GoalsSection({ member, review, goals, adminUser, onOpenReview, reload }
         {done.length > 0 && (
           <div>
             <button type="button" onClick={() => setShowDone((v) => !v)} className="text-xs text-gray-500 hover:text-gray-700">
-              {showDone ? "Hide" : "Show"} completed goals ({done.length})
+              {showDone ? "Hide" : "Show"} completed training goals ({done.length})
             </button>
             {showDone && <div className="mt-1.5 space-y-1.5">{done.map((g) => <GoalRow key={g.id} goal={g} member={member} reload={reload} />)}</div>}
           </div>

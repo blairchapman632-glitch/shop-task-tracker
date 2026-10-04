@@ -1,12 +1,10 @@
-// Admin → QSPP → 🎓 Training: QSPP anniversary/cycle date, needs attention, training hours table, plan settings.
+// Admin → QSPP → 🎓 Training: QSPP anniversary/cycle date, needs attention, training hours table, pharmacist services.
 // Rules live in lib/trainingPlan.js.
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
-import {
-  SETTINGS_COLUMNS, DOC_TYPE_LABELS, PLAN_ROLES, WARN_DAYS, configFrom, hasPlan, hoursStatus, s2s3Status,
-  latestDocsByType, certExpiry, docTypeLabel, trainingYear, qsppCycle, fetchAllRows, STATE_STYLE,
-} from "../lib/trainingPlan";
-import { addDaysStr, todayPerth, fmtDateShort } from "../lib/performanceReview";
+import { PLAN_ROLES, WARN_DAYS, loadTrainingData, trainingAttention, trainingYear, qsppCycle, STATE_STYLE } from "../lib/trainingPlan";
+import { todayPerth, fmtDateShort } from "../lib/performanceReview";
+import { loadServiceConfig } from "../lib/staffDocuments";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 const h3Cls = "text-sm font-semibold text-gray-700";
@@ -17,32 +15,7 @@ export default function TrainingAdminTab() {
 
   const load = async () => {
     try {
-      const { data: settings, error: sErr } = await supabase.from("pharmacy_settings")
-        .select(SETTINGS_COLUMNS).eq("pharmacy_id", PHARMACY_ID).maybeSingle();
-      if (sErr) throw sErr;
-      const cfg = configFrom(settings);
-      const anchor = settings?.qspp_cycle_start_date || null;
-      const cycle = qsppCycle(anchor);
-
-      const { data: staffRows, error: stErr } = await supabase.from("staff")
-        .select("id, name, role, active, start_date").eq("pharmacy_id", PHARMACY_ID)
-        .or("role.is.null,role.neq.Locum").order("name");
-      if (stErr) throw stErr;
-      const staff = (staffRows || []).filter((s) => s.active !== false);
-      const ids = staff.map((s) => s.id);
-      const planIds = staff.filter((s) => hasPlan(s, cfg)).map((s) => s.id);
-
-      const [docs, records, exemptions] = ids.length ? await Promise.all([
-        fetchAllRows(() => supabase.from("locum_documents").select("id, staff_id, type, filename, url, uploaded_at, expiry_date").in("staff_id", ids)),
-        cycle && planIds.length
-          ? fetchAllRows(() => supabase.from("training_records").select("id, staff_id, training_date, hours").in("staff_id", planIds).gte("training_date", cycle.start).lte("training_date", cycle.end))
-          : Promise.resolve([]),
-        planIds.length
-          ? fetchAllRows(() => supabase.from("staff_training_exemptions").select("staff_id, training_year_start, reason").in("staff_id", planIds))
-          : Promise.resolve([]),
-      ]) : [[], [], []];
-
-      setData({ settings: settings || {}, cfg, anchor, staff, docs, records, exemptions });
+      setData(await loadTrainingData(supabase, PHARMACY_ID));
       setError("");
     } catch (err) {
       setError(err?.message || String(err));
@@ -54,40 +27,8 @@ export default function TrainingAdminTab() {
   if (error) return <div className="flex-1 overflow-y-auto p-6 text-sm text-red-500">Couldn't load training: {error}</div>;
   if (!data) return <div className="flex-1 overflow-y-auto p-6 text-sm text-gray-400">Loading…</div>;
 
-  const today = todayPerth();
-  const soon = addDaysStr(today, WARN_DAYS);
-  const { cfg, anchor, staff, docs, records, exemptions } = data;
-
-  // Plan people: S2/S3 + hours
-  const planRows = staff.filter((s) => hasPlan(s, cfg)).map((s) => ({
-    staff: s,
-    s2: s2s3Status(s, docs, cfg, today),
-    hours: hoursStatus(
-      s,
-      records.filter((r) => Number(r.staff_id) === Number(s.id)),
-      exemptions.filter((e) => Number(e.staff_id) === Number(s.id)),
-      anchor, cfg, today,
-    ),
-  }));
-
-  // Needs attention
-  const attention = [];
-  for (const { staff: s, s2, hours } of planRows) {
-    if (s2.state === "not_done") attention.push({ key: `s2-${s.id}`, staff: s, item: "S2/S3", state: "not_done", label: "Not done", sort: "0" });
-    if (hours?.yearShort && hours.year.end <= soon) {
-      attention.push({ key: `yr-${s.id}`, staff: s, item: "Training hours (this year)", state: "short", label: `${hours.yearDone} of ${hours.yearReq} hrs · year ends ${fmtDateShort(hours.year.end)}`, sort: hours.year.end });
-    }
-    if (hours?.cycleShort && hours.cycle.end <= soon) {
-      attention.push({ key: `cy-${s.id}`, staff: s, item: "Training hours (QSPP cycle)", state: "short", label: `${hours.cycleDone} of ${hours.cycleReq} hrs · cycle ends ${fmtDateShort(hours.cycle.end)}`, sort: hours.cycle.end });
-    }
-  }
-  const nameOf = (id) => staff.find((s) => Number(s.id) === Number(id));
-  for (const d of latestDocsByType(docs)) {
-    const exp = certExpiry(d, today);
-    const s = nameOf(d.staff_id);
-    if (exp && s) attention.push({ key: `doc-${d.id}`, staff: s, item: docTypeLabel(d.type), state: exp.state, label: exp.label, sort: exp.date, url: d.url });
-  }
-  attention.sort((a, b) => a.sort.localeCompare(b.sort) || a.staff.name.localeCompare(b.staff.name));
+  const { anchor } = data;
+  const { planRows, items: attention } = trainingAttention(data, todayPerth());
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5">
@@ -122,7 +63,7 @@ export default function TrainingAdminTab() {
           {!anchor ? (
             <p className="text-xs text-amber-700">Set the QSPP anniversary date above to count training hours.</p>
           ) : planRows.length === 0 ? (
-            <p className="text-xs text-gray-400">No active staff in the plan roles ({cfg.planRoles.join(", ") || "none set"}).</p>
+            <p className="text-xs text-gray-400">No active staff in the plan roles ({PLAN_ROLES.join(", ")}).</p>
           ) : (
             <div className="rounded-lg border border-gray-200 overflow-hidden">
               <div className="grid grid-cols-[1fr_120px_110px_110px] gap-2 px-3 py-1.5 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase">
@@ -145,8 +86,152 @@ export default function TrainingAdminTab() {
           )}
         </section>
 
-        <PlanSettings settings={data.settings} onSaved={load} />
+        <ServicesSection onChanged={load} />
       </div>
+    </div>
+  );
+}
+
+// ─── Pharmacist services (each with its certificates). Hide = active false, never delete. ──
+
+const smallInput = "border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400";
+
+function ServicesSection({ onChanged }) {
+  const [config, setConfig] = useState(null);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState(null); // "svc:<id>" | "svc:new" | "cert:<id>" | "cert:new:<serviceId>"
+  const [showHidden, setShowHidden] = useState(false);
+
+  const load = async () => {
+    try { setConfig(await loadServiceConfig(supabase, PHARMACY_ID, [])); setError(""); } catch (err) { setError(err?.message || String(err)); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const saved = async () => { setEditing(null); await load(); onChanged?.(); };
+
+  const toggle = async (table, row) => {
+    const hide = row.active !== false;
+    if (hide && !window.confirm(`Hide "${row.name}"? ${table === "pharmacist_services" ? "It disappears from Profile ticks, Documents and Training." : "It disappears from Documents and Training."} Uploaded files are kept.`)) return;
+    const { error: err } = await supabase.from(table).update({ active: !hide }).eq("id", row.id);
+    if (err) { alert("Couldn't update: " + err.message); return; }
+    await load();
+    onChanged?.();
+  };
+
+  if (error) return <p className="text-xs text-red-500">Couldn't load services: {error}</p>;
+  if (!config) return null;
+  const visible = (rows) => rows.filter((r) => showHidden || r.active !== false);
+  const services = visible(config.services);
+
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className={h3Cls}>Pharmacist services</h3>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={() => setShowHidden((v) => !v)} className="text-xs text-gray-400 hover:text-gray-600">{showHidden ? "Hide hidden" : "Show hidden"}</button>
+          {editing !== "svc:new" && <button type="button" onClick={() => setEditing("svc:new")} className="text-xs text-blue-600 hover:text-blue-700">+ Add service</button>}
+        </div>
+      </div>
+      <p className="text-xs text-gray-400">Tick services on a pharmacist's Profile; each service's certificates then appear on their Documents and Training tabs.</p>
+      {editing === "svc:new" && <ServiceForm onCancel={() => setEditing(null)} onSaved={saved} />}
+      {services.length === 0 && <p className="text-xs text-gray-400">No services yet.</p>}
+      {services.map((svc) => {
+        const certs = visible(config.certificates.filter((c) => String(c.service_id) === String(svc.id)));
+        return (
+          <div key={svc.id} className={`rounded-lg border border-gray-200 ${svc.active === false ? "opacity-50" : ""}`}>
+            {editing === `svc:${svc.id}` ? (
+              <div className="p-2"><ServiceForm service={svc} onCancel={() => setEditing(null)} onSaved={saved} /></div>
+            ) : (
+              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-t-lg">
+                <span className="text-sm font-semibold text-gray-800 flex-1">{svc.name}{svc.active === false && <span className="ml-2 text-[11px] font-normal text-gray-500">(hidden)</span>}</span>
+                <button type="button" onClick={() => setEditing(`svc:${svc.id}`)} className="text-xs text-blue-600 hover:text-blue-700">Edit</button>
+                <button type="button" onClick={() => toggle("pharmacist_services", svc)} className={`text-xs ${svc.active === false ? "text-green-600" : "text-red-500"}`}>{svc.active === false ? "Show" : "Hide"}</button>
+              </div>
+            )}
+            <div className="divide-y">
+              {certs.map((c) => editing === `cert:${c.id}` ? (
+                <div key={c.id} className="p-2"><CertForm cert={c} serviceId={svc.id} onCancel={() => setEditing(null)} onSaved={saved} /></div>
+              ) : (
+                <div key={c.id} className={`flex items-center gap-2 px-3 py-1.5 ${c.active === false ? "opacity-50" : ""}`}>
+                  <span className="text-sm text-gray-700 flex-1">{c.name}{c.active === false && <span className="ml-2 text-[11px] text-gray-500">(hidden)</span>}</span>
+                  <span className="text-[11px] text-gray-400">{c.renew_months ? `renews every ${c.renew_months} months` : "one-off"}</span>
+                  <button type="button" onClick={() => setEditing(`cert:${c.id}`)} className="text-xs text-blue-600 hover:text-blue-700">Edit</button>
+                  <button type="button" onClick={() => toggle("service_certificates", c)} className={`text-xs ${c.active === false ? "text-green-600" : "text-red-500"}`}>{c.active === false ? "Show" : "Hide"}</button>
+                </div>
+              ))}
+              {editing === `cert:new:${svc.id}` ? (
+                <div className="p-2"><CertForm serviceId={svc.id} onCancel={() => setEditing(null)} onSaved={saved} /></div>
+              ) : (
+                <div className="px-3 py-1.5">
+                  <button type="button" onClick={() => setEditing(`cert:new:${svc.id}`)} className="text-xs text-blue-600 hover:text-blue-700">+ Add certificate</button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function ServiceForm({ service, onCancel, onSaved }) {
+  const [name, setName] = useState(service?.name || "");
+  const [order, setOrder] = useState(String(service?.sort_order ?? ""));
+  const [saving, setSaving] = useState(false);
+  const handleSave = async () => {
+    if (!name.trim()) { alert("Enter a name."); return; }
+    setSaving(true);
+    const row = { name: name.trim(), sort_order: order === "" ? 0 : Number(order) };
+    const { error } = service
+      ? await supabase.from("pharmacist_services").update(row).eq("id", service.id)
+      : await supabase.from("pharmacist_services").insert([{ ...row, pharmacy_id: PHARMACY_ID }]);
+    setSaving(false);
+    if (error) { alert("Couldn't save: " + error.message); return; }
+    onSaved();
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Service name, e.g. Vaccinating" className={`${smallInput} flex-1 min-w-[180px]`} autoFocus />
+      <input value={order} onChange={(e) => setOrder(e.target.value.replace(/[^\d-]/g, ""))} placeholder="Order" className={`${smallInput} w-20`} />
+      <button type="button" onClick={onCancel} className="text-xs px-3 py-1.5 border rounded-lg text-gray-600">Cancel</button>
+      <button type="button" onClick={handleSave} disabled={saving} className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white disabled:opacity-40">{saving ? "Saving…" : "Save"}</button>
+    </div>
+  );
+}
+
+function CertForm({ cert, serviceId, onCancel, onSaved }) {
+  const [name, setName] = useState(cert?.name || "");
+  const [renews, setRenews] = useState(cert ? cert.renew_months != null : false);
+  const [months, setMonths] = useState(cert?.renew_months != null ? String(cert.renew_months) : "12");
+  const [order, setOrder] = useState(String(cert?.sort_order ?? ""));
+  const [saving, setSaving] = useState(false);
+  const handleSave = async () => {
+    if (!name.trim()) { alert("Enter a name."); return; }
+    if (renews && !(Number(months) > 0)) { alert("Enter how many months until it renews."); return; }
+    setSaving(true);
+    const row = { name: name.trim(), renew_months: renews ? Number(months) : null, sort_order: order === "" ? 0 : Number(order) };
+    const { error } = cert
+      ? await supabase.from("service_certificates").update(row).eq("id", cert.id)
+      : await supabase.from("service_certificates").insert([{ ...row, service_id: serviceId, pharmacy_id: PHARMACY_ID }]);
+    setSaving(false);
+    if (error) { alert("Couldn't save: " + error.message); return; }
+    onSaved();
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Certificate name" className={`${smallInput} flex-1 min-w-[160px]`} autoFocus />
+      <select value={renews ? "renews" : "one_off"} onChange={(e) => setRenews(e.target.value === "renews")} className={smallInput}>
+        <option value="one_off">One-off</option>
+        <option value="renews">Renews every…</option>
+      </select>
+      {renews && (
+        <span className="flex items-center gap-1 text-xs text-gray-600">
+          <input value={months} onChange={(e) => setMonths(e.target.value.replace(/\D/g, ""))} className={`${smallInput} w-16`} /> months
+        </span>
+      )}
+      <input value={order} onChange={(e) => setOrder(e.target.value.replace(/[^\d-]/g, ""))} placeholder="Order" className={`${smallInput} w-20`} />
+      <button type="button" onClick={onCancel} className="text-xs px-3 py-1.5 border rounded-lg text-gray-600">Cancel</button>
+      <button type="button" onClick={handleSave} disabled={saving} className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 text-white disabled:opacity-40">{saving ? "Saving…" : "Save"}</button>
     </div>
   );
 }
@@ -190,71 +275,6 @@ function AnniversarySection({ anchor, onSaved }) {
           Current training year: {fmtDateShort(year.start)} – {fmtDateShort(year.end)} · Current QSPP cycle: {fmtDateShort(cycle.start)} – {fmtDateShort(cycle.end)}
         </p>
       )}
-    </section>
-  );
-}
-
-// ─── Plan settings (pharmacy_settings) ──────────────────────────────────────
-
-function PlanSettings({ settings, onSaved }) {
-  const cfg = configFrom(settings);
-  const [hours, setHours] = useState(String(cfg.hoursPerYear));
-  const [docType, setDocType] = useState(cfg.s2s3Type);
-  const [roles, setRoles] = useState(cfg.planRoles);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState("");
-
-  const dirty = hours !== String(cfg.hoursPerYear) || docType !== cfg.s2s3Type
-    || roles.slice().sort().join("|") !== cfg.planRoles.slice().sort().join("|");
-
-  const handleSave = async () => {
-    const n = Number(hours);
-    if (hours.trim() === "" || !(n >= 0) || n > 100) { setMsg("Hours per training year must be a number from 0 to 100."); return; }
-    setSaving(true);
-    setMsg("");
-    const { error } = await supabase.from("pharmacy_settings")
-      .update({ training_hours_per_year: n, training_s2s3_doc_type: docType, training_plan_roles: roles, updated_at: new Date().toISOString() })
-      .eq("pharmacy_id", PHARMACY_ID);
-    setSaving(false);
-    if (error) { setMsg("Couldn't save: " + error.message); return; }
-    setMsg("✓ Saved");
-    onSaved();
-  };
-
-  return (
-    <section className="space-y-3">
-      <h3 className={h3Cls}>Plan settings</h3>
-      <div className="flex flex-wrap gap-4">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Training hours per training year</label>
-          <input inputMode="decimal" value={hours} onChange={(e) => setHours(e.target.value.replace(/[^\d.]/g, ""))} className="w-28 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">S2/S3 certificate (Documents type)</label>
-          <select value={docType} onChange={(e) => setDocType(e.target.value)} className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
-            {Object.entries(DOC_TYPE_LABELS).filter(([k]) => k !== "signed_contract").map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            {!DOC_TYPE_LABELS[docType] && <option value={docType}>{docType}</option>}
-          </select>
-        </div>
-      </div>
-      <div>
-        <div className="text-xs font-medium text-gray-600 mb-1">Roles that have a plan</div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1">
-          {PLAN_ROLES.map((role) => (
-            <label key={role} className="flex items-center gap-1.5 text-sm text-gray-700">
-              <input type="checkbox" checked={roles.includes(role)} onChange={(e) => setRoles(e.target.checked ? [...roles, role] : roles.filter((r) => r !== role))} />
-              {role}
-            </label>
-          ))}
-        </div>
-        <p className="text-[11px] text-gray-400 mt-1">Everyone else (except locums) still gets Goals and training records on their Training tab.</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <button type="button" onClick={handleSave} disabled={saving || !dirty} className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white disabled:opacity-40">
-          {saving ? "Saving…" : "Save plan settings"}
-        </button>
-        {msg && <span className={`text-xs ${msg.startsWith("✓") ? "text-green-600" : "text-red-500"}`}>{msg}</span>}
-      </div>
     </section>
   );
 }

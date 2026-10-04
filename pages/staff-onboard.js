@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import DocumentSections from "../components/DocumentSections";
+import { docSections, loadServiceConfig, uploadStaffDocument, deleteStaffDocument, updateStaffDocument } from "../lib/staffDocuments";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 
@@ -18,6 +20,7 @@ export default function StaffOnboardingPage() {
     super_fund_name: "", super_fund_usi: "", super_fund_abn: "", super_member_number: "",
   });
   const [documents, setDocuments] = useState([]);
+  const [serviceConfig, setServiceConfig] = useState(null); // pharmacist services (ticked in Admin before the link is sent)
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -67,6 +70,9 @@ export default function StaffOnboardingPage() {
       // Load existing documents
       const { data: docs } = await supabase.from("locum_documents").select("*").eq("staff_id", data.id).order("uploaded_at", { ascending: false });
       setDocuments(docs || []);
+      if (data.role === "Pharmacist" || data.role === "Intern Pharmacist") {
+        try { setServiceConfig(await loadServiceConfig(supabase, PHARMACY_ID, [data.id])); } catch (e) { setServiceConfig(null); }
+      }
       // Any issued/accepted offer of employment (server route — the contracts bucket is private)
       try {
         const res = await fetch(`/api/contracts/onboard?token=${encodeURIComponent(token)}`);
@@ -98,6 +104,29 @@ export default function StaffOnboardingPage() {
       setUploadingDoc(false);
     }
   };
+
+  // Pharmacists / interns: shared Documents sections (resume, AHPRA, indemnity, ticked-service certificates, other qualifications)
+  const docActions = {
+    upload: async (file, fields) => {
+      const doc = await uploadStaffDocument(supabase, { staffId: staff.id, pharmacyId: PHARMACY_ID, file, fields });
+      setDocuments((prev) => [doc, ...prev]);
+    },
+    remove: async (doc) => {
+      await deleteStaffDocument(supabase, doc);
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+    },
+    update: async (doc, patch) => {
+      const row = await updateStaffDocument(supabase, doc, patch);
+      setDocuments((prev) => prev.map((d) => (d.id === doc.id ? row : d)));
+    },
+  };
+  const ONBOARD_KEYS = ["resume", "ahpra_cert", "indemnity_cert", "other_qualification"];
+  const pharmacistSections = isPharmacist
+    ? (() => {
+      const all = docSections(staff, serviceConfig).filter((sec) => ONBOARD_KEYS.includes(sec.key) || sec.kind === "service");
+      return [...all.filter((sec) => sec.key === "resume"), ...all.filter((sec) => sec.key !== "resume")];
+    })()
+    : [];
 
   const storagePathFromUrl = (url) => {
     if (!url) return null;
@@ -417,18 +446,13 @@ export default function StaffOnboardingPage() {
           {/* Documents */}
           <div className="bg-white rounded-2xl shadow-sm border p-5">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Documents</div>
+            {isPharmacist ? (
+              <DocumentSections sections={pharmacistSections} docs={documents} actions={docActions} mode="staff" />
+            ) : (
             <div className="space-y-4">
               {[
                 { type: "resume", label: "Resume", multi: false },
-                ...(isPharmacist
-                  ? [
-                      { type: "ahpra_cert", label: "AHPRA Certificate", multi: false },
-                      { type: "indemnity_cert", label: "Professional Indemnity Certificate", multi: false },
-                      { type: "first_aid_cert", label: "First Aid Certificate", multi: false },
-                      { type: "cpr_cert", label: "CPR Certificate", multi: false },
-                      { type: "vaccination_accreditation", label: "Vaccination Accreditation", multi: true },
-                    ]
-                  : [{ type: "s2_s3_cert", label: "S2/S3 Certificate (if applicable)", multi: false }]),
+                { type: "s2_s3_cert", label: "S2/S3 Certificate (if applicable)", multi: false },
                 { type: "other", label: "Other Documents", multi: true },
               ].map(({ type, label, multi }) => {
                 const slotDocs = documents.filter((d) => d.type === type);
@@ -471,6 +495,7 @@ export default function StaffOnboardingPage() {
                 );
               })}
             </div>
+            )}
           </div>
 
           {error && <p className="text-sm text-red-500">{error}</p>}

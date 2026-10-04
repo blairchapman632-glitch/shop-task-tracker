@@ -5,6 +5,9 @@ import Avatar from "../components/Avatar";
 import ContractForm, { ContractHistory, ContractSignatureSettings } from "../components/ContractTab";
 import EmploymentContractsList from "../components/EmploymentContractsList";
 import ReviewsTab, { ReviewsOverview } from "../components/PerformanceReviews";
+import StaffNeedsAttention from "../components/StaffNeedsAttention";
+import DocumentSections from "../components/DocumentSections";
+import { docSections, loadServiceConfig, uploadStaffDocument, deleteStaffDocument, updateStaffDocument } from "../lib/staffDocuments";
 import StaffTrainingPlan from "../components/TrainingPlan";
 import TrainingAdminTab from "../components/TrainingAdmin";
 import { getLeaveCover } from "../lib/leaveCover";
@@ -188,7 +191,7 @@ function DayScheduleGrid({ schedule, onChange }) {
 
 // ─── Staff Form ───────────────────────────────────────────────────────────────
 
-function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, adminUser }) {
+function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialReviewId, adminUser }) {
 
   const isNew = !member?.id;
   const [activeTab, setActiveTab] = useState(initialTab || "profile");
@@ -247,7 +250,7 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
   const [sickDays, setSickDays] = useState([]);
   const [leaveHistory, setLeaveHistory] = useState([]);
   const [documents, setDocuments] = useState([]);
-  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [serviceConfig, setServiceConfig] = useState({ services: [], certificates: [], staffServices: [] });
   const [training, setTraining] = useState([]);
   const [contracts, setContracts] = useState([]);
   const [onboardingDoneAt, setOnboardingDoneAt] = useState(null);
@@ -294,10 +297,23 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
       .order("training_date", { ascending: false })
       .then(({ data }) => setTraining(data || []));
     loadContracts();
+    loadServiceConfig(supabase, PHARMACY_ID, [member.id]).then(setServiceConfig).catch((err) => console.error("[services]", err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [member?.id]);
 
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
+
+
+  // For staff who gave their payroll details another way (e.g. before the onboarding form existed)
+  const handleMarkOnboarded = async () => {
+    if (!window.confirm(`Mark ${member.name}'s onboarding as complete?\n\nUse this when they've already given you their payroll details another way.`)) return;
+    const { data, error: err } = await supabase.from("staff")
+      .update({ onboarding_completed_at: new Date().toISOString() })
+      .eq("id", member.id).select().single();
+    if (err) { setError("Couldn't mark onboarding complete: " + err.message); return; }
+    setOnboardingDoneAt(data.onboarding_completed_at);
+    onRefresh?.(data);
+  };
 
   // ── Training records ──
   const [trTopic, setTrTopic] = useState("");
@@ -363,55 +379,35 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
     setTraining((prev) => prev.filter((r) => r.id !== rec.id));
   };
 
-  const handleDocUpload = async (file, type) => {
-    if (!file || !member?.id) return;
-    setUploadingDoc(true);
-    setError("");
-    try {
-      const ext = file.name.split(".").pop();
-      const filename = `${member.id}_${type}_${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from("locum-documents")
-        .upload(filename, file, { upsert: true });
-      if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from("locum-documents").getPublicUrl(filename);
-      const { data: doc, error: insErr } = await supabase.from("locum_documents").insert([{
-        staff_id: member.id,
-        type,
-        url: urlData.publicUrl,
-        filename: file.name,
-        pharmacy_id: PHARMACY_ID,
-      }]).select().single();
-      if (insErr) throw insErr;
+  // Staff Documents (shared sections — components/DocumentSections.js)
+  const docActions = {
+    upload: async (file, fields) => {
+      const doc = await uploadStaffDocument(supabase, { staffId: member.id, pharmacyId: member.pharmacy_id || PHARMACY_ID, file, fields });
       setDocuments((prev) => [doc, ...prev]);
-    } catch (err) {
-      setError("Upload failed: " + (err?.message || String(err)));
-    } finally {
-      setUploadingDoc(false);
-    }
+    },
+    remove: async (doc) => {
+      await deleteStaffDocument(supabase, doc);
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+    },
+    update: async (doc, patch) => {
+      const row = await updateStaffDocument(supabase, doc, patch);
+      setDocuments((prev) => prev.map((d) => (d.id === doc.id ? row : d)));
+    },
   };
 
-  const storagePathFromUrl = (url) => {
-    if (!url) return null;
-    const marker = "/locum-documents/";
-    const i = url.indexOf(marker);
-    return i === -1 ? null : url.slice(i + marker.length).split("?")[0];
-  };
-
-  // Certificate expiry (optional) — only the newest file of each type counts for alerts (QSPP → Training)
-  const handleDocExpiry = async (doc, value) => {
-    const expiry_date = value || null;
-    const { error: err } = await supabase.from("locum_documents").update({ expiry_date }).eq("id", doc.id);
-    if (err) { setError("Couldn't save the expiry date: " + err.message); return; }
-    setDocuments((prev) => prev.map((d) => (d.id === doc.id ? { ...d, expiry_date } : d)));
-  };
-
-  const handleDocDelete = async (doc, skipConfirm = false) => {
-    if (!skipConfirm && !window.confirm("Delete this document?")) return;
-    const path = storagePathFromUrl(doc.url);
-    if (path) await supabase.storage.from("locum-documents").remove([path]);
-    await supabase.from("locum_documents").delete().eq("id", doc.id);
-    setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+  // Pharmacist services ticks (saved straight away; untick keeps the row with active = false)
+  const handleServiceTick = async (svc, on) => {
+    const { error: err } = await supabase.from("staff_services").upsert(
+      { pharmacy_id: member.pharmacy_id || PHARMACY_ID, staff_id: member.id, service_id: svc.id, active: on },
+      { onConflict: "staff_id,service_id" });
+    if (err) { setError("Couldn't save the service: " + err.message); return; }
+    setServiceConfig((c) => ({
+      ...c,
+      staffServices: [
+        ...c.staffServices.filter((x) => !(Number(x.staff_id) === Number(member.id) && String(x.service_id) === String(svc.id))),
+        { staff_id: member.id, service_id: svc.id, active: on },
+      ],
+    }));
   };
 
   const showHours = form.employment_type === "Salary";
@@ -674,6 +670,31 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
+
+        {/* Pharmacist services — each ticked service adds its certificates to Documents + Training */}
+        {isPharmacist && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Services they provide</label>
+            {isNew ? (
+              <p className="text-xs text-gray-400">Save the staff member first, then tick their services.</p>
+            ) : serviceConfig.services.filter((sv) => sv.active !== false).length === 0 ? (
+              <p className="text-xs text-gray-400">No services set up (QSPP → Training → Pharmacist services).</p>
+            ) : (
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                {serviceConfig.services.filter((sv) => sv.active !== false).map((sv) => {
+                  const on = serviceConfig.staffServices.some((x) => Number(x.staff_id) === Number(member.id) && String(x.service_id) === String(sv.id) && x.active !== false);
+                  return (
+                    <label key={sv.id} className="flex items-center gap-1.5 text-sm text-gray-700">
+                      <input type="checkbox" checked={on} onChange={(e) => handleServiceTick(sv, e.target.checked)} />
+                      {sv.name}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[11px] text-gray-400 mt-1">Saved straight away. Their certificates appear on the Documents and Training tabs; unticking hides them (files are kept).</p>
+          </div>
+        )}
 
         {/* AHPRA — pharmacists only */}
         {isPharmacist && (
@@ -1102,80 +1123,20 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
                 Documents {documents.length > 0 && <span className="text-gray-400 font-normal">({documents.length})</span>}
               </div>
 
-              <div className="space-y-4">
-                {/* Paper + electronic contracts, newest first (replaces the single "Signed Employment Contract" slot) */}
-                <EmploymentContractsList
-                  staffId={member.id}
-                  paperDocs={documents.filter((d) => d.type === "signed_contract")}
-                  contracts={contracts}
-                  onChanged={async () => { await loadDocuments(); await loadContracts(); }}
-                />
-                {[
-                  { type: "resume", label: "Resume", multi: false },
-                  { type: "first_aid_cert", label: "First Aid Certificate", multi: false },
-                  { type: "cpr_cert", label: "CPR Certificate", multi: false },
-                  { type: "induction_checklist", label: "Induction Checklist", multi: false },
-                  { type: "confidentiality_policy", label: "Signed Confidentiality Policy", multi: false },
-                  ...(isPharmacist
-                    ? [
-                        { type: "ahpra_cert", label: "AHPRA Certificate", multi: false },
-                        { type: "indemnity_cert", label: "Professional Indemnity Certificate", multi: false },
-                        { type: "vaccination_accreditation", label: "Vaccination Accreditation", multi: true },
-                      ]
-                    : [{ type: "s2_s3_cert", label: "S2/S3 Certificate (if applicable)", multi: false }]),
-                  { type: "other", label: "Other Documents", multi: true },
-                ].map(({ type, label, multi }) => {
-                  const slotDocs = documents.filter((d) => d.type === type);
-                  const showUploader = multi || slotDocs.length === 0;
-                  return (
-                    <div key={type}>
-                      <div className="text-xs font-medium text-gray-600 mb-1.5">{label}</div>
-
-                      {slotDocs.length > 0 && (
-                        <div className="space-y-1.5 mb-2">
-                          {slotDocs.map((doc) => (
-                            <div key={doc.id} className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                              <span className="text-sm">📄</span>
-                              <div className="min-w-0 flex-1">
-                                <div className="text-xs font-medium text-gray-700 truncate">{doc.filename || doc.type}</div>
-                                <div className="text-[11px] text-gray-400">{new Date(doc.uploaded_at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</div>
-                              </div>
-                              {type !== "resume" && (
-                                <label className="flex items-center gap-1 text-[11px] text-gray-500 shrink-0" title="Optional — expiring certificates show in QSPP → Training">
-                                  Expires
-                                  <input
-                                    type="date"
-                                    value={doc.expiry_date || ""}
-                                    onChange={(e) => handleDocExpiry(doc, e.target.value)}
-                                    className="border rounded px-1 py-0.5 text-[11px] bg-white"
-                                  />
-                                </label>
-                              )}
-                              <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
-                              {!multi && (
-                                <label className="text-xs text-blue-600 hover:underline shrink-0 cursor-pointer">
-                                  Replace
-                                  <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc}
-                                    onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; await handleDocDelete(doc, true); await handleDocUpload(f, type); }} />
-                                </label>
-                              )}
-                              <button type="button" onClick={() => handleDocDelete(doc)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {showUploader && (
-                        <label className={`flex items-center gap-2 w-full border-2 border-dashed rounded-lg px-3 py-3 cursor-pointer transition-colors ${uploadingDoc ? "border-blue-200 bg-blue-50" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"}`}>
-                          <span className="text-gray-400">📎</span>
-                          <span className="text-xs text-gray-500">{uploadingDoc ? "Uploading…" : multi && slotDocs.length > 0 ? "Add another" : `Upload ${label}`}</span>
-                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" disabled={uploadingDoc} onChange={(e) => handleDocUpload(e.target.files?.[0], type)} />
-                        </label>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              <DocumentSections
+                sections={docSections({ id: member.id, role: form.role, active: form.active }, serviceConfig)}
+                docs={documents}
+                actions={docActions}
+                contractNode={
+                  /* Paper + electronic contracts, newest first */
+                  <EmploymentContractsList
+                    staffId={member.id}
+                    paperDocs={documents.filter((d) => d.type === "signed_contract")}
+                    contracts={contracts}
+                    onChanged={async () => { await loadDocuments(); await loadContracts(); }}
+                  />
+                }
+              />
             </>
           )}
         </div>
@@ -1314,7 +1275,15 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
               {/* b) Contract */}
               <div className="border-t pt-4 space-y-3">
                 <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">2. Contract</div>
-                <ContractForm member={member} contracts={contracts} onContractsChanged={loadContracts} />
+                <ContractForm
+                  member={member}
+                  contracts={contracts}
+                  onContractsChanged={loadContracts}
+                  onStaffUpdated={(row) => {
+                    setForm((f) => (f.start_date ? f : { ...f, start_date: row.start_date || "" }));
+                    onRefresh?.(row);
+                  }}
+                />
               </div>
 
               {/* c) Onboarding link + status */}
@@ -1329,6 +1298,11 @@ function StaffForm({ member, onSave, onCancel, initialTab, initialReviewId, admi
                   if (onboardingDoneAt) lines.push(<div key="o" className="text-xs font-medium text-green-700">✓ Onboarding complete {fmt(onboardingDoneAt)}</div>);
                   return lines.length ? <div className="space-y-0.5">{lines}</div> : <div className="text-xs text-gray-400">No contract issued yet.</div>;
                 })()}
+                {!onboardingDoneAt && (
+                  <button type="button" onClick={handleMarkOnboarded} className="text-[11px] px-3 py-1.5 border border-green-300 text-green-700 rounded-lg hover:bg-green-50">
+                    Mark onboarding complete
+                  </button>
+                )}
                 {member?.onboarding_token ? (
                   <div className="border rounded-lg p-3 bg-amber-50 border-amber-100">
                     <div className="text-[11px] text-amber-600 break-all mb-2">
@@ -2793,7 +2767,7 @@ const DOC_BUCKET = "pharmacy-documents";
 const slugify = (s) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "folder";
 
-function DocumentsTab() {
+function DocumentsTab({ staffList, onOpenStaff }) {
   const [subTab, setSubTab] = useState("documents");
   const [folders, setFolders] = useState([]);
   const [docs, setDocs] = useState([]);
@@ -2973,6 +2947,7 @@ function DocumentsTab() {
           { key: "documents", label: "📄 Documents" },
           { key: "incidents", label: "⚠️ Incidents" },
           { key: "training", label: "🎓 Training" },
+          { key: "reviews", label: "📝 Reviews" },
         ].map((t) => (
           <button
             key={t.key}
@@ -2988,6 +2963,8 @@ function DocumentsTab() {
         <IncidentsTab />
       ) : subTab === "training" ? (
         <TrainingAdminTab />
+      ) : subTab === "reviews" ? (
+        <ReviewsOverview staffList={staffList} onOpen={(st, reviewId) => onOpenStaff(st, "reviews", reviewId)} />
       ) : (
       <div className="flex flex-1 overflow-hidden">
       {/* Folder list */}
@@ -3379,9 +3356,23 @@ export default function AdminPage() {
     load();
   }, [unlocked]);
 
+  const openStaff = (s, staffTab, reviewId) => {
+    setTab("staff");
+    setSelected(s);
+    setInitialStaffTab(staffTab || null);
+    setInitialReviewId(reviewId || null);
+    setFormKey((k) => k + 1);
+  };
+
   const handleUnlock = (user) => {
     setAdminUser(user);
     setUnlocked(true);
+  };
+
+  // Update one staff row in the list + selection (no "Changes saved" banner)
+  const handleRefresh = (row) => {
+    setStaffList((prev) => prev.map((s) => (s.id === row.id ? row : s)));
+    setSelected((sel) => (sel && sel !== "new" && sel.id === row.id ? row : sel));
   };
 
   const handleSave = (saved) => {
@@ -3535,14 +3526,11 @@ export default function AdminPage() {
             {tab === "settings" ? (
               <SettingsTab />
             ) : tab === "documents" ? (
-              <DocumentsTab />
+              <DocumentsTab staffList={staffList} onOpenStaff={openStaff} />
             ) : tab === "locums" ? (
               <LocumsTab key={locumFormKey} />
             ) : !selected ? (
-              <ReviewsOverview
-                staffList={staffList}
-                onOpen={(s, reviewId) => { setSelected(s); setInitialStaffTab("reviews"); setInitialReviewId(reviewId || null); setFormKey((k) => k + 1); }}
-              />
+              <StaffNeedsAttention staffList={staffList} onOpen={openStaff} />
             ) : (
               <StaffForm
                 key={formKey}
@@ -3551,6 +3539,7 @@ export default function AdminPage() {
                 initialReviewId={initialStaffTab === "reviews" ? initialReviewId : null}
                 adminUser={adminUser}
                 onSave={handleSave}
+                onRefresh={handleRefresh}
                 onCancel={() => setSelected(null)}
               />
             )}

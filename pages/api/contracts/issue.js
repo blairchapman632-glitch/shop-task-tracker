@@ -1,5 +1,6 @@
 // POST { staff_id, template_id, values, draft_id? } -> fills + stores the issued PDF, marks earlier
 // unaccepted (draft/issued) contracts for this staff member as superseded. Accepted contracts never change.
+// Also saves the classification to the staff record, and the start date if the staff record has none.
 // TODO(#11 auth pass): Admin routes have no server-side auth yet (same as the rest of Admin).
 import crypto from "crypto";
 import supabaseAdmin from "../../../lib/supabaseAdmin";
@@ -60,7 +61,18 @@ export default async function handler(req, res) {
       if (clsErr) warnings.push("Contract issued, but couldn't save the classification to the staff record: " + clsErr.message);
     }
 
-    res.status(200).json({ id, warnings });
+    // Fill in the staff start date from the contract — only when the staff record has none (never overwrite)
+    let startDateSet = null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(finalValues.start_date || ""))) {
+      const { data: filled, error: sdErr } = await db.from("staff")
+        .update({ start_date: finalValues.start_date })
+        .eq("id", staff.id).is("start_date", null)
+        .select("id");
+      if (sdErr) warnings.push("Contract issued, but couldn't save the start date to the staff record: " + sdErr.message);
+      else if (filled?.length) startDateSet = finalValues.start_date;
+    }
+
+    res.status(200).json({ id, warnings, start_date_set: startDateSet });
   } catch (err) {
     fail(res, err);
   }

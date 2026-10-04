@@ -1,12 +1,12 @@
 // Performance reviews in Admin (Part 1 — manager side):
 //   default export ReviewsTab  — staff form "Reviews" tab: list, start, edit, sign off, PDF, copy given
-//   ReviewsOverview            — staff overview panel: who's due / in progress
+//   ReviewsOverview            — Admin → QSPP → Reviews: due / in progress / new comments / signed reviews
 // Form wording + due-date rules live in lib/performanceReview.js. PDFs are generated server-side (pages/api/reviews/*).
 import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import {
   FORM_VERSION, RATING_OPTIONS, PREP_QUESTIONS, SECTIONS, REVIEW_TYPE_LABEL, ALL_STAFF_AREAS, DISPENSARY_AREAS, DISPENSARY_HEADING, LABELS,
-  areasFor, latestSigned, suggestedReviewType, reviewDue, nextDueAfter, todayPerth, perthDateOf, addDaysStr, fmtDateShort,
+  areasFor, latestSigned, suggestedReviewType, reviewDue, reviewCoverage, nextDueAfter, todayPerth, perthDateOf, addDaysStr, fmtDateShort,
 } from "../lib/performanceReview";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -680,7 +680,8 @@ function ReviewEditor({ review, member, people, nameOf, onBack, onChanged, onDel
   );
 }
 
-// ─── Overview panel (shown when no staff member is selected) ────────────────
+// ─── Admin → QSPP → Reviews ──────────────────────────────────────────────────
+// onOpen(staff, reviewId?) opens Admin → Staff on that person's Reviews tab (and that review, if given).
 
 export function ReviewsOverview({ staffList, onOpen }) {
   const [reviews, setReviews] = useState(null);
@@ -688,7 +689,7 @@ export function ReviewsOverview({ staffList, onOpen }) {
 
   useEffect(() => {
     supabase.from("performance_reviews")
-      .select("id, staff_id, status, review_type, meeting_date, signed_at, created_at, staff_comments, staff_comments_seen")
+      .select("id, staff_id, status, review_type, reviewer_staff_id, meeting_date, signed_at, created_at, staff_comments, staff_comments_seen")
       .eq("pharmacy_id", PHARMACY_ID)
       .then(({ data, error: err }) => {
         if (err) setError(err.message);
@@ -698,10 +699,11 @@ export function ReviewsOverview({ staffList, onOpen }) {
 
   const today = todayPerth();
   const soon = addDaysStr(today, 30);
+  const staffById = (id) => (staffList || []).find((s) => Number(s.id) === Number(id));
   const rows = { dueNow: [], dueSoon: [], inProgress: [], noStart: [] };
   const newComments = (reviews || [])
     .filter((r) => r.status === "signed" && r.staff_comments && r.staff_comments_seen === false)
-    .map((r) => ({ review: r, staff: (staffList || []).find((s) => Number(s.id) === Number(r.staff_id)) }))
+    .map((r) => ({ review: r, staff: staffById(r.staff_id) }))
     .filter((x) => x.staff)
     .sort((a, b) => String(b.review.signed_at).localeCompare(String(a.review.signed_at)));
 
@@ -721,12 +723,21 @@ export function ReviewsOverview({ staffList, onOpen }) {
   rows.dueSoon.sort(byDate);
   rows.inProgress.sort(byDate);
 
+  // Summary: of staff who need reviews and have been employed more than 3 months, how many have a signed review
+  // in the last 12 months
+  const summary = reviewCoverage(staffList, reviews || [], today);
+
+  const signed = (reviews || [])
+    .filter((r) => r.status === "signed")
+    .map((r) => ({ review: r, staff: staffById(r.staff_id), date: r.meeting_date || perthDateOf(r.signed_at) }))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.review.signed_at).localeCompare(String(a.review.signed_at)));
+
   const Row = ({ staff, due, ip }) => {
     const overdue = due.dueDate && due.dueDate < today;
     return (
       <button
         type="button"
-        onClick={() => onOpen(staff)}
+        onClick={() => onOpen(staff, ip?.id)}
         className="w-full grid grid-cols-[1fr_90px_130px_96px] items-center gap-2 px-3 py-2 border-b last:border-b-0 text-left hover:bg-gray-50"
       >
         <span className="text-sm font-medium text-gray-800 truncate">{staff.name}</span>
@@ -751,10 +762,8 @@ export function ReviewsOverview({ staffList, onOpen }) {
   );
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
+    <div className="flex-1 overflow-y-auto px-6 py-5">
       <div className="max-w-3xl space-y-6">
-        <p className="text-sm text-gray-400">Select a staff member to edit, or add a new one.</p>
-
         <section className="space-y-4">
           <h2 className="font-semibold text-gray-800">Performance reviews</h2>
           {error ? (
@@ -763,6 +772,10 @@ export function ReviewsOverview({ staffList, onOpen }) {
             <p className="text-xs text-gray-400">Loading…</p>
           ) : (
             <>
+              <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-sm text-gray-700">
+                <span className="font-semibold">{summary.reviewed} of {summary.needed}</span> staff reviewed in the last 12 months
+                <span className="block text-[11px] text-gray-400">Counts active staff (not locums or excluded) employed more than 3 months.</span>
+              </div>
               {newComments.length > 0 && (
                 <div>
                   <div className="text-[11px] font-semibold text-blue-600 uppercase mb-1">New staff comments <span className="text-gray-400 font-normal">({newComments.length})</span></div>
@@ -787,11 +800,35 @@ export function ReviewsOverview({ staffList, onOpen }) {
               <Group title="Due in the next 30 days" list={rows.dueSoon} empty="No one is due in the next 30 days." />
               <Group title="In progress" list={rows.inProgress} empty="No other reviews in progress." />
               {rows.noStart.length > 0 && <Group title="Start date not set" list={rows.noStart} empty="" />}
+
+              <div>
+                <div className="text-[11px] font-semibold text-gray-500 uppercase mb-1">
+                  Signed reviews {signed.length > 0 && <span className="text-gray-400 font-normal">({signed.length})</span>}
+                </div>
+                {signed.length === 0 ? (
+                  <p className="text-xs text-gray-400 px-1">No signed reviews yet.</p>
+                ) : (
+                  <div className="rounded-lg border border-gray-200 overflow-hidden">
+                    {signed.map(({ review, staff, date }) => (
+                      <button
+                        key={review.id}
+                        type="button"
+                        disabled={!staff}
+                        onClick={() => staff && onOpen(staff, review.id)}
+                        className="w-full grid grid-cols-[1fr_100px_80px_1fr] items-center gap-2 px-3 py-2 border-b last:border-b-0 text-left enabled:hover:bg-gray-50"
+                      >
+                        <span className="text-sm font-medium text-gray-800 truncate">{staff?.name || "Unknown staff member"}</span>
+                        <span className="text-xs text-gray-600">{fmtDateShort(date)}</span>
+                        <span className="text-xs text-gray-600">{REVIEW_TYPE_LABEL[review.review_type] || "—"}</span>
+                        <span className="text-xs text-gray-500 truncate">Reviewer: {staffById(review.reviewer_staff_id)?.name || "—"}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </section>
-
-        {/* More overview sections can go here later */}
       </div>
     </div>
   );

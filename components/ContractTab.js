@@ -127,6 +127,7 @@ const STATUS_BADGE = {
 const fmtStamp = (iso) => iso
   ? new Date(iso).toLocaleString("en-AU", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Australia/Perth" })
   : "";
+const fmtDateD = (d) => { const [y, m, dd] = String(d).slice(0, 10).split("-").map(Number); return y ? new Date(y, m - 1, dd).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : String(d); };
 const fmtD = (iso) => iso ? new Date(iso).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "Australia/Perth" }) : "";
 
 // Open a signed URL in a new tab (window opened first, while we still have the click — popup blockers)
@@ -145,7 +146,8 @@ export const openContractFile = async (id, which) => {
 
 // ─── Contract form ───────────────────────────────────────────────────────────
 
-export default function ContractForm({ member, contracts, onContractsChanged }) {
+// onStaffUpdated(staffRow): called when issuing filled in an empty staff start date
+export default function ContractForm({ member, contracts, onContractsChanged, onStaffUpdated }) {
   const [templates, setTemplates] = useState([]);
   const [signatory, setSignatory] = useState("");
   const [loading, setLoading] = useState(true);
@@ -157,7 +159,13 @@ export default function ContractForm({ member, contracts, onContractsChanged }) 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [warnings, setWarnings] = useState([]);
+  const [mode, setMode] = useState("auto"); // auto = card if there is a current contract and no draft; or "editor" / "card"
   const prevMember = useRef(member);
+
+  // The contract in force: newest issued or accepted one
+  const current = useMemo(() => (contracts || [])
+    .filter((c) => c.status === "issued" || c.status === "accepted")
+    .sort((a, b) => String(b.issued_at || "").localeCompare(String(a.issued_at || "")))[0] || null, [contracts]);
 
   const template = useMemo(() => templates.find((t) => t.id === templateId) || null, [templates, templateId]);
   const alternating = member?.schedule_type === "alternating" && !!member?.week_ab_schedule;
@@ -238,6 +246,23 @@ export default function ContractForm({ member, contracts, onContractsChanged }) 
     }
     setValues({ ...fresh, ...kept });
     setWarnings([]);
+  };
+
+  const startFromCurrent = () => {
+    const tpl = current && templates.find((t) => t.id === current.template_id);
+    if (tpl) {
+      const fresh = prefillValues(tpl, member, signatory);
+      const kept = { ...(current.field_values || {}) };
+      for (const k of ["letter_date", "schedule_date", "return_by_date", "employer_signature", "employer_sign_date"]) delete kept[k];
+      if ("employment_type" in kept) kept.employment_type_auto = false; // keep the type that was issued
+      setTemplateId(tpl.id);
+      setValues({ ...fresh, ...kept });
+    }
+    setTemplateTouched(true);
+    setWarnings([]);
+    setError("");
+    setNotice("");
+    setMode("editor");
   };
 
   const changeTemplate = (id) => {
@@ -342,8 +367,14 @@ export default function ContractForm({ member, contracts, onContractsChanged }) 
       if (!res.ok) throw new Error(body.error || `Issue failed (${res.status})`);
       setWarnings(body.warnings || []);
       setDraftId(null);
-      setNotice("Contract issued. Copy the onboarding link below and send it to them.");
+      setNotice("Contract issued. Copy the onboarding link below and send it to them."
+        + (body.start_date_set ? " Their start date has been added to their staff record." : ""));
       await onContractsChanged?.();
+      setMode("card");
+      if (body.start_date_set && onStaffUpdated) {
+        const { data: row } = await supabase.from("staff").select("*").eq("id", member.id).maybeSingle();
+        if (row) onStaffUpdated(row);
+      }
     } catch (err) {
       setError(err?.message || String(err));
     } finally {
@@ -452,8 +483,33 @@ export default function ContractForm({ member, contracts, onContractsChanged }) 
     );
   };
 
+  const hasDraft = (contracts || []).some((c) => c.status === "draft");
+  const cardMode = !!current && (mode === "card" || (mode === "auto" && !draftId && !hasDraft));
+  if (cardMode) {
+    return (
+      <div className="space-y-3">
+        <CurrentContractCard contract={current} template={templates.find((t) => t.id === current.template_id)} />
+        {warnings.length > 0 && (
+          <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-[11px] text-amber-700 space-y-0.5">
+            {warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
+          </div>
+        )}
+        {notice && <p className="text-sm text-green-600">{notice}</p>}
+        <button type="button" onClick={startFromCurrent} className="w-full border border-blue-200 text-blue-700 rounded-lg py-2 text-sm hover:bg-blue-50">
+          Issue a new contract
+        </button>
+        <p className="text-[11px] text-gray-400">Starts from this contract's details. The current contract stays on file.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      {current && !draftId && (
+        <button type="button" onClick={() => { setMode("card"); setError(""); setNotice(""); }} className="text-xs text-blue-600 hover:text-blue-700">
+          ← Back to current contract
+        </button>
+      )}
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Contract template</label>
         <select value={templateId} onChange={(e) => changeTemplate(e.target.value)} className={inputCls}>
@@ -482,6 +538,55 @@ export default function ContractForm({ member, contracts, onContractsChanged }) 
         <button type="button" onClick={handleIssue} disabled={!!busy || !template} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
           {busy === "issue" ? "Issuing…" : "Issue contract"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Current contract card (read-only) ──────────────────────────────────────
+
+const CARD_FIELDS = ["start_date", "employment_type", "classification", "reports_to", "course", "hourly_rate"];
+
+function CurrentContractCard({ contract, template }) {
+  const v = contract.field_values || {};
+  const fields = (template?.fields || []).filter((f) => CARD_FIELDS.includes(f.key));
+  const hoursField = (template?.fields || []).find((f) => f.type === "hours_table");
+  const show = (f) => {
+    const x = v[f.key];
+    if (x === "" || x == null) return "—";
+    if (f.type === "date") return fmtDateD(x);
+    if (f.type === "money") return isNaN(Number(x)) ? String(x) : `$${Number(x).toFixed(2)} per hour`;
+    return String(x);
+  };
+  return (
+    <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-gray-800">Current contract · {contract.contract_templates?.label || template?.label || "Contract"}</div>
+        <span className={`text-[11px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[contract.status] || STATUS_BADGE.draft}`}>
+          {contract.status === "accepted" ? "Accepted" : "Issued — awaiting acceptance"}
+        </span>
+      </div>
+      <div className="text-[11px] text-gray-500">
+        Issued {fmtD(contract.issued_at)}
+        {contract.accepted_at && ` · Accepted ${fmtStamp(contract.accepted_at)} by ${contract.accepted_name}`}
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+        {fields.map((f) => (
+          <div key={f.key}>
+            <div className="text-[11px] text-gray-400">{f.label}</div>
+            <div className="text-sm text-gray-800">{show(f)}</div>
+          </div>
+        ))}
+        {hoursField && (
+          <div>
+            <div className="text-[11px] text-gray-400">{hoursField.label}</div>
+            <div className="text-sm text-gray-800">{hoursTotal(v[hoursField.key])} hrs/week</div>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-3 pt-1">
+        {contract.accepted_file_path && <button type="button" onClick={() => openContractFile(contract.id, "accepted")} className="text-xs text-blue-600 hover:underline">View accepted PDF</button>}
+        {contract.issued_file_path && <button type="button" onClick={() => openContractFile(contract.id, "issued")} className="text-xs text-blue-600 hover:underline">View issued PDF</button>}
       </div>
     </div>
   );

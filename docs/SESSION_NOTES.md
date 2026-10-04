@@ -110,13 +110,13 @@
 
 ### Done
 - First built a heavier version (role requirement lists, Mark done, completion history, per-person add/remove), then **reworked to a simpler design** before committing. Only the simple version is in the code.
-- **Plan = Pharmacy Assistant + DAA Coordinator** (roles configurable). Staff Training tab shows:
-  - **S2/S3:** "Done" + Open link if they have a Documents file of the configured type (`s2_s3_cert`); else "Due by start + 3 months"; then "Not done".
-  - **Hours** from training records (every record counts): "This training year: x of N" and "This QSPP cycle: x of M". 3 hrs/year (config), pro-rata in the starting year (rounded up to 0.5), 0 before they started. Cycle = 3 training years from `qspp_cycle_start_date` (2024-03-01 → current cycle ends 28 Feb 2027). "Not required this training year" tick + reason sets that year to 0.
+- **Plan = Pharmacy Assistant, DAA Coordinator and Retail Manager** (fixed constants at the top of `lib/trainingPlan.js`: `HOURS_PER_YEAR = 3`, `S2S3_DOC_TYPE = 's2_s3_cert'`, `PLAN_ROLES`). Staff Training tab shows:
+  - **S2/S3:** "Done" + Open link if they have a Documents file of type `s2_s3_cert`; else "Due by start + 3 months"; then "Not done".
+  - **Hours** from training records (every record counts): "This training year: x of N" and "This QSPP cycle: x of M". 3 hrs/year, pro-rata in the starting year (rounded up to 0.5), 0 before they started. Cycle = 3 training years from `qspp_cycle_start_date` (2024-03-01 → current cycle ends 28 Feb 2027). "Not required this training year" tick + reason sets that year to 0.
 - **Goals** for all staff except Locums: Section 4 goals from the latest signed review (read-only, "Open review →") + manual goals (goal, notes, Done, edit, delete, "Completed goals" fold).
 - **Training record PDF** (date range, download only, built in the browser) — `lib/trainingRecordPdf.js`.
 - **Documents:** optional inline "Expires" date on each staff file (not resumes). Only the newest file of each type counts for alerts.
-- **Admin → QSPP → 🎓 Training:** QSPP anniversary date (moved from Settings — same column; Settings no longer shows or saves it), training year + cycle shown, Needs attention (S2/S3 not done; year/cycle hours short within 60 days of the end; certificates expired or expiring within 60 days, all non-locum staff), hours table, Plan settings (hours per year, S2/S3 Documents type, plan roles).
+- **Admin → QSPP → 🎓 Training:** QSPP anniversary date (moved from Settings — same column; Settings no longer shows or saves it), training year + cycle shown, Needs attention (S2/S3 not done; year/cycle hours short within 60 days of the end; certificates expired or expiring within 60 days, all non-locum staff), hours table. (A "Plan settings" block was built, then removed — the rules are now hard-coded.)
 - Removed the old "QSPP Training x / 9 hrs" box from the staff Training tab. `lib/qspp.js` kept (`pages/training.js` uses it).
 - Date rules tested: pro-rata, rounding, leap years, 29 Feb anchor, cycle boundary (28 Feb vs 1 Mar 2027), dates before the anchor.
 - Files: `lib/trainingPlan.js`, `lib/trainingRecordPdf.js`, `components/TrainingPlan.js`, `components/TrainingAdmin.js`, `pages/admin.js`.
@@ -134,10 +134,11 @@
 
 ### Follow-ups / parked
 - **Candidates to drop later (unused, empty or seed-only):** `training_requirements`, `staff_training_overrides`, `staff_training_completions`, backup `training_requirements_backup_20261004`. Nothing reads them now.
+- **Unused columns (left in place):** `pharmacy_settings.training_hours_per_year`, `training_s2s3_doc_type`, `training_plan_roles` — the plan rules are hard-coded in `lib/trainingPlan.js` instead.
 - Part 2: staff seeing their plan/records on `/me` Profile.
 - `lib/qspp.js` (used by `pages/training.js`) does date maths with `toISOString` — the Perth off-by-one gotcha. Consider moving `training.js` onto `lib/trainingPlan.js`.
 - Expiry can only be set on a file's row after upload (not in the upload step); onboarding uploads have no expiry.
 - For multi-file slots ("Other Documents", "Vaccination Accreditation"), only the newest file's expiry is checked.
 
 ### Not committed
-- Nothing — committed with this note.
+- Main training plan committed in `30040a0`. **Not yet committed:** removal of the Plan settings block + hard-coded rules (`lib/trainingPlan.js`, `components/TrainingPlan.js`, `components/TrainingAdmin.js`) and this notes update.
