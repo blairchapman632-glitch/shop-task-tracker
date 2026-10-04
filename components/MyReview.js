@@ -176,3 +176,6 @@ function CommentForm({ review, onChanged }) {
     </div>
   );
 }
+
+// Shared with other /me features (e.g. components/MyPolicies.js)
+export { call as callMeApi };

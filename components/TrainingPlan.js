@@ -1,6 +1,7 @@
 // Training & Development Plan on the Admin staff form (Training tab, above the existing records):
 //   Plan (Pharmacy Assistant / DAA / Retail Manager): S2/S3 certificate from Documents + training hours this year / this cycle
 //   Pharmacists / interns: CPD line + required certificates of their ticked services (status read from Documents)
+//   Policies (all staff except locums): to read / read, from QSPP library read requests (read-only)
 //   Goals (all staff except locums): Section 4 of their latest signed review + manual goals
 //   Download training record (PDF)
 // Rules live in lib/trainingPlan.js.
@@ -9,6 +10,7 @@ import supabase from "../lib/supabaseClient";
 import { SETTINGS_COLUMNS, HOURS_PER_YEAR, hasPlan, hasGoals, hoursStatus, s2s3Status, STATE_STYLE } from "../lib/trainingPlan";
 import { addMonthsStr, todayPerth, perthDateOf, fmtDateShort, LABELS, REVIEW_TYPE_LABEL } from "../lib/performanceReview";
 import { isPharmacistRole, loadServiceConfig, docSections, sectionStatus, DOC_STATE_STYLE } from "../lib/staffDocuments";
+import { viaLabel } from "../lib/policyReads";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -21,24 +23,28 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
   const [goals, setGoals] = useState([]);
   const [review, setReview] = useState(null);
   const [services, setServices] = useState(null);
+  const [policies, setPolicies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const load = async () => {
     try {
-      const [st, ex, gl, rv] = await Promise.all([
+      const [st, ex, gl, rv, pr] = await Promise.all([
         supabase.from("pharmacy_settings").select(SETTINGS_COLUMNS).eq("pharmacy_id", PHARMACY_ID).maybeSingle(),
         supabase.from("staff_training_exemptions").select("*").eq("staff_id", member.id),
         supabase.from("staff_training_goals").select("*").eq("staff_id", member.id).order("created_at"),
         supabase.from("performance_reviews").select("id, review_type, meeting_date, signed_at, goals")
           .eq("staff_id", member.id).eq("status", "signed").order("signed_at", { ascending: false }).limit(1),
+        supabase.from("policy_read_requests").select("id, status, requested_at, read_at, read_via, read_file_name, document:document_id(title, active)")
+          .eq("staff_id", member.id).in("status", ["outstanding", "read"]).order("requested_at", { ascending: false }),
       ]);
-      const firstErr = [st, ex, gl, rv].find((r) => r.error)?.error;
+      const firstErr = [st, ex, gl, rv, pr].find((r) => r.error)?.error;
       if (firstErr) throw firstErr;
       setSettings(st.data || {});
       setExemptions(ex.data || []);
       setGoals(gl.data || []);
       setReview(rv.data?.[0] || null);
+      setPolicies(pr.data || []);
       if (isPharmacistRole(member.role)) setServices(await loadServiceConfig(supabase, PHARMACY_ID, [member.id]));
       setError("");
     } catch (err) {
@@ -68,6 +74,7 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
       {hasGoals(member) && (
         <GoalsSection member={member} review={review} goals={goals} adminUser={adminUser} onOpenReview={onOpenReview} reload={load} />
       )}
+      {hasGoals(member) && <PoliciesSection policies={policies} />}
       <RecordDownload member={member} records={records} settings={settings} hours={hours} />
       <div className="border-t" />
     </div>
@@ -366,6 +373,44 @@ function GoalForm({ member, goal, adminUser, onCancel, onSaved }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// ─── Policies (QSPP library read requests, read-only) ───────────────────────
+
+function PoliciesSection({ policies }) {
+  const toRead = policies.filter((p) => p.status === "outstanding" && p.document?.active !== false);
+  const read = policies.filter((p) => p.status === "read").sort((a, b) => String(b.read_at || "").localeCompare(String(a.read_at || "")));
+  return (
+    <section className="border-t pt-4 space-y-2">
+      <div className={sectionTitleCls}>Policies</div>
+      <div>
+        <div className="text-[11px] font-semibold text-gray-400 uppercase mb-1">To read</div>
+        {toRead.length === 0 ? <p className="text-xs text-gray-400">Nothing to read.</p> : (
+          <div className="rounded-lg border border-gray-200 divide-y">
+            {toRead.map((p) => (
+              <div key={p.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                <span className="text-sm text-gray-800 truncate">{p.document?.title || "Policy"}</span>
+                <span className="text-[11px] text-amber-700 shrink-0">Asked {fmtDateShort(perthDateOf(p.requested_at))}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div>
+        <div className="text-[11px] font-semibold text-gray-400 uppercase mb-1">Read</div>
+        {read.length === 0 ? <p className="text-xs text-gray-400">None yet.</p> : (
+          <div className="rounded-lg border border-gray-200 divide-y">
+            {read.map((p) => (
+              <div key={p.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                <span className="text-sm text-gray-800 truncate">{p.document?.title || p.read_file_name || "Policy"}</span>
+                <span className="text-[11px] text-green-700 shrink-0">✓ {fmtDateShort(perthDateOf(p.read_at))}{p.read_via ? ` · ${viaLabel(p.read_via)}` : ""}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

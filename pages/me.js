@@ -4,6 +4,7 @@ import { toISO, buildWageRows, fmt as wageFmt } from "../lib/wageCalc";
 import { getShiftConflict, getDayAvailability } from "../lib/availability";
 import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib/leaveCalendar";
 import { fetchMyReview, prepWaiting, MyReviewBanner, MyReviewSection } from "../components/MyReview";
+import { fetchMyPolicies, policiesToRead, MyPoliciesBanner, MyPoliciesSection } from "../components/MyPolicies";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -2159,7 +2160,7 @@ function DeliveriesTab({ staff }) {
   );
 }
 
-function DetailsTab({ staff, myReview, onReviewChanged, focusReview }) {
+function DetailsTab({ staff, myReview, onReviewChanged, focusReview, myPolicies, onPoliciesChanged, focusPolicies }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = async () => {
@@ -2194,6 +2195,8 @@ function DetailsTab({ staff, myReview, onReviewChanged, focusReview }) {
       </div>
 
       <MyReviewSection data={myReview} onChanged={onReviewChanged} focus={focusReview} />
+
+      <MyPoliciesSection data={myPolicies} onChanged={onPoliciesChanged} focus={focusPolicies} />
 
       <button
         onClick={handleLogout}
@@ -3222,12 +3225,15 @@ export default function MePage() {
   const [leaveUpdate, setLeaveUpdate] = useState(false);
   const [myReview, setMyReview] = useState(null); // { mode, review } — staff-facing fields only (via API)
   const [focusReview, setFocusReview] = useState(false);
+  const [myPolicies, setMyPolicies] = useState(null); // { outstanding, read } — own requests only (via API)
+  const [focusPolicies, setFocusPolicies] = useState(false);
 
   // Own performance review (banner, Profile badge, Profile section). Refreshes on tab change.
   useEffect(() => {
     if (!staff?.id) return;
     let cancelled = false;
     fetchMyReview().then((r) => { if (!cancelled) setMyReview(r); });
+    fetchMyPolicies().then((r) => { if (!cancelled) setMyPolicies(r); });
     return () => { cancelled = true; };
   }, [staff?.id, tab]);
 
@@ -3458,7 +3464,10 @@ export default function MePage() {
       {/* Content */}
       <main className="flex-1 p-4" style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}>
         {tab === "roster" && (
-          <MyReviewBanner data={myReview} onOpen={() => { setFocusReview(true); setTab("details"); }} />
+          <>
+            <MyReviewBanner data={myReview} onOpen={() => { setFocusPolicies(false); setFocusReview(true); setTab("details"); }} />
+            <MyPoliciesBanner data={myPolicies} onOpen={() => { setFocusReview(false); setFocusPolicies(true); setTab("details"); }} />
+          </>
         )}
         {tab === "roster" ? (
           <RosterCombinedTab staff={staff} />
@@ -3471,7 +3480,11 @@ export default function MePage() {
         ) : tab === "deliveries" ? (
           <DeliveriesTab staff={staff} />
         ) : tab === "details" ? (
-          <DetailsTab staff={staff} myReview={myReview} onReviewChanged={setMyReview} focusReview={focusReview} />
+          <DetailsTab
+            staff={staff}
+            myReview={myReview} onReviewChanged={setMyReview} focusReview={focusReview}
+            myPolicies={myPolicies} onPoliciesChanged={setMyPolicies} focusPolicies={focusPolicies}
+          />
         ) : (
           <div className="text-sm text-gray-400 text-center mt-10">
             {TABS.find((t) => t.key === tab)?.label} tab — coming next.
@@ -3487,7 +3500,7 @@ export default function MePage() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => { setFocusReview(false); setTab(t.key); }}
+            onClick={() => { setFocusReview(false); setFocusPolicies(false); setTab(t.key); }}
             className={`relative flex-1 py-2 text-[11px] font-medium flex flex-col items-center gap-0.5 ${
               tab === t.key ? "text-blue-600" : "text-gray-400"
             }`}
@@ -3502,9 +3515,9 @@ export default function MePage() {
               {t.key === "messages" && unreadCount === 0 && newBoardCount > 0 && (
                 <span className="absolute -top-1 -right-1 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
               )}
-              {t.key === "details" && prepWaiting(myReview) && (
-                <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none" title="Performance review waiting">
-                  1
+              {t.key === "details" && (prepWaiting(myReview) || policiesToRead(myPolicies) > 0) && (
+                <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none" title="Performance review / policies waiting">
+                  {(prepWaiting(myReview) ? 1 : 0) + policiesToRead(myPolicies)}
                 </span>
               )}
               {t.key === "timeoff" && leaveUpdate && (

@@ -138,7 +138,69 @@
 - Part 2: staff seeing their plan/records on `/me` Profile.
 - `lib/qspp.js` (used by `pages/training.js`) does date maths with `toISOString` — the Perth off-by-one gotcha. Consider moving `training.js` onto `lib/trainingPlan.js`.
 - Expiry can only be set on a file's row after upload (not in the upload step); onboarding uploads have no expiry.
-- For multi-file slots ("Other Documents", "Vaccination Accreditation"), only the newest file's expiry is checked.
+- (Superseded by the Documents rework below: newest file per section counts; each named Other qualification is checked separately.)
 
 ### Not committed
-- Main training plan committed in `30040a0`. **Not yet committed:** removal of the Plan settings block + hard-coded rules (`lib/trainingPlan.js`, `components/TrainingPlan.js`, `components/TrainingAdmin.js`) and this notes update.
+- Nothing. Training plan = `30040a0`; hard-coded rules + Plan settings removal = `fce7e20`.
+
+## 2026-10-04 (cont.) — Admin layout, New starter fixes, pharmacist services + Documents rework (commit `fce7e20`)
+
+### Done
+- **Admin → QSPP → 📝 Reviews:** review overview moved here from the Staff screen (due/overdue, next 30 days, in progress, new staff comments, start date not set), plus "X of Y staff reviewed in the last 12 months" (Y = reviewable, employed > 3 months, start date set) and a Signed reviews list. Clicking opens Admin → Staff on that person's Reviews tab (and that review).
+- **Admin → Staff main screen → Needs attention:** Reviews (due/overdue, in progress, new comments), Training (S2/S3 not done, hours short near year/cycle end), Certificates (expiring/expired; pharmacist certificates), New starters (electronic contract issued not accepted, or accepted with onboarding not finished — active staff only; paper-only staff never flagged). Each line opens the right tab; empty groups hidden; "All clear". Training/certificate rules shared with QSPP → Training via `loadTrainingData()` / `trainingAttention()` in `lib/trainingPlan.js`.
+- **New starter tab:** read-only **Current contract** card (accepted/issued values + PDF links) instead of a blank form; "Issue a new contract" prefills from it (same template, today's dates). **Mark onboarding complete** button (confirm, sets `onboarding_completed_at`). Issuing a contract now fills the staff `start_date` **only if empty** (DB-guarded); form + list refresh so Save can't wipe it.
+- **Training plan rules hard-coded** in `lib/trainingPlan.js`: `HOURS_PER_YEAR = 3`, `S2S3_DOC_TYPE = 's2_s3_cert'`, `PLAN_ROLES` = Pharmacy Assistant, DAA Coordinator, Retail Manager (Retail Managers now have a plan). Plan settings block removed.
+- **Pharmacist services:** editable in QSPP → Training (services + certificates, one-off or renews every X months; hide, never delete). Seeded Vaccinating (7 certs), Medication reviews, UTI prescribing, Oral contraceptive prescribing. Pharmacist/intern Profile ticks (saved immediately; untick = `active` false).
+- **Staff Documents rework** (`lib/staffDocuments.js`, reusable `components/DocumentSections.js`): role-aware sections with Required/Optional + status (✅ Current until / ⚠️ Expiring within 60 days / ❌ Expired / Missing). Everyone: contract, induction checklist (required), resume, other. Assistant group: S2/S3 (required), first aid, CPR (typed expiry). Pharmacists/interns: AHPRA + indemnity (required, typed expiry), one section per ticked-service certificate (completion date → expiry worked out live from `renew_months`), other qualifications (name + optional expiry). Newest file counts, older kept as history; unmatched files shown under "Older / other files". No more "Replace" (which deleted the old file).
+- **Pharmacist/intern Training tab:** "CPD managed by the pharmacist under Pharmacy Board requirements." + required certificates with status (read from Documents).
+- **Needs attention (both screens):** pharmacist AHPRA/indemnity/service certificates Missing, Expired, Expiring or missing a completion date; generic expiry rule skips those so nothing is listed twice.
+- **Onboarding page:** pharmacists/interns use the shared sections (Resume, AHPRA, Indemnity, ticked-service certificates with completion date, Other qualifications). Assistants unchanged (Resume, S2/S3, Other Documents).
+- "Goals" → "Training & development goals" on the Training tab.
+
+### Schema changes
+- `docs/sql/2026-10-04_pharmacist_services.sql` (run): tables `pharmacist_services`, `service_certificates`, `staff_services` (+ Byford seed: 4 services, 10 certificates); `locum_documents.service_certificate_id`, `completion_date`, `title`.
+
+### New tables (add to RLS pass)
+- `pharmacist_services`, `service_certificates`, `staff_services` (RLS off).
+
+### RLS pass (#11)
+- Onboarding page reads `pharmacist_services` / `service_certificates` / `staff_services` and writes `locum_documents` with the anon key (gated only by the onboarding token), same as before.
+
+### Follow-ups / parked
+- **Staff documents are still in the PUBLIC `locum-documents` bucket** — now also service certificates. Moving to private is still open.
+- `/me` uploads: `DocumentSections` takes upload/remove/update actions, so `/me` can reuse it with token-checked API routes.
+- Pharmacists' onboarding no longer has "Other Documents" (Other qualifications replaces it).
+- Retired slots: Signed confidentiality policy (0 files) and Vaccination accreditation (only Test Contract's test file); pharmacist First aid / CPR now live under Vaccinating.
+- Blair's indemnity expires 30 Oct 2026 (shows in Needs attention).
+- Annamore Simakwere: start date to be set by Blair; use "Mark onboarding complete".
+- Test data (Test Contract, staff 23) — Blair will clean up separately.
+
+### Not committed
+- Nothing (notes committed with the policy acknowledgment work below).
+
+## 2026-10-04 (cont.) — Policy acknowledgment (QSPP library)
+
+### Done
+- **Admin → QSPP → Documents:** "Ask staff to read" on each document (Everyone / By role / Individual people; active non-locum staff only; shows "This will ask N people", skips anyone with it outstanding, notes re-reads). "x of y read" with an expandable list (read: date + phone/kiosk; not yet: Cancel with confirm). Counts use each person's latest non-cancelled request; inactive staff not counted. Rules in `lib/policyReads.js`, UI in `components/PolicyRequests.js`.
+- **Guards added to the existing library:** Delete refuses for any document with read requests (QSPP evidence; it used to delete the file first). Replace keeps the old file if a read record points at it (snapshot link stays valid). Requests are never changed by Replace.
+- **/me:** routes `/api/policies/mine` + `/api/policies/acknowledge` (same token check as reviews; own requests only, someone else's looks "not found"). Roster banner "📄 You have N policies to read", Profile badge = review waiting + policies to read, Profile → Policies to read (Open + "I have read and understood") and Policies read (`components/MyPolicies.js`).
+- **Kiosk** (`pages/documents.js`): "📄 Policies to read" → pick name (active, non-locum, no PIN) → Open + "I have read and understood" (read_via kiosk, file snapshot).
+- **Staff Training tab:** read-only Policies section (To read / Read with date + phone/kiosk).
+- **Staff Needs attention:** Policies group ("Title · N of M still to read") → opens QSPP → Documents on that policy with its list open.
+- Security check: both new routes return 401 with no token or a fake one.
+
+### Schema changes
+- `docs/sql/2026-10-04_policy_reads.sql` (run): table `policy_read_requests` + partial unique index (one outstanding per document + person) + indexes. FK to `pharmacy_documents` with no cascade.
+
+### New tables (add to RLS pass)
+- `policy_read_requests` (RLS off).
+
+### RLS pass (#11)
+- Kiosk reads and completes requests with the anon key (name only, no PIN — same as incident reports). Admin creates/cancels from the browser. `/me` uses only the token-checked API routes.
+
+### Follow-ups / parked
+- QSPP library files are in a public bucket (like staff documents).
+- A dev server left running on port 3005 from an earlier test was stopped (it was answering test requests with stale files).
+
+### Not committed
+- Nothing — committed with this note.

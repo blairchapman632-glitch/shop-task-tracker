@@ -7,6 +7,9 @@ import EmploymentContractsList from "../components/EmploymentContractsList";
 import ReviewsTab, { ReviewsOverview } from "../components/PerformanceReviews";
 import StaffNeedsAttention from "../components/StaffNeedsAttention";
 import DocumentSections from "../components/DocumentSections";
+import { AskToReadModal, PolicyProgress } from "../components/PolicyRequests";
+import { REQUEST_COLUMNS } from "../lib/policyReads";
+import { fetchAllRows } from "../lib/trainingPlan";
 import { docSections, loadServiceConfig, uploadStaffDocument, deleteStaffDocument, updateStaffDocument } from "../lib/staffDocuments";
 import StaffTrainingPlan from "../components/TrainingPlan";
 import TrainingAdminTab from "../components/TrainingAdmin";
@@ -2767,8 +2770,11 @@ const DOC_BUCKET = "pharmacy-documents";
 const slugify = (s) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "folder";
 
-function DocumentsTab({ staffList, onOpenStaff }) {
+function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
   const [subTab, setSubTab] = useState("documents");
+  const [requests, setRequests] = useState([]);    // policy_read_requests (all statuses)
+  const [askDoc, setAskDoc] = useState(null);      // document with the "Ask staff to read" dialog open
+  const [openProgress, setOpenProgress] = useState({}); // document id -> list expanded
   const [folders, setFolders] = useState([]);
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2800,7 +2806,28 @@ function DocumentsTab({ staffList, onOpenStaff }) {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  const loadRequests = async () => {
+    try {
+      setRequests(await fetchAllRows(() => supabase.from("policy_read_requests").select(REQUEST_COLUMNS).eq("pharmacy_id", PHARMACY_ID)));
+    } catch (err) {
+      setError("Couldn't load policy read requests: " + (err?.message || String(err)));
+    }
+  };
+
+  useEffect(() => { load(); loadRequests(); }, []);
+
+  // Opened from Needs attention: go to that policy's folder with its read list open
+  useEffect(() => {
+    if (!openPolicyId || loading) return;
+    const doc = docs.find((d) => String(d.id) === String(openPolicyId));
+    if (!doc) return;
+    setSubTab("documents");
+    setSearch("");
+    setActiveFolder(doc.folder_id);
+    setOpenProgress((o) => ({ ...o, [doc.id]: true }));
+    setTimeout(() => document.getElementById(`policy-${doc.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPolicyId, loading]);
 
   const term = search.trim().toLowerCase();
   const searching = term.length > 0;
@@ -2904,7 +2931,8 @@ function DocumentsTab({ staffList, onOpenStaff }) {
         title: file.name,
         uploaded_at: new Date().toISOString(),
       }).eq("id", doc.id);
-      if (oldPath) await supabase.storage.from(DOC_BUCKET).remove([oldPath]);
+      const readThisVersion = requests.some((r) => r.status === "read" && r.read_file_url === doc.file_url);
+      if (oldPath && !readThisVersion) await supabase.storage.from(DOC_BUCKET).remove([oldPath]);
       setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, file_url: urlData.publicUrl, file_name: path, title: file.name } : d)));
     } catch (err) {
       setError("Replace failed: " + (err?.message || String(err)));
@@ -2930,6 +2958,10 @@ function DocumentsTab({ staffList, onOpenStaff }) {
   };
 
   const handleDeleteDoc = async (doc) => {
+    if (requests.some((r) => String(r.document_id) === String(doc.id))) {
+      alert("Staff have been asked to read this document, so it can't be deleted (the read records are QSPP evidence). Use Replace to upload a new version instead.");
+      return;
+    }
     if (!window.confirm("Delete this document? This removes the file permanently.")) return;
     const path = storagePathFromUrl(doc.file_url);
     if (path) await supabase.storage.from(DOC_BUCKET).remove([path]);
@@ -3050,7 +3082,7 @@ function DocumentsTab({ staffList, onOpenStaff }) {
           ) : (
             <div className="space-y-1.5">
               {folderDocs.map((doc) => (
-                <div key={doc.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                <div key={doc.id} id={`policy-${doc.id}`} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     <span className="text-sm">📄</span>
                     <div className="min-w-0 flex-1">
@@ -3085,7 +3117,17 @@ function DocumentsTab({ staffList, onOpenStaff }) {
                       <input type="file" className="hidden" disabled={uploading} onChange={(e) => handleReplace(doc, e.target.files?.[0])} />
                     </label>
                     <button onClick={() => handleDeleteDoc(doc)} className="text-[11px] text-red-500 hover:text-red-700">Delete</button>
+                    <button onClick={() => setAskDoc(doc)} className="text-[11px] text-blue-600 hover:underline ml-auto">Ask staff to read</button>
                   </div>
+                  <PolicyProgress
+                    doc={doc}
+                    requests={requests}
+                    staffList={staffList}
+                    adminUser={adminUser}
+                    open={!!openProgress[doc.id]}
+                    onToggle={() => setOpenProgress((o) => ({ ...o, [doc.id]: !o[doc.id] }))}
+                    onChanged={loadRequests}
+                  />
                 </div>
               ))}
             </div>
@@ -3093,6 +3135,16 @@ function DocumentsTab({ staffList, onOpenStaff }) {
         </div>
       </div>
       </div>
+      )}
+      {askDoc && (
+        <AskToReadModal
+          doc={askDoc}
+          staffList={staffList}
+          requests={requests}
+          adminUser={adminUser}
+          onClose={() => setAskDoc(null)}
+          onSent={async () => { setOpenProgress((o) => ({ ...o, [askDoc.id]: true })); setAskDoc(null); await loadRequests(); }}
+        />
       )}
     </div>
   );
@@ -3356,6 +3408,9 @@ export default function AdminPage() {
     load();
   }, [unlocked]);
 
+  const [policyToOpen, setPolicyToOpen] = useState(null); // QSPP → Documents: policy whose read list to open
+  const openPolicy = (docId) => { setSelected(null); setPolicyToOpen(docId); setTab("documents"); };
+
   const openStaff = (s, staffTab, reviewId) => {
     setTab("staff");
     setSelected(s);
@@ -3507,6 +3562,7 @@ export default function AdminPage() {
                 key={t}
                 onClick={() => {
                   setTab(t);
+                  setPolicyToOpen(null);
                   setSelected(null);
                   if (t === "locums") setLocumFormKey((k) => k + 1);
                 }}
@@ -3526,11 +3582,11 @@ export default function AdminPage() {
             {tab === "settings" ? (
               <SettingsTab />
             ) : tab === "documents" ? (
-              <DocumentsTab staffList={staffList} onOpenStaff={openStaff} />
+              <DocumentsTab staffList={staffList} onOpenStaff={openStaff} adminUser={adminUser} openPolicyId={policyToOpen} />
             ) : tab === "locums" ? (
               <LocumsTab key={locumFormKey} />
             ) : !selected ? (
-              <StaffNeedsAttention staffList={staffList} onOpen={openStaff} />
+              <StaffNeedsAttention staffList={staffList} onOpen={openStaff} onOpenPolicy={openPolicy} />
             ) : (
               <StaffForm
                 key={formKey}
