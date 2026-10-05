@@ -2,9 +2,14 @@
 // QSPP Library → Policies to read); opening files on iPhone stalls, so /me only lists them.
 // Data comes from pages/api/policies/mine (own requests only, Supabase access token).
 // (pages/api/policies/acknowledge still exists but /me no longer calls it.)
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { callMeApi } from "./MyReview";
 import { perthDateOf, fmtDateShort } from "../lib/performanceReview";
+
+const READ_PREVIEW = 5; // "Policies read" shows this many newest first, then "Show all (N)"
+
+// Display only: strip a trailing file extension from a policy title
+const displayTitle = (t) => String(t || "").replace(/\.(docx|doc|pdf|xlsx)$/i, "");
 
 // -> { outstanding: [{ id, title, file_url, requested_at }], read: [{ id, title, read_at, read_via }] } or null
 export const fetchMyPolicies = async () => {
@@ -36,6 +41,7 @@ export function MyPoliciesBanner({ data, onOpen }) {
 // Training tab section (read-only)
 export function MyPoliciesSection({ data, focus }) {
   const ref = useRef(null);
+  const [showAllRead, setShowAllRead] = useState(false);
   useEffect(() => {
     if (focus && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [focus]);
@@ -66,15 +72,24 @@ export function MyPoliciesSection({ data, focus }) {
         <div>
           <div className="text-sm font-semibold text-gray-700">Policies read</div>
           <div className="mt-1.5 divide-y">
-            {data.read.map((p) => (
+            {(showAllRead ? data.read : data.read.slice(0, READ_PREVIEW)).map((p) => (
               <div key={p.id} className="flex items-start justify-between gap-2 py-1.5">
-                <span className="text-sm text-gray-700 break-words">{p.title}</span>
+                <span className="text-sm text-gray-700 break-words">{displayTitle(p.title)}</span>
                 <span className="text-xs text-gray-400 shrink-0">
                   {fmtDateShort(perthDateOf(p.read_at))}{p.read_via ? ` · ${p.read_via}` : ""}
                 </span>
               </div>
             ))}
           </div>
+          {data.read.length > READ_PREVIEW && (
+            <button
+              type="button"
+              onClick={() => setShowAllRead((v) => !v)}
+              className="mt-1 text-sm font-medium text-blue-600"
+            >
+              {showAllRead ? "Show less" : `Show all (${data.read.length})`}
+            </button>
+          )}
         </div>
       )}
     </div>
