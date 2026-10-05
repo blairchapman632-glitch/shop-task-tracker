@@ -33,7 +33,7 @@ export function MyPoliciesBanner({ data, onOpen }) {
   );
 }
 
-// Profile tab section (read-only)
+// Training tab section (read-only)
 export function MyPoliciesSection({ data, focus }) {
   const ref = useRef(null);
   useEffect(() => {

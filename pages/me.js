@@ -1773,6 +1773,57 @@ function MeEditShiftModal({ shift, staff, onClose, onSaved }) {
   );
 }
 
+// Deliveries for one day: real rows plus recurring customers projected as "virtual" rows (not yet saved).
+// Shared by DeliveriesTab and the Roster tab's driver card.
+async function fetchDeliveryDay(dateISO) {
+  const [{ data }, { data: custs }] = await Promise.all([
+    supabase
+      .from("deliveries")
+      .select("*, delivery_customers(*)")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .eq("delivery_date", dateISO)
+      .order("sequence", { nullsFirst: false }),
+    supabase
+      .from("delivery_customers")
+      .select("*")
+      .eq("pharmacy_id", PHARMACY_ID)
+      .eq("active", true),
+  ]);
+
+  const real = (data || []).filter((d) => d.status !== "skipped");
+  const taken = new Set((data || []).map((d) => String(d.delivery_customer_id)));
+  const dow = new Date(dateISO + "T00:00:00").getDay();
+
+  const isDue = (c) => {
+    if (!c.is_recurring) return false;
+    if (c.recurring_day !== dow) return false;
+    const weeks = c.recurrence_weeks || 1;
+    if (weeks === 1) return true;
+    if (!c.anchor_date) return true;
+    const anchor = new Date(c.anchor_date + "T00:00:00");
+    const d = new Date(dateISO + "T00:00:00");
+    const diffDays = Math.round((d - anchor) / 86400000);
+    if (diffDays < 0) return false;
+    return diffDays % (weeks * 7) === 0;
+  };
+
+  const maxSeq = real.reduce((m, d) => Math.max(m, d.sequence || 0), 0);
+  const virtual = (custs || [])
+    .filter((c) => isDue(c) && !taken.has(String(c.id)))
+    .map((c, i) => ({
+      id: null,
+      virtual: true,
+      delivery_customer_id: c.id,
+      delivery_customers: c,
+      delivery_date: dateISO,
+      payment_status: c.payment_default,
+      status: "pending",
+      sequence: maxSeq + i + 1,
+    }));
+
+  return [...real, ...virtual].sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999));
+}
+
 function DeliveriesTab({ staff }) {
   const [loading, setLoading] = useState(true);
   const [dayOffset, setDayOffset] = useState(0);
@@ -1792,52 +1843,7 @@ function DeliveriesTab({ staff }) {
 
   const load = async () => {
     setLoading(true);
-    const [{ data }, { data: custs }] = await Promise.all([
-      supabase
-        .from("deliveries")
-        .select("*, delivery_customers(*)")
-        .eq("pharmacy_id", PHARMACY_ID)
-        .eq("delivery_date", dateISO)
-        .order("sequence", { nullsFirst: false }),
-      supabase
-        .from("delivery_customers")
-        .select("*")
-        .eq("pharmacy_id", PHARMACY_ID)
-        .eq("active", true),
-    ]);
-
-    const real = (data || []).filter((d) => d.status !== "skipped");
-    const taken = new Set((data || []).map((d) => String(d.delivery_customer_id)));
-    const dow = new Date(dateISO + "T00:00:00").getDay();
-
-    const isDue = (c) => {
-      if (!c.is_recurring) return false;
-      if (c.recurring_day !== dow) return false;
-      const weeks = c.recurrence_weeks || 1;
-      if (weeks === 1) return true;
-      if (!c.anchor_date) return true;
-      const anchor = new Date(c.anchor_date + "T00:00:00");
-      const d = new Date(dateISO + "T00:00:00");
-      const diffDays = Math.round((d - anchor) / 86400000);
-      if (diffDays < 0) return false;
-      return diffDays % (weeks * 7) === 0;
-    };
-
-    const maxSeq = real.reduce((m, d) => Math.max(m, d.sequence || 0), 0);
-    const virtual = (custs || [])
-      .filter((c) => isDue(c) && !taken.has(String(c.id)))
-      .map((c, i) => ({
-        id: null,
-        virtual: true,
-        delivery_customer_id: c.id,
-        delivery_customers: c,
-        delivery_date: dateISO,
-        payment_status: c.payment_default,
-        status: "pending",
-        sequence: maxSeq + i + 1,
-      }));
-
-    setRows([...real, ...virtual].sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999)));
+    setRows(await fetchDeliveryDay(dateISO));
 
     const { data: runData } = await supabase
       .from("delivery_runs")
@@ -2160,7 +2166,66 @@ function DeliveriesTab({ staff }) {
   );
 }
 
-function DetailsTab({ staff, myReview, onReviewChanged, focusReview, myPolicies, onPoliciesChanged, focusPolicies }) {
+// Roster tab card for drivers: today's run status; tap opens the full Deliveries view.
+function DeliveriesCard({ onOpen }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    let cancelled = false;
+    fetchDeliveryDay(today).then((r) => { if (!cancelled) setRows(r); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const total = rows?.length || 0;
+  const done = (rows || []).filter((r) => r.status !== "pending").length;
+  const failed = (rows || []).filter((r) => r.status === "failed").length;
+  const complete = total > 0 && done === total;
+  const text = rows === null
+    ? "🚚 Deliveries…"
+    : total === 0
+      ? "🚚 No run today · View deliveries"
+      : complete && failed > 0
+        ? `🚚 Today's run · all ${total} done · ${failed} couldn't deliver`
+      : complete
+        ? `🚚 Today's run · all ${total} done ✓`
+        : done > 0
+          ? `🚚 Today's run · ${done} of ${total} done`
+          : `🚚 Today's run · ${total} ${total === 1 ? "drop" : "drops"}`;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`w-full max-w-lg mx-auto mb-4 flex items-center justify-between gap-2 text-left rounded-xl border px-4 py-3 text-sm font-medium ${
+        complete && failed > 0
+          ? "border-amber-200 bg-amber-50 text-amber-800"
+          : complete ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-gray-200 bg-white text-gray-800"
+      }`}
+    >
+      <span>{text}</span>
+      <span className="text-gray-400">›</span>
+    </button>
+  );
+}
+
+function TrainingTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies }) {
+  const hasReview = !!(myReview?.mode && myReview.review);
+  const hasPolicies = !!(myPolicies?.outstanding?.length || myPolicies?.read?.length);
+  return (
+    <div className="max-w-lg mx-auto space-y-4">
+      <MyReviewSection data={myReview} onChanged={onReviewChanged} focus={focusReview} />
+      <MyPoliciesSection data={myPolicies} focus={focusPolicies} />
+      {!hasReview && !hasPolicies && (
+        <div className="bg-white rounded-2xl shadow-sm border p-6 text-center text-sm text-gray-400">
+          Nothing to do here right now.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailsTab({ staff }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = async () => {
@@ -2193,10 +2258,6 @@ function DetailsTab({ staff, myReview, onReviewChanged, focusReview, myPolicies,
           </div>
         )}
       </div>
-
-      <MyReviewSection data={myReview} onChanged={onReviewChanged} focus={focusReview} />
-
-      <MyPoliciesSection data={myPolicies} onChanged={onPoliciesChanged} focus={focusPolicies} />
 
       <button
         onClick={handleLogout}
@@ -3227,8 +3288,9 @@ export default function MePage() {
   const [focusReview, setFocusReview] = useState(false);
   const [myPolicies, setMyPolicies] = useState(null); // { outstanding, read } — own requests only (via API)
   const [focusPolicies, setFocusPolicies] = useState(false);
+  const [showDeliveries, setShowDeliveries] = useState(false); // driver's full Deliveries view, opened from the Roster card
 
-  // Own performance review (banner, Profile badge, Profile section). Refreshes on tab change.
+  // Own performance review + policies (Roster banners, Training badge, Training sections). Refreshes on tab change.
   useEffect(() => {
     if (!staff?.id) return;
     let cancelled = false;
@@ -3404,7 +3466,7 @@ export default function MePage() {
     { key: "timeoff", label: "Time off", icon: "✅" },
     { key: "wages", label: "Wages", icon: "💰" },
     { key: "messages", label: "Messages", icon: "💬" },
-    ...(staff.is_driver ? [{ key: "deliveries", label: "Deliveries", icon: "🚚" }] : []),
+    { key: "training", label: "Training", icon: "🎓" },
     { key: "details", label: "Profile", icon: "👤" },
   ];
 
@@ -3463,13 +3525,21 @@ export default function MePage() {
 
       {/* Content */}
       <main className="flex-1 p-4" style={{ paddingBottom: "calc(5rem + env(safe-area-inset-bottom))" }}>
-        {tab === "roster" && (
+        {tab === "roster" && !showDeliveries && (
           <>
-            <MyReviewBanner data={myReview} onOpen={() => { setFocusPolicies(false); setFocusReview(true); setTab("details"); }} />
-            <MyPoliciesBanner data={myPolicies} onOpen={() => { setFocusReview(false); setFocusPolicies(true); setTab("details"); }} />
+            {staff.is_driver && <DeliveriesCard onOpen={() => setShowDeliveries(true)} />}
+            <MyReviewBanner data={myReview} onOpen={() => { setFocusPolicies(false); setFocusReview(true); setTab("training"); }} />
+            <MyPoliciesBanner data={myPolicies} onOpen={() => { setFocusReview(false); setFocusPolicies(true); setTab("training"); }} />
           </>
         )}
-        {tab === "roster" ? (
+        {tab === "roster" && showDeliveries && staff.is_driver ? (
+          <>
+            <div className="max-w-lg mx-auto mb-3">
+              <button onClick={() => setShowDeliveries(false)} className="text-sm font-medium text-blue-600">← Back to Roster</button>
+            </div>
+            <DeliveriesTab staff={staff} />
+          </>
+        ) : tab === "roster" ? (
           <RosterCombinedTab staff={staff} />
         ) : tab === "timeoff" ? (
           <TimeOffTab staff={staff} />
@@ -3477,14 +3547,13 @@ export default function MePage() {
           <WagesTab staff={staff} />
         ) : tab === "messages" ? (
           <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} newBoardCount={newBoardCount} unreadCount={unreadCount} />
-        ) : tab === "deliveries" ? (
-          <DeliveriesTab staff={staff} />
-        ) : tab === "details" ? (
-          <DetailsTab
-            staff={staff}
+        ) : tab === "training" ? (
+          <TrainingTab
             myReview={myReview} onReviewChanged={setMyReview} focusReview={focusReview}
-            myPolicies={myPolicies} onPoliciesChanged={setMyPolicies} focusPolicies={focusPolicies}
+            myPolicies={myPolicies} focusPolicies={focusPolicies}
           />
+        ) : tab === "details" ? (
+          <DetailsTab staff={staff} />
         ) : (
           <div className="text-sm text-gray-400 text-center mt-10">
             {TABS.find((t) => t.key === tab)?.label} tab — coming next.
@@ -3500,8 +3569,8 @@ export default function MePage() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => { setFocusReview(false); setFocusPolicies(false); setTab(t.key); }}
-            className={`relative flex-1 py-2 text-[11px] font-medium flex flex-col items-center gap-0.5 ${
+            onClick={() => { setFocusReview(false); setFocusPolicies(false); setShowDeliveries(false); setTab(t.key); }}
+            className={`relative flex-1 min-w-0 py-2 text-[11px] whitespace-nowrap font-medium flex flex-col items-center gap-0.5 ${
               tab === t.key ? "text-blue-600" : "text-gray-400"
             }`}
           >
@@ -3515,7 +3584,7 @@ export default function MePage() {
               {t.key === "messages" && unreadCount === 0 && newBoardCount > 0 && (
                 <span className="absolute -top-1 -right-1 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
               )}
-              {t.key === "details" && (prepWaiting(myReview) || policiesToRead(myPolicies) > 0) && (
+              {t.key === "training" && (prepWaiting(myReview) || policiesToRead(myPolicies) > 0) && (
                 <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none" title="Performance review / policies waiting">
                   {(prepWaiting(myReview) ? 1 : 0) + policiesToRead(myPolicies)}
                 </span>

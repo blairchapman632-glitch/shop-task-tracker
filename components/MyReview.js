@@ -52,12 +52,12 @@ export function MyReviewBanner({ data, onOpen }) {
       onClick={onOpen}
       className="w-full max-w-lg mx-auto mb-4 block text-left rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
     >
-      {text} <span className="font-semibold underline whitespace-nowrap">Open →</span>
+      {text} <span className="font-semibold underline whitespace-nowrap">Open in Training →</span>
     </button>
   );
 }
 
-// Profile tab section
+// Training tab section
 export function MyReviewSection({ data, onChanged, focus }) {
   const ref = useRef(null);
   useEffect(() => {
