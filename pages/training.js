@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import { attachTrainingCert, openTrainingCert, recordHasCert } from "../lib/staffFiles";
-import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle, hoursInYear, currentTrainingYear } from "../lib/qspp";
+import { HOURS_PER_YEAR, CYCLE_YEARS, PLAN_ROLES, hasPlan, hoursStatus } from "../lib/trainingPlan";
+import { fmtDateShort } from "../lib/performanceReview";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -18,7 +19,7 @@ function IdentityGate({ onIdentified }) {
 
   useEffect(() => {
     supabase.from("staff")
-      .select("id, name, photo_url, role, pin")
+      .select("id, name, photo_url, role, pin, active, start_date")
       .eq("pharmacy_id", PHARMACY_ID)
       .eq("active", true)
       .or("role.is.null,role.neq.Locum")
@@ -111,6 +112,28 @@ function IdentityGate({ onIdentified }) {
   );
 }
 
+// ─── Hours progress row ───────────────────────────────────────────────────────
+
+function HoursBar({ label, range, done, req, note = null }) {
+  const met = done >= req;
+  const pct = req > 0 ? Math.min(100, Math.round((done / req) * 100)) : 100;
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-gray-700">{label}</span>
+        <span className={`text-xs font-medium ${met ? "text-green-600" : "text-gray-700"}`}>
+          {done} of {req} hours {met ? "✓" : ""}
+        </span>
+      </div>
+      <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden mt-1">
+        <div className={`h-2 rounded-full ${met ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="text-[11px] text-gray-400 mt-1">{range}</div>
+      {note && <div className="text-[11px] text-gray-600 mt-0.5">✓ {note}</div>}
+    </div>
+  );
+}
+
 // ─── Main training view (add-only for staff) ──────────────────────────────────
 
 function TrainingView({ staff }) {
@@ -118,6 +141,7 @@ function TrainingView({ staff }) {
   const [training, setTraining] = useState([]);
   const [loading, setLoading] = useState(true);
   const [qsppAnchor, setQsppAnchor] = useState(null);
+  const [exemptions, setExemptions] = useState([]);
 
   const [topic, setTopic] = useState("");
   const [date, setDate] = useState("");
@@ -146,14 +170,19 @@ function TrainingView({ staff }) {
 
   const load = async () => {
     setLoading(true);
-    const [{ data: recs }, { data: settings }] = await Promise.all([
+    const [{ data: recs }, { data: settings }, { data: ex }] = await Promise.all([
       supabase.from("training_records").select("*").eq("staff_id", staff.id).order("training_date", { ascending: false }),
       supabase.from("pharmacy_settings").select("qspp_cycle_start_date").eq("pharmacy_id", PHARMACY_ID).maybeSingle(),
+      // Which training years are "not required" — never the reason (Admin-only)
+      supabase.from("staff_training_exemptions").select("training_year_start").eq("staff_id", staff.id),
     ]);
     setTraining(recs || []);
     setQsppAnchor(settings?.qspp_cycle_start_date || null);
+    setExemptions(ex || []);
     setLoading(false);
   };
+
+  const progress = hoursStatus(staff, training, exemptions, qsppAnchor); // null without an anniversary date
 
   useEffect(() => { load(); }, [staff.id]);
 
@@ -224,10 +253,10 @@ function TrainingView({ staff }) {
         <div className="bg-white rounded-2xl shadow-sm border p-4 space-y-3">
           <div className="text-sm font-bold text-gray-800">Training requirements</div>
           <p className="text-sm text-gray-600">
-            You need <span className="font-semibold">3 hours of training per year</span> — over a full QSPP 3-year cycle that's <span className="font-semibold">9 hours total</span>.
+            You need <span className="font-semibold">{HOURS_PER_YEAR} hours of training per training year</span> — over a full {CYCLE_YEARS}-year QSPP cycle that's <span className="font-semibold">{HOURS_PER_YEAR * CYCLE_YEARS} hours</span>. In the year you start, it's worked out for the part of the year you're here.
           </p>
           <p className="text-xs text-gray-500">
-            This applies to pharmacy assistants and covers the supply of Pharmacy Medicines (S2) and Pharmacist Only Medicines (S3). If you've been employed less than 12 months there's no minimum yet — but it's worth starting early.
+            This applies to the {PLAN_ROLES.join(", ").replace(/, ([^,]*)$/, " and $1")} roles, and covers the supply of Pharmacy Medicines (S2) and Pharmacist Only Medicines (S3).
           </p>
 
           <div>
@@ -267,38 +296,33 @@ function TrainingView({ staff }) {
           </p>
         </div>
 
-        {/* QSPP progress — pharmacy assistants only */}
-        {qsppApplies(staff.role) && (() => {
-          const cycle = getCurrentCycle(qsppAnchor);
-          if (!cycle) return null;
-          const done = hoursInCycle(training, cycle);
-          const pct = Math.min(100, Math.round((done / QSPP_HOURS_REQUIRED) * 100));
-          const met = done >= QSPP_HOURS_REQUIRED;
-          const year = currentTrainingYear(cycle);
-          const yearDone = hoursInYear(training, year);
-          const yearMet = yearDone >= 3;
-          return (
-            <div className="bg-white rounded-2xl shadow-sm border p-4">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-sm font-semibold text-gray-700">QSPP Training</span>
-                <span className={`text-sm font-medium ${met ? "text-green-600" : "text-gray-700"}`}>
-                  {done} / {QSPP_HOURS_REQUIRED} hrs {met ? "✓" : ""}
-                </span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
-                <div className={`h-2.5 rounded-full ${met ? "bg-green-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
-              </div>
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-[11px] text-gray-500">This year ({year})</span>
-                <span className={`text-[11px] font-medium ${yearMet ? "text-green-600" : "text-gray-600"}`}>
-                  {yearDone} / 3 hrs {yearMet ? "✓" : ""}
-                </span>
-              </div>
-              <div className="text-[11px] text-gray-400 mt-1.5">Current cycle: {formatCycle(cycle)}</div>
-              {!met && <div className="text-[11px] text-gray-500 mt-0.5">{(QSPP_HOURS_REQUIRED - done)} hr{(QSPP_HOURS_REQUIRED - done) === 1 ? "" : "s"} still needed this cycle.</div>}
-            </div>
-          );
-        })()}
+        {/* Training hours — plan roles only. Same rules as Admin → Staff → Training (lib/trainingPlan.js). */}
+        {hasPlan(staff) && !loading && (
+          <div className="bg-white rounded-2xl shadow-sm border p-4 space-y-3">
+            <div className="text-sm font-semibold text-gray-700">Training hours</div>
+            {!progress ? (
+              <p className="text-xs text-gray-500">
+                Your hours can't be counted yet — the pharmacy's QSPP anniversary date hasn't been set. Keep adding your records below.
+              </p>
+            ) : (
+              <>
+                <HoursBar
+                  label="This training year"
+                  range={`${fmtDateShort(progress.year.start)} – ${fmtDateShort(progress.year.end)}`}
+                  done={progress.yearDone}
+                  req={progress.yearReq}
+                  note={progress.exemption ? "Not required this training year" : null}
+                />
+                <HoursBar
+                  label="This QSPP cycle"
+                  range={`${fmtDateShort(progress.cycle.start)} – ${fmtDateShort(progress.cycle.end)}`}
+                  done={progress.cycleDone}
+                  req={progress.cycleReq}
+                />
+              </>
+            )}
+          </div>
+        )}
 
         {/* Add record */}
         <div className="bg-white rounded-2xl shadow-sm border p-4 space-y-3">

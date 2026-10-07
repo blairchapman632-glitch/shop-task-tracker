@@ -20,7 +20,8 @@ Shared libs (single sources of truth — reuse, don't duplicate logic):
 - `lib/weekSchedule.js` — `weekAB`, `normalShiftFor` (regular schedules, Week A/B from `pharmacy_settings.payroll_start_date`)
 - `lib/leaveCover.js` — locum gap detection
 - `lib/leaveCalendar.js` — leave rules, `nextDayStr`, `LeaveCalendar` component
-- `lib/availability.js`, `lib/qspp.js`
+- `lib/availability.js`
+- `lib/trainingPlan.js` — training hours rules (plan roles, anniversary training year, 3-year QSPP cycle, pro-rata, exemptions) for Admin and the kiosk `/training` page
 
 ## How Blair works with you
 

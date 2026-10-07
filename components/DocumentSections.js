@@ -15,7 +15,8 @@ const fmtUploaded = (iso) => (iso ? new Date(iso).toLocaleDateString("en-AU", { 
 
 // sections: from docSections(); contractNode: element shown for the "contract" section (Admin only)
 // mode: "admin" | "staff" (staff wording; also hides the "older/other files" list)
-export default function DocumentSections({ sections, docs, actions, contractNode = null, mode = "admin" }) {
+// staffName: shown as "Uploaded by <name>" on files the person uploaded themselves from /me (uploaded_via = "me")
+export default function DocumentSections({ sections, docs, actions, contractNode = null, mode = "admin", staffName = "" }) {
   const unmatched = mode === "admin" ? unmatchedDocs(sections, docs) : [];
   let lastGroup = null;
   return (
@@ -31,7 +32,7 @@ export default function DocumentSections({ sections, docs, actions, contractNode
         return (
           <div key={sec.key} className="space-y-1.5">
             {groupHeader}
-            <Section sec={sec} docs={docs} actions={actions} mode={mode} />
+            <Section sec={sec} docs={docs} actions={actions} mode={mode} staffName={staffName} />
           </div>
         );
       })}
@@ -41,7 +42,7 @@ export default function DocumentSections({ sections, docs, actions, contractNode
           <p className="text-[11px] text-gray-400 mb-1.5">Files that don't belong to any of this person's current sections (kept for the record).</p>
           <div className="space-y-1.5">
             {unmatched.map((d) => (
-              <FileRow key={d.id} doc={d} sec={null} actions={actions} label={d.type === "other_qualification" && d.title ? d.title : docTypeLabel(d.type)} />
+              <FileRow key={d.id} doc={d} sec={null} actions={actions} staffName={staffName} label={d.type === "other_qualification" && d.title ? d.title : docTypeLabel(d.type)} />
             ))}
           </div>
         </div>
@@ -50,7 +51,7 @@ export default function DocumentSections({ sections, docs, actions, contractNode
   );
 }
 
-function Section({ sec, docs, actions, mode }) {
+function Section({ sec, docs, actions, mode, staffName }) {
   const files = sectionDocs(sec, docs);
   const status = sectionStatus(sec, docs);
   const multi = sec.kind === "multi" || sec.kind === "other_qual";
@@ -71,7 +72,7 @@ function Section({ sec, docs, actions, mode }) {
       {files.length > 0 && (
         <div className="space-y-1.5 mb-2">
           {files.map((d, i) => (
-            <FileRow key={d.id} doc={d} sec={sec} actions={actions} older={!multi && i > 0} />
+            <FileRow key={d.id} doc={d} sec={sec} actions={actions} staffName={staffName} older={!multi && i > 0} />
           ))}
         </div>
       )}
@@ -80,7 +81,7 @@ function Section({ sec, docs, actions, mode }) {
   );
 }
 
-function FileRow({ doc, sec, actions, older = false, label = null }) {
+function FileRow({ doc, sec, actions, older = false, label = null, staffName = "" }) {
   const [busy, setBusy] = useState(false);
   const run = async (fn) => {
     setBusy(true);
@@ -96,7 +97,10 @@ function FileRow({ doc, sec, actions, older = false, label = null }) {
         <div className="min-w-0 flex-1">
           <div className="text-xs font-medium text-gray-700 truncate">{name}</div>
           <div className="text-[11px] text-gray-400">
-            {older && "Older · "}Uploaded {fmtUploaded(doc.uploaded_at)}
+            {older && "Older · "}
+            {doc.uploaded_via === "me"
+              ? `Uploaded by ${staffName || "staff member"}, ${fmtUploaded(doc.uploaded_at)}`
+              : `Uploaded ${fmtUploaded(doc.uploaded_at)}`}
             {sec?.kind === "other_qual" && doc.filename ? ` · ${doc.filename}` : ""}
           </div>
         </div>

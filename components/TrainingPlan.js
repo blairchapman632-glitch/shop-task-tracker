@@ -365,7 +365,10 @@ function GoalForm({ member, goal, adminUser, onCancel, onSaved }) {
   return (
     <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 space-y-2">
       <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Goal" className={inputCls} autoFocus />
-      <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" rows={3} className={`${inputCls} resize-y`} />
+      <div>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" rows={3} className={`${inputCls} resize-y`} />
+        <p className="text-[11px] text-gray-400 mt-0.5">Staff can see this (goal and notes) in Chalkboard Pocket → Training → Plan.</p>
+      </div>
       {error && <p className="text-xs text-red-500">{error}</p>}
       <div className="flex gap-2">
         <button type="button" onClick={onCancel} className="flex-1 border border-gray-300 rounded-lg py-1.5 text-xs text-gray-600 hover:bg-white">Cancel</button>

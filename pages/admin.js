@@ -1120,6 +1120,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                 sections={docSections({ id: member.id, role: form.role, active: form.active }, serviceConfig)}
                 docs={documents}
                 actions={docActions}
+                staffName={member.name}
                 contractNode={
                   /* Paper + electronic contracts, newest first */
                   <EmploymentContractsList

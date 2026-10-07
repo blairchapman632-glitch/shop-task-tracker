@@ -241,3 +241,60 @@
 - Kiosk `/training` loads every active staff member's PIN into the browser and checks it there.
 - Kiosk policy ticks (Today's Jobs card, QSPP Library → Policies to read) have no PIN — name pick only.
 - Multi-pharmacy: once browser writes to `profiles` are revoked (Stage 1 A2a), `/login`'s "create a pharmacy" sign-up can't set the new profile's pharmacy — accepted; redo it server-side in the multi-pharmacy auth pass.
+
+## 2026-10-05 → 10-08 — /me tweaks, Stage 1 (private staff files, kiosk hours rules), Stage 2 (/me Training + To do)
+
+### Done
+- **/me tweaks** (committed `aca0b44`, `18023bd`): Deliveries moved off the nav to a driver-only Roster card (today's run status; green when all delivered, amber when finished with couldn't-deliver drops) → full Deliveries view with ← Back. "Policies read" shows the newest 5 + Show all, titles without file extensions.
+- **Staff Documents dates** (`504d674`): upload without a date; newest service certificate with no completion date → "⚠️ Add completion date"; newest AHPRA / indemnity / first aid / CPR with no expiry → "⚠️ Add expiry date" and flagged in Needs attention (other qualifications stay optional). Optional "Expires" box at upload for typed sections.
+- **Stage 1 A2a — Admin login check** (`8bee181`): `lib/adminAuth.js` (`requireDashboard` = real Supabase login whose `profiles` row has a pharmacy; `assertSamePharmacy`) + `lib/adminFetch.js` (adds the token). Applied to contracts `preview`, `issue`, `admin-url`, `signature`, `paper` and reviews `sign`, `pdf-url`, `copy-given`. Proves "the pharmacy's dashboard account", not which person passed the Admin PIN.
+- **Stage 1 A2b — private staff files** (`8bee181`): `locum-documents` and `training-certificates` are now **private** (made private in place, no copy). Paths in `locum_documents.storage_path` / `training_records.certificate_path`; files open via 10-minute signed links, uploads go straight to storage with one-time upload URLs (no 4.5 MB limit). Server: `lib/staffFilesServer.js`; browser: `lib/staffFiles.js`. Routes: `/api/staff-docs` (Admin), `/api/staff-docs/onboard` (onboarding token, own documents only, POST only), `/api/training-certs` (Admin), `/api/training-certs/kiosk` (PIN re-checked on the server). Remove / Delete / Replace now delete the file as well (fixes the orphan-file bug).
+- **Stage 1 Part B — kiosk `/training` on `lib/trainingPlan.js`** (not committed): plan roles (not just Pharmacy Assistant), anniversary training year, 3-year cycle, pro-rata starting year, exemptions shown as "Not required this training year" (reason never loaded). No card for non-plan roles; plain message if no anniversary date. Old "under 12 months" text removed. **`lib/qspp.js` deleted** (its toISOString off-by-ones went with it); CLAUDE.md shared-libs list updated.
+- **Stage 2 — /me** (not committed):
+  - Nav: Roster · Time off · Wages · Messages · Training · To do. Profile left the bar — tap the header photo/name for a panel (photo, name, role, email, Log out).
+  - **To do**: performance review + policies (moved from Training), red badge moved here, empty state "Nothing to do right now." Review banner says "Open in To do →"; both banners open To do. Review/policies load once at start (badge + banners) and again when To do is opened — no longer on every tab switch.
+  - **Training → Records** (`components/MyTraining.js`): own records newest first with year dividers; Add training (topic, date, hours, provider, optional certificate; same duplicate warning; record kept if the certificate fails); 📎 Add / Replace / open certificate (signed link, open-window-first). Add only — "Ask your manager".
+  - **Training → Plan** (read-only): S2/S3 + this training year / this QSPP cycle hours for plan roles (same `lib/trainingPlan.js` functions as Admin and kiosk); CPD line for pharmacists/interns; goals for everyone except Locums — Section 4 goals of the latest **signed** review only, plus manual goals (open first, completed fold).
+  - New route `pages/api/me/training.js` (login token via `staffFromRequest`; own records only; staff-facing fields only — no file paths/URLs, no exemption reasons, no ratings/summary/reviewer/pdf_path). Training data loads only when the tab is opened.
+  - Admin: "Staff can see this" hint under the manual goal notes field.
+
+### Schema changes
+- `docs/sql/2026-10-07_private_staff_files.sql` (run): backups `locum_documents_backup_20261007`, `training_records_backup_20261007`; `training_records.certificate_path`; backfill (18 + 39 rows verified); both buckets private + 5 public storage policies dropped.
+- `revoke insert, update, delete, truncate on public.profiles from anon, authenticated;` (run, verified).
+
+### New tables (add to RLS pass)
+- None (two backup tables only — drop once happy).
+
+### RLS pass (#11)
+- Admin routes check the dashboard login only; per-person admin rights still to do. Kiosk certificate routes trust the 4-digit PIN (no rate limit).
+
+### Follow-ups / parked
+- During A2b testing, old document id 11 (Test Contract, resume "Birth Certificate - Mabel.pdf") was removed — row is in the backup table, file is gone.
+- Old `url` / `certificate_url` values are still stored (unused now that paths exist) — clear later if wanted. 12 orphan files (now private) still to decide on.
+- A3 iPhone test: `/me` has no file links except training certificates now — test PDF vs photo certificate from the home-screen app; .docx can't be uploaded (PDF/JPG/PNG only).
+- Not reviewed for auth: `api/push.js`, `api/hire-due-back.js`, `api/cron/wage-reminder.js`.
+- Stage 3: Training → Certificates and To do nudges.
+
+### Not committed
+- Stage 1 Part B (kiosk `/training`, `lib/qspp.js` deleted, CLAUDE.md) and all of Stage 2.
+
+## 2026-10-08 — Stage 3: /me Training → Certificates + To do nudges
+
+### Done
+- **Training → Certificates** (third sub-tab; `components/MyCertificates.js`): certificate sections only, from `docSections` — pharmacists/interns: AHPRA, Indemnity, ticked-service certificates, Other qualifications; plan roles: S2/S3, First aid, CPR. (Contract, induction checklist, resume and other documents stay Admin/onboarding only.) Same status as Admin (`sectionStatus`); current file opens via signed link (open-window-first); older files read-only under "Show older files". Upload new (PDF/photo, optional completion/expiry date, name for other qualifications) straight to private storage — newest counts. Staff can **add** a date only where it's empty (server-checked); no editing dates, delete or replace.
+- **To do → Training nudges**: Admin's own `trainingAttention` run for the logged-in person only (missing / expired / expiring / no-date certificates, S2/S3 not done, hours short when the year or cycle ends within 60 days — staff wording "1.5 hrs short — year ends 28 Feb"). Each opens Training on the right sub-tab, scrolled to the certificate section. To do badge = review + policies + training nudges.
+- New route `pages/api/me/certificates.js` (login token; own certificates only; no storage paths/URLs; `?view=todo` returns just the nudges for the badge). `saveDoc` takes server-set fields so `uploaded_via` can't come from the browser.
+- **Admin**: files uploaded from /me show "Uploaded by <name>, <date>" in Staff → Documents.
+
+### Schema changes
+- `alter table locum_documents add column uploaded_via text;` (run) — `'me'` for /me uploads; empty for Admin/onboarding/older rows.
+
+### New tables (add to RLS pass)
+- None.
+
+### Follow-ups / parked
+- S2/S3 nudge follows Admin exactly: only "Not done" (after the 3-month grace period), not "Due by" — the plan mentioned "Due by"; add to both together if wanted.
+- To do nudges refresh when the app opens and when To do is opened (not live while the app sits open).
+
+### Not committed
+- Stage 1 Part B, Stage 2 and Stage 3.

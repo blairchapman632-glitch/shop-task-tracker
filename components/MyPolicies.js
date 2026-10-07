@@ -38,7 +38,7 @@ export function MyPoliciesBanner({ data, onOpen }) {
   );
 }
 
-// Training tab section (read-only)
+// To do tab section (read-only)
 export function MyPoliciesSection({ data, focus }) {
   const ref = useRef(null);
   const [showAllRead, setShowAllRead] = useState(false);

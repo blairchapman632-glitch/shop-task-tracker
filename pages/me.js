@@ -5,6 +5,8 @@ import { getShiftConflict, getDayAvailability } from "../lib/availability";
 import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib/leaveCalendar";
 import { fetchMyReview, prepWaiting, MyReviewBanner, MyReviewSection } from "../components/MyReview";
 import { fetchMyPolicies, policiesToRead, MyPoliciesBanner, MyPoliciesSection } from "../components/MyPolicies";
+import MyTrainingTab from "../components/MyTraining";
+import { fetchMyTrainingNudges, TrainingNudges } from "../components/MyCertificates";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -2209,23 +2211,42 @@ function DeliveriesCard({ onOpen }) {
   );
 }
 
-function TrainingTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies }) {
+// To do: performance review (Section 2 prep / comments) + policies to read
+function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, nudges, onOpenNudge }) {
   const hasReview = !!(myReview?.mode && myReview.review);
   const hasPolicies = !!(myPolicies?.outstanding?.length || myPolicies?.read?.length);
   return (
     <div className="max-w-lg mx-auto space-y-4">
       <MyReviewSection data={myReview} onChanged={onReviewChanged} focus={focusReview} />
+      <TrainingNudges items={nudges} onOpen={onOpenNudge} />
       <MyPoliciesSection data={myPolicies} focus={focusPolicies} />
-      {!hasReview && !hasPolicies && (
+      {!hasReview && !hasPolicies && !nudges?.length && (
         <div className="bg-white rounded-2xl shadow-sm border p-6 text-center text-sm text-gray-400">
-          Nothing to do here right now.
+          Nothing to do right now.
         </div>
       )}
     </div>
   );
 }
 
-function DetailsTab({ staff }) {
+// Profile panel (opened from the header photo): photo, name, role, email, Log out
+function ProfilePanel({ staff, onClose }) {
+  return (
+    <div className="fixed inset-0 z-40 bg-black/40 flex items-start justify-center p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-lg mt-[env(safe-area-inset-top)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-end mb-2">
+          <button onClick={onClose} className="text-white text-sm font-medium px-3 py-1.5 rounded-lg bg-black/30">✕ Close</button>
+        </div>
+        <ProfileDetails staff={staff} />
+      </div>
+    </div>
+  );
+}
+
+function ProfileDetails({ staff }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const handleLogout = async () => {
@@ -3289,15 +3310,23 @@ export default function MePage() {
   const [myPolicies, setMyPolicies] = useState(null); // { outstanding, read } — own requests only (via API)
   const [focusPolicies, setFocusPolicies] = useState(false);
   const [showDeliveries, setShowDeliveries] = useState(false); // driver's full Deliveries view, opened from the Roster card
+  const [showProfile, setShowProfile] = useState(false); // profile panel, opened from the header photo
+  const [myNudges, setMyNudges] = useState(null); // To do → Training items (Admin's Needs attention rules, mine only)
+  const [trainingTarget, setTrainingTarget] = useState(null); // { sub, section, n } — where a nudge opens Training
 
-  // Own performance review + policies (Roster banners, Training badge, Training sections). Refreshes on tab change.
+  // Own performance review + policies + training nudges (Roster banners, To do badge, To do sections).
+  // Loaded once at start (for the badge and banners) and again whenever To do is opened — not on every tab switch.
+  const todoOpen = tab === "todo";
   useEffect(() => {
     if (!staff?.id) return;
+    if (myReview !== null && myPolicies !== null && myNudges !== null && !todoOpen) return;
     let cancelled = false;
-    fetchMyReview().then((r) => { if (!cancelled) setMyReview(r); });
-    fetchMyPolicies().then((r) => { if (!cancelled) setMyPolicies(r); });
+    fetchMyReview().then((r) => { if (!cancelled) setMyReview(r || { mode: null, review: null }); });
+    fetchMyPolicies().then((r) => { if (!cancelled) setMyPolicies(r || { outstanding: [], read: [] }); });
+    fetchMyTrainingNudges().then((r) => { if (!cancelled) setMyNudges(r || []); });
     return () => { cancelled = true; };
-  }, [staff?.id, tab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staff?.id, todoOpen]);
 
   // Unread message count + new board posts for the tab badge
   useEffect(() => {
@@ -3467,8 +3496,9 @@ export default function MePage() {
     { key: "wages", label: "Wages", icon: "💰" },
     { key: "messages", label: "Messages", icon: "💬" },
     { key: "training", label: "Training", icon: "🎓" },
-    { key: "details", label: "Profile", icon: "👤" },
+    { key: "todo", label: "To do", icon: "☑️" },
   ];
+  const todoCount = (prepWaiting(myReview) ? 1 : 0) + policiesToRead(myPolicies) + (myNudges?.length || 0);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -3477,16 +3507,19 @@ export default function MePage() {
         className="bg-white border-b px-4 py-3 flex items-center gap-3 sticky top-0 z-10"
         style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
       >
-        <img
-          src={staff.photo_url || "/placeholder.png"}
-          alt={staff.name}
-          className="w-10 h-10 rounded-full object-cover border"
-        />
-        <div className="min-w-0">
+        <button type="button" onClick={() => setShowProfile(true)} className="shrink-0 rounded-full" title="Profile">
+          <img
+            src={staff.photo_url || "/placeholder.png"}
+            alt={staff.name}
+            className="w-10 h-10 rounded-full object-cover border"
+          />
+        </button>
+        <button type="button" onClick={() => setShowProfile(true)} className="min-w-0 text-left">
           <div className="text-sm font-bold text-gray-800 truncate">{staff.name}</div>
           <div className="text-xs text-gray-400 truncate">{staff.role || ""}</div>
-        </div>
+        </button>
       </header>
+      {showProfile && <ProfilePanel staff={staff} onClose={() => setShowProfile(false)} />}
 
       {/* Install app banner */}
       {!installDismissed && (installEvent || showIosHint) && (
@@ -3528,8 +3561,8 @@ export default function MePage() {
         {tab === "roster" && !showDeliveries && (
           <>
             {staff.is_driver && <DeliveriesCard onOpen={() => setShowDeliveries(true)} />}
-            <MyReviewBanner data={myReview} onOpen={() => { setFocusPolicies(false); setFocusReview(true); setTab("training"); }} />
-            <MyPoliciesBanner data={myPolicies} onOpen={() => { setFocusReview(false); setFocusPolicies(true); setTab("training"); }} />
+            <MyReviewBanner data={myReview} onOpen={() => { setFocusPolicies(false); setFocusReview(true); setTab("todo"); }} />
+            <MyPoliciesBanner data={myPolicies} onOpen={() => { setFocusReview(false); setFocusPolicies(true); setTab("todo"); }} />
           </>
         )}
         {tab === "roster" && showDeliveries && staff.is_driver ? (
@@ -3548,12 +3581,14 @@ export default function MePage() {
         ) : tab === "messages" ? (
           <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} newBoardCount={newBoardCount} unreadCount={unreadCount} />
         ) : tab === "training" ? (
-          <TrainingTab
+          <MyTrainingTab target={trainingTarget} />
+        ) : tab === "todo" ? (
+          <TodoTab
             myReview={myReview} onReviewChanged={setMyReview} focusReview={focusReview}
             myPolicies={myPolicies} focusPolicies={focusPolicies}
+            nudges={myNudges}
+            onOpenNudge={(sub, section) => { setTrainingTarget((t) => ({ sub, section, n: (t?.n || 0) + 1 })); setTab("training"); }}
           />
-        ) : tab === "details" ? (
-          <DetailsTab staff={staff} />
         ) : (
           <div className="text-sm text-gray-400 text-center mt-10">
             {TABS.find((t) => t.key === tab)?.label} tab — coming next.
@@ -3569,7 +3604,7 @@ export default function MePage() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => { setFocusReview(false); setFocusPolicies(false); setShowDeliveries(false); setTab(t.key); }}
+            onClick={() => { setFocusReview(false); setFocusPolicies(false); setShowDeliveries(false); setTrainingTarget(null); setTab(t.key); }}
             className={`relative flex-1 min-w-0 py-2 text-[11px] whitespace-nowrap font-medium flex flex-col items-center gap-0.5 ${
               tab === t.key ? "text-blue-600" : "text-gray-400"
             }`}
@@ -3584,9 +3619,9 @@ export default function MePage() {
               {t.key === "messages" && unreadCount === 0 && newBoardCount > 0 && (
                 <span className="absolute -top-1 -right-1 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
               )}
-              {t.key === "training" && (prepWaiting(myReview) || policiesToRead(myPolicies) > 0) && (
-                <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none" title="Performance review / policies waiting">
-                  {(prepWaiting(myReview) ? 1 : 0) + policiesToRead(myPolicies)}
+              {t.key === "todo" && todoCount > 0 && (
+                <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none" title="Review / policies / training waiting">
+                  {todoCount}
                 </span>
               )}
               {t.key === "timeoff" && leaveUpdate && (
