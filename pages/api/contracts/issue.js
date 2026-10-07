@@ -1,19 +1,23 @@
 // POST { staff_id, template_id, values, draft_id? } -> fills + stores the issued PDF, marks earlier
 // unaccepted (draft/issued) contracts for this staff member as superseded. Accepted contracts never change.
 // Also saves the classification to the staff record, and the start date if the staff record has none.
-// TODO(#11 auth pass): Admin routes have no server-side auth yet (same as the rest of Admin).
+// Dashboard login required (lib/adminAuth.js); per-person admin rights are the #11 auth pass.
 import crypto from "crypto";
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { loadTemplate, loadStaff, renderContract, uploadPdf, sha256, fail } from "../../../lib/contractServer";
 import { perthNow } from "../../../lib/contractPdf";
+import { requireDashboard, assertSamePharmacy } from "../../../lib/adminAuth";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   try {
+    const auth = await requireDashboard(req);
     const { staff_id, template_id, values, draft_id } = req.body || {};
     if (!staff_id || !template_id || !values) return res.status(400).json({ error: "staff_id, template_id and values required" });
     const staff = await loadStaff(staff_id);
+    assertSamePharmacy(auth, staff.pharmacy_id);
     const template = await loadTemplate(template_id);
+    assertSamePharmacy(auth, template.pharmacy_id);
     const db = supabaseAdmin();
 
     // Reuse the draft row if we're issuing a saved draft for this staff member

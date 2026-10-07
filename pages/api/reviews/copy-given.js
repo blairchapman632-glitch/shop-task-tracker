@@ -1,15 +1,18 @@
 // POST { id, copy_given, copy_given_date } -> records that a copy was given to the staff member (signed reviews
 // only) and regenerates the stored PDF so its office-use block matches.
-// TODO(#11 auth pass): Admin routes have no server-side auth yet (same as contracts).
+// Dashboard login required (lib/adminAuth.js); per-person admin rights are the #11 auth pass.
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { loadReview, renderAndStoreReviewPdf, fail } from "../../../lib/reviewServer";
+import { requireDashboard, assertSamePharmacy } from "../../../lib/adminAuth";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   try {
+    const auth = await requireDashboard(req);
     const { id, copy_given, copy_given_date } = req.body || {};
     if (!id) return res.status(400).json({ error: "id required" });
     const review = await loadReview(id);
+    assertSamePharmacy(auth, review.pharmacy_id);
     if (review.status !== "signed") return res.status(409).json({ error: "Only signed reviews can be marked as copy given." });
 
     const fields = {

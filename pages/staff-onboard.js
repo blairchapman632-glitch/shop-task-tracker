@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import DocumentSections from "../components/DocumentSections";
-import { docSections, loadServiceConfig, uploadStaffDocument, deleteStaffDocument, updateStaffDocument } from "../lib/staffDocuments";
+import { docSections, loadServiceConfig, updateStaffDocument } from "../lib/staffDocuments";
+import { uploadStaffDoc, openStaffDoc, removeStaffDoc } from "../lib/staffFiles";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 
@@ -88,15 +89,7 @@ export default function StaffOnboardingPage() {
     setUploadingDoc(true);
     setError("");
     try {
-      const ext = file.name.split(".").pop();
-      const filename = `${staff.id}_${type}_${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("locum-documents").upload(filename, file, { upsert: true });
-      if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from("locum-documents").getPublicUrl(filename);
-      const { data: doc, error: insErr } = await supabase.from("locum_documents").insert([{
-        staff_id: staff.id, type, url: urlData.publicUrl, filename: file.name, pharmacy_id: PHARMACY_ID,
-      }]).select().single();
-      if (insErr) throw insErr;
+      const doc = await uploadStaffDoc({ file, fields: { type }, onboardToken: token });
       setDocuments((prev) => [doc, ...prev]);
     } catch (err) {
       setError("Upload failed: " + (err?.message || String(err)));
@@ -108,13 +101,14 @@ export default function StaffOnboardingPage() {
   // Pharmacists / interns: shared Documents sections (resume, AHPRA, indemnity, ticked-service certificates, other qualifications)
   const docActions = {
     upload: async (file, fields) => {
-      const doc = await uploadStaffDocument(supabase, { staffId: staff.id, pharmacyId: PHARMACY_ID, file, fields });
+      const doc = await uploadStaffDoc({ file, fields, onboardToken: token });
       setDocuments((prev) => [doc, ...prev]);
     },
     remove: async (doc) => {
-      await deleteStaffDocument(supabase, doc);
+      await removeStaffDoc(doc, token);
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
     },
+    open: (doc) => openStaffDoc(doc, token),
     update: async (doc, patch) => {
       const row = await updateStaffDocument(supabase, doc, patch);
       setDocuments((prev) => prev.map((d) => (d.id === doc.id ? row : d)));
@@ -128,19 +122,10 @@ export default function StaffOnboardingPage() {
     })()
     : [];
 
-  const storagePathFromUrl = (url) => {
-    if (!url) return null;
-    const marker = "/locum-documents/";
-    const i = url.indexOf(marker);
-    return i === -1 ? null : url.slice(i + marker.length).split("?")[0];
-  };
-
   const handleDocDelete = async (doc) => {
     setError("");
     try {
-      const path = storagePathFromUrl(doc.url);
-      if (path) await supabase.storage.from("locum-documents").remove([path]);
-      await supabase.from("locum_documents").delete().eq("id", doc.id);
+      await removeStaffDoc(doc, token); // removes the file too
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
     } catch (err) {
       setError("Couldn't remove document: " + (err?.message || String(err)));
@@ -470,7 +455,7 @@ export default function StaffOnboardingPage() {
                               <div className="text-xs text-gray-700 truncate">{doc.filename || doc.type}</div>
                               <div className="text-[11px] text-green-600">✅ Uploaded</div>
                             </div>
-                            <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
+                            <button type="button" onClick={() => openStaffDoc(doc, token)} className="text-xs text-blue-600 hover:underline shrink-0">View</button>
                             {!multi && (
                               <label className="text-xs text-blue-600 hover:underline shrink-0 cursor-pointer">
                                 Replace

@@ -2,9 +2,10 @@
 //   GET    ?pharmacy_id=                          -> { path, url }  (url = 10-minute signed URL, or null)
 //   POST   { pharmacy_id, data_url }               -> uploads PNG/JPG, saves pharmacy_settings.contract_signature_path
 //   DELETE ?pharmacy_id=                          -> removes the file and clears the path
-// TODO(#11 auth pass): Admin routes have no server-side auth yet (same as the rest of Admin).
+// Dashboard login required (lib/adminAuth.js); per-person admin rights are the #11 auth pass.
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { CONTRACT_BUCKET, signedUrl, fail } from "../../../lib/contractServer";
+import { requireDashboard, assertSamePharmacy } from "../../../lib/adminAuth";
 
 export const config = { api: { bodyParser: { sizeLimit: "4mb" } } };
 
@@ -28,6 +29,8 @@ const setPath = async (pharmacyId, path) => {
 
 export default async function handler(req, res) {
   try {
+    const auth = await requireDashboard(req);
+    assertSamePharmacy(auth, req.method === "POST" ? req.body?.pharmacy_id : req.query.pharmacy_id);
     const db = supabaseAdmin();
 
     if (req.method === "GET") {

@@ -2,6 +2,7 @@
 // The caller owns the files and passes the actions, so each place can store files its own way:
 //   actions.upload(file, fields) -> Promise   fields: { type, service_certificate_id?, completion_date?, expiry_date?, title? }
 //   actions.remove(doc)          -> Promise
+//   actions.open(doc)            -> opens the file (private storage — a short-lived signed link)
 //   actions.update(doc, patch)   -> Promise   patch: { expiry_date | completion_date | title }
 // Sections + status rules: lib/staffDocuments.js
 import { useState } from "react";
@@ -99,7 +100,7 @@ function FileRow({ doc, sec, actions, older = false, label = null }) {
             {sec?.kind === "other_qual" && doc.filename ? ` · ${doc.filename}` : ""}
           </div>
         </div>
-        {doc.url && <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>}
+        {(doc.url || doc.storage_path) && <button type="button" onClick={() => actions.open(doc)} className="text-xs text-blue-600 hover:underline shrink-0">View</button>}
         <button type="button" disabled={busy} onClick={() => { if (window.confirm("Remove this file?")) run(() => actions.remove(doc)); }} className="text-xs text-red-500 hover:text-red-700 shrink-0">
           Remove
         </button>

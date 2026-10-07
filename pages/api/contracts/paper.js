@@ -7,9 +7,11 @@
 //   POST   { action: "save", staff_id, path, filename, signed_date }      -> { doc }
 //   GET    ?id=                                                           -> { url }  (10-minute signed URL)
 //   DELETE ?id=                                                           -> { ok }   (removes file + row)
-// TODO(#11 auth pass): Admin routes have no server-side auth yet (same as the rest of Admin).
+// Dashboard login required (lib/adminAuth.js); per-person admin rights are the #11 auth pass.
 import supabaseAdmin from "../../../lib/supabaseAdmin";
-import { CONTRACT_BUCKET, loadStaff, signedUrl, fail } from "../../../lib/contractServer";
+import { CONTRACT_BUCKET, loadStaff, fail } from "../../../lib/contractServer";
+import { requireDashboard, assertSamePharmacy } from "../../../lib/adminAuth";
+import { docFile, signedLink } from "../../../lib/staffFilesServer";
 
 const TYPE = "signed_contract";
 const EXTS = ["pdf", "jpg", "jpeg", "png"];
@@ -30,6 +32,7 @@ const loadDoc = async (id) => {
 
 export default async function handler(req, res) {
   try {
+    const auth = await requireDashboard(req);
     const db = supabaseAdmin();
 
     if (req.method === "POST" && req.body?.action === "upload-url") {
@@ -37,6 +40,7 @@ export default async function handler(req, res) {
       const e = String(ext || "").toLowerCase();
       if (!EXTS.includes(e)) return res.status(400).json({ error: "Please choose a PDF, JPG or PNG file." });
       const staff = await loadStaff(staff_id);
+      assertSamePharmacy(auth, staff.pharmacy_id);
       const path = `paper/${staff.id}/${Date.now()}.${e === "jpeg" ? "jpg" : e}`;
       const { data, error } = await db.storage.from(CONTRACT_BUCKET).createSignedUploadUrl(path);
       if (error) throw error;
@@ -46,6 +50,7 @@ export default async function handler(req, res) {
     if (req.method === "POST" && req.body?.action === "save") {
       const { staff_id, path, filename, signed_date } = req.body;
       const staff = await loadStaff(staff_id);
+      assertSamePharmacy(auth, staff.pharmacy_id);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(signed_date || ""))) return res.status(400).json({ error: "Date signed is required." });
       if (!String(path || "").startsWith(`paper/${staff.id}/`)) return res.status(400).json({ error: "Invalid file path" });
       const { data: doc, error } = await db.from("locum_documents").insert([{
@@ -66,13 +71,15 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const doc = await loadDoc(req.query.id);
-      const url = doc.storage_path ? await signedUrl(doc.storage_path) : doc.url;
-      if (!url) return res.status(404).json({ error: "No file for that document" });
-      return res.status(200).json({ url });
+      assertSamePharmacy(auth, doc.pharmacy_id);
+      const file = docFile(doc); // older uploads: path worked out from the (now private) locum-documents url
+      if (!file) return res.status(404).json({ error: "No file for that document" });
+      return res.status(200).json({ url: await signedLink(file.bucket, file.path) });
     }
 
     if (req.method === "DELETE") {
       const doc = await loadDoc(req.query.id);
+      assertSamePharmacy(auth, doc.pharmacy_id);
       if (doc.storage_path) {
         await db.storage.from(CONTRACT_BUCKET).remove([doc.storage_path]);
       } else {

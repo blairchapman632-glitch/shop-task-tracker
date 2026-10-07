@@ -11,6 +11,7 @@ import { SETTINGS_COLUMNS, HOURS_PER_YEAR, hasPlan, hasGoals, hoursStatus, s2s3S
 import { addMonthsStr, todayPerth, perthDateOf, fmtDateShort, LABELS, REVIEW_TYPE_LABEL } from "../lib/performanceReview";
 import { isPharmacistRole, loadServiceConfig, docSections, sectionStatus, DOC_STATE_STYLE } from "../lib/staffDocuments";
 import { viaLabel } from "../lib/policyReads";
+import { docHasFile, openStaffDoc } from "../lib/staffFiles";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -106,7 +107,7 @@ function PharmacistSection({ member, documents, services }) {
                 <div className="text-[11px] text-gray-400">{sec.certificate.renew_months ? `Renews every ${sec.certificate.renew_months} months` : "One-off"}</div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {st?.latest?.url && <a href={st.latest.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Open</a>}
+                {docHasFile(st?.latest) && <button type="button" onClick={() => openStaffDoc(st.latest)} className="text-xs text-blue-600 hover:underline">Open</button>}
                 {st && <span className={`text-[11px] px-2 py-0.5 rounded-full border ${DOC_STATE_STYLE[st.state]}`}>{st.label}</span>}
               </div>
             </div>
@@ -134,7 +135,7 @@ function PlanSection({ member, hours, documents, adminUser, reload }) {
           <div className="text-[11px] text-gray-400">From the Documents tab</div>
         </div>
         <div className="flex items-center gap-2">
-          {s2.doc?.url && <a href={s2.doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Open</a>}
+          {docHasFile(s2.doc) && <button type="button" onClick={() => openStaffDoc(s2.doc)} className="text-xs text-blue-600 hover:underline">Open</button>}
           {badge(s2.state, s2.label)}
         </div>
       </div>

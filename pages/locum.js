@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
+import { uploadStaffDoc, openStaffDoc } from "../lib/staffFiles";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -63,15 +64,7 @@ export default function LocumOnboardingPage() {
     setUploadingDoc(true);
     setError("");
     try {
-      const ext = file.name.split(".").pop();
-      const filename = `${locum.id}_${type}_${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("locum-documents").upload(filename, file, { upsert: true });
-      if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from("locum-documents").getPublicUrl(filename);
-      const { data: doc, error: insErr } = await supabase.from("locum_documents").insert([{
-        staff_id: locum.id, type, url: urlData.publicUrl, filename: file.name, pharmacy_id: PHARMACY_ID,
-      }]).select().single();
-      if (insErr) throw insErr;
+      const doc = await uploadStaffDoc({ file, fields: { type }, onboardToken: token });
       setDocuments((prev) => [doc, ...prev]);
     } catch (err) {
       setError("Upload failed: " + (err?.message || String(err)));
@@ -231,7 +224,7 @@ export default function LocumOnboardingPage() {
                       <div className="text-xs text-gray-700 truncate">{doc.filename || doc.type}</div>
                       <div className="text-[11px] text-green-600">✅ Uploaded</div>
                     </div>
-                    <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">View</a>
+                    <button type="button" onClick={() => openStaffDoc(doc, token)} className="text-xs text-blue-600 hover:underline">View</button>
                   </div>
                 ))}
               </div>

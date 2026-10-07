@@ -4,6 +4,7 @@
 // Form wording + due-date rules live in lib/performanceReview.js. PDFs are generated server-side (pages/api/reviews/*).
 import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
+import { adminFetch } from "../lib/adminFetch";
 import {
   FORM_VERSION, RATING_OPTIONS, PREP_QUESTIONS, SECTIONS, REVIEW_TYPE_LABEL, ALL_STAFF_AREAS, DISPENSARY_AREAS, DISPENSARY_HEADING, LABELS,
   areasFor, latestSigned, suggestedReviewType, reviewDue, reviewCoverage, nextDueAfter, todayPerth, perthDateOf, addDaysStr, fmtDateShort,
@@ -35,7 +36,7 @@ const StatusBadge = ({ status }) => (
 const openReviewPdf = async (id) => {
   const win = window.open("", "_blank");
   try {
-    const res = await fetch(`/api/reviews/pdf-url?id=${encodeURIComponent(id)}`);
+    const res = await adminFetch(`/api/reviews/pdf-url?id=${encodeURIComponent(id)}`);
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.url) throw new Error(body.error || "Couldn't open the PDF");
     if (win) win.location.href = body.url; else window.open(body.url, "_blank");
@@ -349,7 +350,7 @@ function ReviewEditor({ review, member, people, nameOf, onBack, onChanged, onDel
     setSigning(true);
     try {
       if (!(await save())) throw new Error("Couldn't save your latest changes — not signed.");
-      const res = await fetch("/api/reviews/sign", {
+      const res = await adminFetch("/api/reviews/sign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: review.id, signed_name: signName.trim() }),
@@ -374,7 +375,7 @@ function ReviewEditor({ review, member, people, nameOf, onBack, onChanged, onDel
   const handleSaveCopy = async () => {
     setSavingCopy(true);
     try {
-      const res = await fetch("/api/reviews/copy-given", {
+      const res = await adminFetch("/api/reviews/copy-given", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: review.id, copy_given: copyGiven, copy_given_date: copyGiven ? copyDate || todayPerth() : null }),

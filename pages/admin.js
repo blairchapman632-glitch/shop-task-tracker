@@ -10,7 +10,8 @@ import DocumentSections from "../components/DocumentSections";
 import { AskToReadModal, PolicyProgress } from "../components/PolicyRequests";
 import { REQUEST_COLUMNS } from "../lib/policyReads";
 import { fetchAllRows } from "../lib/trainingPlan";
-import { docSections, loadServiceConfig, uploadStaffDocument, deleteStaffDocument, updateStaffDocument } from "../lib/staffDocuments";
+import { docSections, loadServiceConfig, updateStaffDocument } from "../lib/staffDocuments";
+import { uploadStaffDoc, openStaffDoc, removeStaffDoc, attachTrainingCert, openTrainingCert, deleteTrainingRecord, recordHasCert } from "../lib/staffFiles";
 import StaffTrainingPlan from "../components/TrainingPlan";
 import TrainingAdminTab from "../components/TrainingAdmin";
 import { getLeaveCover } from "../lib/leaveCover";
@@ -335,31 +336,24 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     if (trHours === "" || isNaN(Number(trHours))) { setTrainingError("Hours is required."); return; }
     setSavingTraining(true);
     try {
-      let certUrl = null, certName = null;
-      if (trFile) {
-        const ext = trFile.name.split(".").pop();
-        const filename = `${member.id}_${Date.now()}.${ext}`;
-        const { error: upErr } = await supabase.storage
-          .from("training-certificates")
-          .upload(filename, trFile, { upsert: true });
-        if (upErr) throw upErr;
-        const { data: urlData } = supabase.storage.from("training-certificates").getPublicUrl(filename);
-        certUrl = urlData.publicUrl;
-        certName = trFile.name;
-      }
-      const { data: rec, error: insErr } = await supabase.from("training_records").insert([{
+      const { data: inserted, error: insErr } = await supabase.from("training_records").insert([{
         pharmacy_id: PHARMACY_ID,
         staff_id: member.id,
         topic: trTopic.trim(),
         training_date: trDate,
         hours: Number(trHours),
         provider: trProvider.trim() || null,
-        certificate_url: certUrl,
-        certificate_filename: certName,
       }]).select().single();
       if (insErr) throw insErr;
+      let rec = inserted;
+      // Certificate goes to private storage after the record exists (the record is kept even if this fails)
+      let certErr = null;
+      if (trFile) {
+        try { rec = await attachTrainingCert(inserted, trFile); } catch (e) { certErr = e; }
+      }
       setTraining((prev) => [rec, ...prev].sort((a, b) => b.training_date.localeCompare(a.training_date)));
       setTrTopic(""); setTrDate(""); setTrHours(""); setTrProvider(""); setTrFile(null);
+      if (certErr) setTrainingError("Record saved, but the certificate didn't upload: " + (certErr?.message || String(certErr)));
     } catch (err) {
       setTrainingError("Couldn't save: " + (err?.message || String(err)));
     } finally {
@@ -367,31 +361,27 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     }
   };
 
-  const trCertPath = (url) => {
-    if (!url) return null;
-    const marker = "/training-certificates/";
-    const i = url.indexOf(marker);
-    return i === -1 ? null : url.slice(i + marker.length).split("?")[0];
-  };
-
   const handleDeleteTraining = async (rec) => {
     if (!window.confirm("Delete this training record?")) return;
-    const path = trCertPath(rec.certificate_url);
-    if (path) await supabase.storage.from("training-certificates").remove([path]);
-    await supabase.from("training_records").delete().eq("id", rec.id);
-    setTraining((prev) => prev.filter((r) => r.id !== rec.id));
+    try {
+      await deleteTrainingRecord(rec);
+      setTraining((prev) => prev.filter((r) => r.id !== rec.id));
+    } catch (err) {
+      setTrainingError("Couldn't delete: " + (err?.message || String(err)));
+    }
   };
 
   // Staff Documents (shared sections — components/DocumentSections.js)
   const docActions = {
     upload: async (file, fields) => {
-      const doc = await uploadStaffDocument(supabase, { staffId: member.id, pharmacyId: member.pharmacy_id || PHARMACY_ID, file, fields });
+      const doc = await uploadStaffDoc({ staffId: member.id, file, fields });
       setDocuments((prev) => [doc, ...prev]);
     },
     remove: async (doc) => {
-      await deleteStaffDocument(supabase, doc);
+      await removeStaffDoc(doc);
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
     },
+    open: (doc) => openStaffDoc(doc),
     update: async (doc, patch) => {
       const row = await updateStaffDocument(supabase, doc, patch);
       setDocuments((prev) => prev.map((d) => (d.id === doc.id ? row : d)));
@@ -1183,8 +1173,8 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                             {r.provider ? ` · ${r.provider}` : ""}
                           </div>
                         </div>
-                        {r.certificate_url && (
-                          <a href={r.certificate_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Certificate</a>
+                        {recordHasCert(r) && (
+                          <button type="button" onClick={() => openTrainingCert(r)} className="text-xs text-blue-600 hover:underline shrink-0">Certificate</button>
                         )}
                         <button type="button" onClick={() => handleDeleteTraining(r)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
                       </div>
@@ -1647,21 +1637,7 @@ function LocumForm({ member, onSave, onCancel }) {
     setUploadingDoc(true);
     setError("");
     try {
-      const ext = file.name.split(".").pop();
-      const filename = `${member.id}_${type}_${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from("locum-documents")
-        .upload(filename, file, { upsert: true });
-      if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from("locum-documents").getPublicUrl(filename);
-      const { data: doc, error: insErr } = await supabase.from("locum_documents").insert([{
-        staff_id: member.id,
-        type,
-        url: urlData.publicUrl,
-        filename: file.name,
-        pharmacy_id: PHARMACY_ID,
-      }]).select().single();
-      if (insErr) throw insErr;
+      const doc = await uploadStaffDoc({ staffId: member.id, file, fields: { type } });
       setDocuments((prev) => [doc, ...prev]);
     } catch (err) {
       setError("Upload failed: " + (err?.message || String(err)));
@@ -1672,8 +1648,12 @@ function LocumForm({ member, onSave, onCancel }) {
 
   const handleDocDelete = async (doc) => {
     if (!window.confirm("Delete this document?")) return;
-    await supabase.from("locum_documents").delete().eq("id", doc.id);
-    setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+    try {
+      await removeStaffDoc(doc); // removes the file too
+      setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+    } catch (err) {
+      setError("Couldn't delete: " + (err?.message || String(err)));
+    }
   };
 
   return (
@@ -1871,7 +1851,7 @@ function LocumForm({ member, onSave, onCancel }) {
                       <div className="text-xs font-medium text-gray-700 truncate">{doc.filename || doc.type}</div>
                       <div className="text-[11px] text-gray-400">{doc.type} · {new Date(doc.uploaded_at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}</div>
                     </div>
-                    <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">View</a>
+                    <button type="button" onClick={() => openStaffDoc(doc)} className="text-xs text-blue-600 hover:underline shrink-0">View</button>
                     <button onClick={() => handleDocDelete(doc)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Delete</button>
                   </div>
                 ))}

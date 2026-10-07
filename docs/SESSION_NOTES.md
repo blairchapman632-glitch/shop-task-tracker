@@ -229,3 +229,15 @@
 
 ### Not committed
 - Nothing — committed with this note.
+
+## 2026-10-07 — Parked for later (noted during Stage 1 planning)
+
+### Follow-ups / parked
+- `message-images` and `staff-photos` storage buckets are **public** (anyone with a link can open them). Not in Stage 1's scope.
+- `locum-documents` has no delete policy, so browser "Remove" (Admin Documents, onboarding) deletes the row but leaves the file; Admin's Locum form delete doesn't try. Kiosk /training "Replace" leaves the old certificate. 12 orphan files so far (11 in locum-documents, 1 in training-certificates) — left for later.
+- Every new Supabase Auth user (including each staff /me login) gets a `profiles` row via the `on_auth_user_created_profile` trigger, with role "owner" and no pharmacy.
+
+### RLS pass (#11)
+- Kiosk `/training` loads every active staff member's PIN into the browser and checks it there.
+- Kiosk policy ticks (Today's Jobs card, QSPP Library → Policies to read) have no PIN — name pick only.
+- Multi-pharmacy: once browser writes to `profiles` are revoked (Stage 1 A2a), `/login`'s "create a pharmacy" sign-up can't set the new profile's pharmacy — accepted; redo it server-side in the multi-pharmacy auth pass.

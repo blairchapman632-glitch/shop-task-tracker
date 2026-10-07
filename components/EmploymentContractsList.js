@@ -4,6 +4,7 @@
 // Electronic: employment_contracts rows with status 'accepted' (read-only here).
 import { useState } from "react";
 import supabase from "../lib/supabaseClient";
+import { adminFetch } from "../lib/adminFetch";
 import { openContractFile } from "./ContractTab";
 
 // Sort key in ms: paper = date signed (Perth midnight), else upload time; electronic = accepted_at
@@ -27,7 +28,7 @@ export default function EmploymentContractsList({ staffId, paperDocs, contracts,
   ].sort((a, b) => b.time - a.time || b.tie - a.tie);
 
   const post = async (body) => {
-    const res = await fetch("/api/contracts/paper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const res = await adminFetch("/api/contracts/paper", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const out = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(out.error || `Upload failed (${res.status})`);
     return out;
@@ -58,7 +59,7 @@ export default function EmploymentContractsList({ staffId, paperDocs, contracts,
   const viewPaper = async (doc) => {
     const win = window.open("", "_blank"); // open now, while we still have the click (popup blockers)
     try {
-      const res = await fetch(`/api/contracts/paper?id=${doc.id}`);
+      const res = await adminFetch(`/api/contracts/paper?id=${doc.id}`);
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.url) throw new Error(body.error || "Couldn't open file");
       if (win) win.location.href = body.url; else window.open(body.url, "_blank");
@@ -72,7 +73,7 @@ export default function EmploymentContractsList({ staffId, paperDocs, contracts,
     if (!window.confirm(`Delete this paper contract${doc.filename ? ` (${doc.filename})` : ""}? The file is removed permanently.`)) return;
     setError("");
     try {
-      const res = await fetch(`/api/contracts/paper?id=${doc.id}`, { method: "DELETE" });
+      const res = await adminFetch(`/api/contracts/paper?id=${doc.id}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Delete failed");
       await onChanged?.();
     } catch (err) {

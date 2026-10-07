@@ -5,6 +5,7 @@ import supabase from "../lib/supabaseClient";
 import { PLAN_ROLES, WARN_DAYS, loadTrainingData, trainingAttention, trainingYear, qsppCycle, STATE_STYLE } from "../lib/trainingPlan";
 import { todayPerth, fmtDateShort } from "../lib/performanceReview";
 import { loadServiceConfig } from "../lib/staffDocuments";
+import { docHasFile, openStaffDoc } from "../lib/staffFiles";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 const h3Cls = "text-sm font-semibold text-gray-700";
@@ -49,7 +50,7 @@ export default function TrainingAdminTab() {
                 <div key={a.key} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 px-3 py-2 border-b last:border-b-0">
                   <span className="text-sm font-medium text-gray-800 truncate">{a.staff.name}</span>
                   <span className="text-xs text-gray-600 truncate">
-                    {a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{a.item}</a> : a.item}
+                    {docHasFile(a.doc) ? <button type="button" onClick={() => openStaffDoc(a.doc)} className="hover:underline text-left">{a.item}</button> : a.item}
                   </span>
                   <span className={`text-[11px] px-2 py-0.5 rounded-full border justify-self-end ${STATE_STYLE[a.state]}`}>{a.label}</span>
                 </div>

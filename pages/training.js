@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
+import { attachTrainingCert, openTrainingCert, recordHasCert } from "../lib/staffFiles";
 import { QSPP_HOURS_REQUIRED, qsppApplies, getCurrentCycle, hoursInCycle, formatCycle, hoursInYear, currentTrainingYear } from "../lib/qspp";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -113,6 +114,7 @@ function IdentityGate({ onIdentified }) {
 // ─── Main training view (add-only for staff) ──────────────────────────────────
 
 function TrainingView({ staff }) {
+  const kiosk = { staffId: staff.id, pin: staff.pin }; // re-checked on the server for certificate upload/open
   const [training, setTraining] = useState([]);
   const [loading, setLoading] = useState(true);
   const [qsppAnchor, setQsppAnchor] = useState(null);
@@ -133,20 +135,7 @@ function TrainingView({ staff }) {
     setCertError("");
     setCertUploadingId(record.id);
     try {
-      const ext = selectedFile.name.split(".").pop();
-      const filename = `${staff.id}_${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from("training-certificates")
-        .upload(filename, selectedFile, { upsert: true });
-      if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from("training-certificates").getPublicUrl(filename);
-      const { data: updated, error: updErr } = await supabase
-        .from("training_records")
-        .update({ certificate_url: urlData.publicUrl, certificate_filename: selectedFile.name })
-        .eq("id", record.id)
-        .select()
-        .single();
-      if (updErr) throw updErr;
+      const updated = await attachTrainingCert(record, selectedFile, kiosk); // replaces (and removes) any older certificate
       setTraining((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
     } catch (err) {
       setCertError("Couldn't attach certificate: " + (err?.message || String(err)));
@@ -179,33 +168,29 @@ function TrainingView({ staff }) {
     }
     setSaving(true);
     try {
-      let certUrl = null, certName = null;
-      if (file) {
-        const ext = file.name.split(".").pop();
-        const filename = `${staff.id}_${Date.now()}.${ext}`;
-        const { error: upErr } = await supabase.storage
-          .from("training-certificates")
-          .upload(filename, file, { upsert: true });
-        if (upErr) throw upErr;
-        const { data: urlData } = supabase.storage.from("training-certificates").getPublicUrl(filename);
-        certUrl = urlData.publicUrl;
-        certName = file.name;
-      }
-      const { data: rec, error: insErr } = await supabase.from("training_records").insert([{
+      const { data: inserted, error: insErr } = await supabase.from("training_records").insert([{
         pharmacy_id: PHARMACY_ID,
         staff_id: staff.id,
         topic: topic.trim(),
         training_date: date,
         hours: Number(hours),
         provider: provider.trim() || null,
-        certificate_url: certUrl,
-        certificate_filename: certName,
       }]).select().single();
       if (insErr) throw insErr;
+      let rec = inserted;
+      // Certificate goes to private storage after the record exists (the record is kept even if this fails)
+      let certErr = null;
+      if (file) {
+        try { rec = await attachTrainingCert(inserted, file, kiosk); } catch (e) { certErr = e; }
+      }
       setTraining((prev) => [rec, ...prev].sort((a, b) => b.training_date.localeCompare(a.training_date)));
       setTopic(""); setDate(""); setHours(""); setProvider(""); setFile(null);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      if (certErr) {
+        setError("Training saved, but the certificate didn't upload — use 📎 Add on the record to try again. (" + (certErr?.message || String(certErr)) + ")");
+      } else {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      }
     } catch (err) {
       setError("Couldn't save: " + (err?.message || String(err)));
     } finally {
@@ -387,11 +372,11 @@ function TrainingView({ staff }) {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {r.certificate_url && (
-                        <a href={r.certificate_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Certificate</a>
+                      {recordHasCert(r) && (
+                        <button type="button" onClick={() => openTrainingCert(r, kiosk)} className="text-xs text-blue-600 hover:underline">Certificate</button>
                       )}
-                      <label className={`text-xs cursor-pointer hover:underline ${r.certificate_url ? "text-gray-500" : "text-blue-600"} ${certUploadingId === r.id ? "opacity-40 pointer-events-none" : ""}`}>
-                        {certUploadingId === r.id ? "Uploading…" : (r.certificate_url ? "Replace" : "📎 Add")}
+                      <label className={`text-xs cursor-pointer hover:underline ${recordHasCert(r) ? "text-gray-500" : "text-blue-600"} ${certUploadingId === r.id ? "opacity-40 pointer-events-none" : ""}`}>
+                        {certUploadingId === r.id ? "Uploading…" : (recordHasCert(r) ? "Replace" : "📎 Add")}
                         <input
                           type="file"
                           accept=".pdf,.jpg,.jpeg,.png"

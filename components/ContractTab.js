@@ -5,6 +5,7 @@
 // PDFs are generated server-side (pages/api/contracts/*); these components only edit values / call the routes.
 import { useEffect, useMemo, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
+import { adminFetch } from "../lib/adminFetch";
 import { nextDayStr } from "../lib/leaveCalendar";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -134,7 +135,7 @@ const fmtD = (iso) => iso ? new Date(iso).toLocaleDateString("en-AU", { day: "nu
 export const openContractFile = async (id, which) => {
   const win = window.open("", "_blank");
   try {
-    const res = await fetch(`/api/contracts/admin-url?id=${encodeURIComponent(id)}&which=${which}`);
+    const res = await adminFetch(`/api/contracts/admin-url?id=${encodeURIComponent(id)}&which=${which}`);
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.url) throw new Error(body.error || "Couldn't open file");
     if (win) win.location.href = body.url; else window.open(body.url, "_blank");
@@ -327,7 +328,7 @@ export default function ContractForm({ member, contracts, onContractsChanged, on
     setBusy("preview"); setError(""); setNotice("");
     const win = window.open("", "_blank"); // open now, while we still have the click (popup blockers)
     try {
-      const res = await fetch("/api/contracts/preview", {
+      const res = await adminFetch("/api/contracts/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ staff_id: member.id, template_id: template.id, values }),
@@ -358,7 +359,7 @@ export default function ContractForm({ member, contracts, onContractsChanged, on
     )) return;
     setBusy("issue"); setError(""); setNotice("");
     try {
-      const res = await fetch("/api/contracts/issue", {
+      const res = await adminFetch("/api/contracts/issue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ staff_id: member.id, template_id: template.id, values, draft_id: draftId }),
@@ -644,7 +645,7 @@ export function ContractSignatureSettings({ pharmacyId }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch(`/api/contracts/signature?pharmacy_id=${encodeURIComponent(pharmacyId)}`)
+    adminFetch(`/api/contracts/signature?pharmacy_id=${encodeURIComponent(pharmacyId)}`)
       .then((r) => r.json())
       .then((b) => { setUrl(b.url || null); setHasSig(!!b.path); })
       .catch(() => {})
@@ -663,7 +664,7 @@ export function ContractSignatureSettings({ pharmacyId }) {
         fr.onerror = () => reject(fr.error);
         fr.readAsDataURL(file);
       });
-      const res = await fetch("/api/contracts/signature", {
+      const res = await adminFetch("/api/contracts/signature", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pharmacy_id: pharmacyId, data_url: dataUrl }),
@@ -682,7 +683,7 @@ export function ContractSignatureSettings({ pharmacyId }) {
     if (!window.confirm("Remove the contract signature? The signature space on the offer letter will be left blank.")) return;
     setBusy(true); setError("");
     try {
-      const res = await fetch(`/api/contracts/signature?pharmacy_id=${encodeURIComponent(pharmacyId)}`, { method: "DELETE" });
+      const res = await adminFetch(`/api/contracts/signature?pharmacy_id=${encodeURIComponent(pharmacyId)}`, { method: "DELETE" });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Remove failed");
       setUrl(null); setHasSig(false);
     } catch (err) {

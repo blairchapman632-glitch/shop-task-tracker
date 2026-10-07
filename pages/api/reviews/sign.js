@@ -1,19 +1,22 @@
 // POST { id, signed_name } -> signs an in-progress review: generates + stores the PDF, then sets status 'signed',
 // signed_at, signed_by_staff_id (the reviewer), comment_window_ends (signed date + pharmacy setting) and pdf_path.
 // The client saves the manager fields first; this route signs whatever is saved.
-// TODO(#11 auth pass): Admin routes have no server-side auth yet (same as contracts).
+// Dashboard login required (lib/adminAuth.js); per-person admin rights are the #11 auth pass.
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { loadReview, renderAndStoreReviewPdf, fail } from "../../../lib/reviewServer";
 import { FORM_VERSION, perthDateOf, addDaysStr } from "../../../lib/performanceReview";
+import { requireDashboard, assertSamePharmacy } from "../../../lib/adminAuth";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   try {
+    const auth = await requireDashboard(req);
     const { id, signed_name } = req.body || {};
     const name = String(signed_name || "").trim();
     if (!id || !name) return res.status(400).json({ error: "id and signed_name required" });
 
     const review = await loadReview(id);
+    assertSamePharmacy(auth, review.pharmacy_id);
     if (review.status !== "in_progress") return res.status(409).json({ error: "This review has already been signed." });
     if (!review.reviewer_staff_id) return res.status(400).json({ error: "Choose a reviewer before signing." });
 
