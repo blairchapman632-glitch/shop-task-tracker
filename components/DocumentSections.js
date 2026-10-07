@@ -124,7 +124,7 @@ function FileRow({ doc, sec, actions, older = false, label = null }) {
               onChange={(e) => run(() => actions.update(doc, { expiry_date: e.target.value || null }))}
               className="border rounded px-1 py-0.5 text-[11px] bg-white" />
           </label>
-          <span className="text-gray-400">optional</span>
+          {sec.kind === "other_qual" && <span className="text-gray-400">optional</span>}
         </div>
       )}
     </div>
@@ -138,22 +138,24 @@ function Uploader({ sec, actions, hasFiles, mode }) {
   const [expiry, setExpiry] = useState("");
   const [error, setError] = useState("");
 
+  // Dates are optional at upload (a file with no date shows "Add … date" and can be dated on its row)
   const needsDate = sec.kind === "service";
   const needsTitle = sec.kind === "other_qual";
-  const ready = (!needsDate || completion) && (!needsTitle || title.trim());
+  const hasExpiry = sec.kind === "typed" || needsTitle;
+  const ready = !needsTitle || title.trim();
 
   const handleFile = async (file) => {
     if (!file) return;
-    if (!ready) { setError(needsDate ? "Enter the completion date first." : "Enter the qualification name first."); return; }
+    if (!ready) { setError("Enter the qualification name first."); return; }
     setBusy(true);
     setError("");
     try {
       await actions.upload(file, {
         type: sec.type,
         service_certificate_id: sec.kind === "service" ? sec.certificate.id : null,
-        completion_date: needsDate ? completion : null,
+        completion_date: needsDate ? (completion || null) : null,
         title: needsTitle ? title.trim() : null,
-        expiry_date: needsTitle ? (expiry || null) : null,
+        expiry_date: hasExpiry ? (expiry || null) : null,
       });
       setCompletion(""); setTitle(""); setExpiry("");
     } catch (err) {
@@ -170,7 +172,7 @@ function Uploader({ sec, actions, hasFiles, mode }) {
 
   return (
     <div className="space-y-1.5">
-      {(needsDate || needsTitle) && (
+      {(needsDate || needsTitle || hasExpiry) && (
         <div className="flex flex-wrap items-center gap-2">
           {needsTitle && (
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Qualification name"
@@ -178,11 +180,11 @@ function Uploader({ sec, actions, hasFiles, mode }) {
           )}
           {needsDate && (
             <label className="flex items-center gap-1 text-[11px] text-gray-600">
-              {mode === "staff" ? "Date you completed it" : "Completion date"}
+              {mode === "staff" ? "Date you completed it" : "Completion date"} (optional)
               <input type="date" value={completion} onChange={(e) => setCompletion(e.target.value)} className="border rounded px-1.5 py-1 text-xs" />
             </label>
           )}
-          {needsTitle && (
+          {hasExpiry && (
             <label className="flex items-center gap-1 text-[11px] text-gray-600">
               Expires (optional)
               <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className="border rounded px-1.5 py-1 text-xs" />
