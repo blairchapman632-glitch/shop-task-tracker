@@ -9,6 +9,7 @@ import StaffNeedsAttention from "../components/StaffNeedsAttention";
 import DocumentSections from "../components/DocumentSections";
 import { AskToReadModal, PolicyProgress } from "../components/PolicyRequests";
 import { REQUEST_COLUMNS } from "../lib/policyReads";
+import { groupFolders, fileTag, titleFromFileName, OTHER_GROUP } from "../lib/docFolders";
 import { fetchAllRows } from "../lib/trainingPlan";
 import { docSections, loadServiceConfig, updateStaffDocument } from "../lib/staffDocuments";
 import { uploadStaffDoc, openStaffDoc, removeStaffDoc, attachTrainingCert, openTrainingCert, deleteTrainingRecord, recordHasCert } from "../lib/staffFiles";
@@ -2763,9 +2764,11 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderGroup, setNewFolderGroup] = useState("");
   const [addingFolder, setAddingFolder] = useState(false);
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
+  const [renameGroup, setRenameGroup] = useState("");
   const [search, setSearch] = useState("");
 
   const load = async () => {
@@ -2817,6 +2820,8 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
     ? docs.filter((d) => (d.title || "").toLowerCase().includes(term))
     : docs.filter((d) => d.folder_id === activeFolder);
   const activeFolderObj = folders.find((f) => f.id === activeFolder);
+  const groups = groupFolders(folders);
+  const groupNames = [...new Set(folders.map((f) => (f.group_name || "").trim()).filter(Boolean))];
 
   const storagePathFromUrl = (url) => {
     if (!url) return null;
@@ -2831,20 +2836,23 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
     const maxSort = folders.reduce((m, f) => Math.max(m, f.sort_order || 0), 0);
     const { data, error: err } = await supabase
       .from("document_folders")
-      .insert([{ pharmacy_id: PHARMACY_ID, name: newFolderName.trim(), sort_order: maxSort + 1 }])
+      .insert([{ pharmacy_id: PHARMACY_ID, name: newFolderName.trim(), group_name: newFolderGroup.trim() || null, sort_order: maxSort + 1 }])
       .select()
       .single();
     setAddingFolder(false);
     if (err) { setError(err.message); return; }
     setFolders((prev) => [...prev, data]);
     setNewFolderName("");
+    setNewFolderGroup("");
     setActiveFolder(data.id);
   };
 
   const handleRenameFolder = async (id) => {
     if (!renameValue.trim()) { setRenamingId(null); return; }
-    await supabase.from("document_folders").update({ name: renameValue.trim() }).eq("id", id);
-    setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: renameValue.trim() } : f)));
+    const changes = { name: renameValue.trim(), group_name: renameGroup.trim() || null };
+    const { error: err } = await supabase.from("document_folders").update(changes).eq("id", id);
+    if (err) { setError(err.message); return; }
+    setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, ...changes } : f)));
     setRenamingId(null);
   };
 
@@ -2878,7 +2886,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
           .insert([{
             pharmacy_id: PHARMACY_ID,
             folder_id: activeFolderObj.id,
-            title: file.name,
+            title: titleFromFileName(file.name),
             file_url: urlData.publicUrl,
             file_name: path,
           }])
@@ -2909,12 +2917,11 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
       await supabase.from("pharmacy_documents").update({
         file_url: urlData.publicUrl,
         file_name: path,
-        title: file.name,
         uploaded_at: new Date().toISOString(),
       }).eq("id", doc.id);
       const readThisVersion = requests.some((r) => r.status === "read" && r.read_file_url === doc.file_url);
       if (oldPath && !readThisVersion) await supabase.storage.from(DOC_BUCKET).remove([oldPath]);
-      setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, file_url: urlData.publicUrl, file_name: path, title: file.name } : d)));
+      setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, file_url: urlData.publicUrl, file_name: path } : d)));
     } catch (err) {
       setError("Replace failed: " + (err?.message || String(err)));
     } finally {
@@ -2983,22 +2990,38 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
       {/* Folder list */}
       <div className="w-[240px] min-w-[240px] bg-white border-r flex flex-col overflow-hidden">
         <div className="px-3 py-2 border-b shrink-0 text-xs font-semibold text-gray-500 uppercase tracking-wide">Folders</div>
+        <datalist id="qspp-group-names">
+          {groupNames.map((g) => <option key={g} value={g} />)}
+        </datalist>
         <div className="flex-1 overflow-y-auto">
-          {folders.map((f) => {
+          {groups.map((g) => (
+          <div key={g.name}>
+          <div className="px-3 pt-3 pb-1.5 border-b bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide leading-snug">{g.name}</div>
+          {g.folders.map((f) => {
             const count = docs.filter((d) => d.folder_id === f.id).length;
             return (
               <div key={f.id} className={`border-b ${activeFolder === f.id ? "bg-blue-50" : ""}`}>
                 {renamingId === f.id ? (
-                  <div className="flex items-center gap-1 px-2 py-2">
+                  <div className="px-2 py-2 space-y-1">
+                    <div className="flex items-center gap-1">
+                      <input
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleRenameFolder(f.id)}
+                        className="flex-1 min-w-0 border rounded px-2 py-1 text-sm"
+                        autoFocus
+                      />
+                      <button onClick={() => handleRenameFolder(f.id)} className="text-xs text-blue-600">✓</button>
+                      <button onClick={() => setRenamingId(null)} className="text-xs text-gray-400">✕</button>
+                    </div>
                     <input
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
+                      value={renameGroup}
+                      onChange={(e) => setRenameGroup(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleRenameFolder(f.id)}
-                      className="flex-1 min-w-0 border rounded px-2 py-1 text-sm"
-                      autoFocus
+                      list="qspp-group-names"
+                      placeholder={`Group (blank = ${OTHER_GROUP})`}
+                      className="w-full border rounded px-2 py-1 text-xs"
                     />
-                    <button onClick={() => handleRenameFolder(f.id)} className="text-xs text-blue-600">✓</button>
-                    <button onClick={() => setRenamingId(null)} className="text-xs text-gray-400">✕</button>
                   </div>
                 ) : (
                   <button
@@ -3012,13 +3035,15 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                 )}
                 {activeFolder === f.id && renamingId !== f.id && (
                   <div className="flex gap-3 px-3 pb-2 -mt-1">
-                    <button onClick={() => { setRenamingId(f.id); setRenameValue(f.name); }} className="text-[11px] text-gray-500 hover:text-gray-700">Rename</button>
+                    <button onClick={() => { setRenamingId(f.id); setRenameValue(f.name); setRenameGroup(f.group_name || ""); }} className="text-[11px] text-gray-500 hover:text-gray-700">Rename / group</button>
                     <button onClick={() => handleDeleteFolder(f.id)} className="text-[11px] text-red-500 hover:text-red-700">Delete</button>
                   </div>
                 )}
               </div>
             );
           })}
+          </div>
+          ))}
         </div>
         <div className="border-t p-2 shrink-0 space-y-1.5">
           <input
@@ -3026,6 +3051,14 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
             onChange={(e) => setNewFolderName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAddFolder()}
             placeholder="New folder name"
+            className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <input
+            value={newFolderGroup}
+            onChange={(e) => setNewFolderGroup(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAddFolder()}
+            list="qspp-group-names"
+            placeholder="Group (pick or type new)"
             className="w-full border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
           />
           <button onClick={handleAddFolder} disabled={addingFolder || !newFolderName.trim()} className="w-full text-xs bg-blue-600 text-white rounded-lg py-1.5 disabled:opacity-40">
@@ -3065,7 +3098,9 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
               {folderDocs.map((doc) => (
                 <div key={doc.id} id={`policy-${doc.id}`} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm">📄</span>
+                    {(() => { const tag = fileTag(doc.file_name); return (
+                      <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${tag.cls}`}>{tag.label}</span>
+                    ); })()}
                     <div className="min-w-0 flex-1">
                       <input
                         defaultValue={doc.title}
@@ -3076,7 +3111,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                     </div>
                     <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Open</a>
                   </div>
-                  <div className="flex items-center gap-3 mt-2 pl-6 flex-wrap">
+                  <div className="flex items-center gap-3 mt-2 pl-10 flex-wrap">
                     <label className="text-[11px] text-gray-500 flex items-center gap-1">
                       Review:
                       <input
@@ -3091,7 +3126,11 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                       onChange={(e) => handleMove(doc, e.target.value)}
                       className="text-[11px] border rounded px-1.5 py-0.5 text-gray-600"
                     >
-                      {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      {groups.map((g) => (
+                        <optgroup key={g.name} label={g.name}>
+                          {g.folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                        </optgroup>
+                      ))}
                     </select>
                     <label className="text-[11px] text-blue-600 hover:underline cursor-pointer">
                       Replace

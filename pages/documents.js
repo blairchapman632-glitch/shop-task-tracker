@@ -3,20 +3,9 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
+import { groupFolders, fileTag } from "../lib/docFolders";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
-
-const fileExt = (name = "") => {
-  const m = name.match(/\.([a-z0-9]+)$/i);
-  return m ? m[1].toLowerCase() : "";
-};
-
-const extTag = (ext) => {
-  if (ext === "pdf") return { label: "PDF", cls: "bg-red-50 text-red-600 border-red-100" };
-  if (ext === "doc" || ext === "docx") return { label: "DOC", cls: "bg-blue-50 text-blue-600 border-blue-100" };
-  if (ext === "xls" || ext === "xlsx") return { label: "XLS", cls: "bg-green-50 text-green-600 border-green-100" };
-  return { label: (ext || "FILE").toUpperCase().slice(0, 4), cls: "bg-gray-100 text-gray-500 border-gray-200" };
-};
 
 function EditIncidentModal({ incident, staffList, onClose, onSaved }) {
   const [actionNeeded, setActionNeeded] = useState(incident.action_needed || "");
@@ -491,6 +480,7 @@ export default function DocumentsPage() {
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeFolder, setActiveFolder] = useState(null);
+  const [openGroup, setOpenGroup] = useState(null); // expanded group in the left panel
   const [search, setSearch] = useState("");
   const [incidents, setIncidents] = useState([]);
   const [incidentsLoading, setIncidentsLoading] = useState(true);
@@ -514,7 +504,11 @@ export default function DocumentsPage() {
         .order("title");
       setFolders(f || []);
       setDocs(d || []);
-      if (f && f.length) setActiveFolder(f[0].id);
+      const first = groupFolders(f || [])[0];
+      if (first) {
+        setOpenGroup(first.name);
+        setActiveFolder(first.folders[0].id);
+      }
       setLoading(false);
     };
     load();
@@ -561,11 +555,27 @@ export default function DocumentsPage() {
     ? docs.filter((d) => (d.title || "").toLowerCase().includes(term))
     : docs.filter((d) => d.folder_id === activeFolder);
   const activeFolderObj = folders.find((f) => f.id === activeFolder);
+  const groups = groupFolders(folders);
+  const docCount = (folderId) => docs.filter((d) => d.folder_id === folderId).length;
+  const activeGroupObj = groups.find((g) => g.folders.some((f) => f.id === activeFolder)) || groups[0];
+  // Library gets a wider page so the section panel fits; Incidents keeps its width
+  const pageWidth = activeTab === "library" ? "max-w-5xl" : "max-w-3xl";
+
+  const pickFolder = (id) => {
+    const f = folders.find((x) => String(x.id) === String(id)); // dropdown values are strings
+    if (f) setActiveFolder(f.id);
+    setSearch("");
+  };
+  const pickGroup = (name) => {
+    const g = groups.find((x) => x.name === name);
+    setOpenGroup(name);
+    if (g?.folders.length) pickFolder(g.folders[0].id);
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Header */}
-      <div className="max-w-3xl mx-auto px-4 pt-5 pb-2 flex items-center justify-between gap-3">
+      <div className={`${pageWidth} mx-auto px-4 pt-5 pb-2 flex items-center justify-between gap-3`}>
         <div>
           <h1 className="text-2xl font-bold text-slate-800 leading-tight">QSPP Library</h1>
           <p className="text-xs text-slate-400 leading-tight mt-0.5">Policies &amp; procedures</p>
@@ -579,7 +589,7 @@ export default function DocumentsPage() {
       </div>
 
       {/* Page tabs */}
-      <div className="max-w-3xl mx-auto px-4 pb-3">
+      <div className={`${pageWidth} mx-auto px-4 pb-3`}>
         <div className="flex gap-2">
           {[
             { key: "library", label: "📁 Library" },
@@ -666,9 +676,9 @@ export default function DocumentsPage() {
           )}
         </div>
       ) : loading ? (
-        <div className="max-w-3xl mx-auto px-4 py-10 text-sm text-slate-400">Loading…</div>
+        <div className={`${pageWidth} mx-auto px-4 py-10 text-sm text-slate-400`}>Loading…</div>
       ) : (
-        <div className="max-w-3xl mx-auto px-4 py-5">
+        <div className={`${pageWidth} mx-auto px-4 py-5`}>
           <button
             onClick={() => setShowPolicies(true)}
             className="w-full mb-4 px-4 py-2.5 rounded-lg text-sm font-semibold text-white bg-slate-800 hover:bg-slate-700 transition-colors"
@@ -688,64 +698,106 @@ export default function DocumentsPage() {
             />
           </div>
 
-          {/* Folder chips */}
-          <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-1 px-1">
-            {folders.map((f) => {
-              const count = docs.filter((d) => d.folder_id === f.id).length;
-              const active = activeFolder === f.id && !searching;
-              return (
-                <button
-                  key={f.id}
-                  onClick={() => { setActiveFolder(f.id); setSearch(""); }}
-                  className={`shrink-0 px-3.5 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                    active
-                      ? "bg-slate-800 text-white border-slate-800"
-                      : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  {f.name}
-                  <span className={`ml-1.5 text-xs ${active ? "text-slate-300" : "text-slate-400"}`}>{count}</span>
-                </button>
-              );
-            })}
-          </div>
+          {/* Phone: group then section dropdowns */}
+          {groups.length > 0 && (
+            <div className="md:hidden grid grid-cols-1 gap-2 mb-4">
+              <select
+                value={activeGroupObj?.name || ""}
+                onChange={(e) => pickGroup(e.target.value)}
+                className="w-full min-w-0 border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white text-slate-700"
+              >
+                {groups.map((g) => <option key={g.name} value={g.name}>{g.name}</option>)}
+              </select>
+              <select
+                value={activeFolder || ""}
+                onChange={(e) => pickFolder(e.target.value)}
+                className="w-full min-w-0 border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white text-slate-700"
+              >
+                {(activeGroupObj?.folders || []).map((f) => (
+                  <option key={f.id} value={f.id}>{f.name} ({docCount(f.id)})</option>
+                ))}
+              </select>
+            </div>
+          )}
 
-          {/* Section label */}
-          <div className="mb-2.5 px-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">
-            {searching ? `Search results · ${folderDocs.length}` : activeFolderObj?.name || ""}
-          </div>
-
-          {/* Document list */}
-          {folderDocs.length === 0 ? (
-            <p className="text-sm text-slate-400 px-1 py-12 text-center">
-              {searching ? "No documents match your search." : "No documents in this folder yet."}
-            </p>
-          ) : (
-            <div className="space-y-1.5">
-              {folderDocs.map((doc) => {
-                const tag = extTag(fileExt(doc.title));
+          <div className="md:flex md:gap-5 md:items-start">
+            {/* Tablet/desktop: groups with expandable sections */}
+            <div className="hidden md:block w-72 shrink-0 bg-white rounded-xl border border-slate-100 overflow-hidden">
+              {groups.map((g) => {
+                const open = openGroup === g.name;
+                const total = g.folders.reduce((n, f) => n + docCount(f.id), 0);
                 return (
-                  <a
-                    key={doc.id}
-                    href={doc.file_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-3 bg-white rounded-xl border border-slate-100 px-3.5 py-3 hover:border-slate-300 hover:shadow-sm transition-all"
-                  >
-                    <span className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded-md border ${tag.cls}`}>
-                      {tag.label}
-                    </span>
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-sm font-medium text-slate-800 truncate">{doc.title}</span>
-                      {searching && (
-                        <span className="block text-[11px] text-slate-400 truncate">{folderName(doc.folder_id)}</span>
-                      )}
-                    </span>
-                  </a>
+                  <div key={g.name} className="border-b border-slate-100 last:border-b-0">
+                    <button
+                      onClick={() => setOpenGroup(open ? null : g.name)}
+                      className="w-full flex items-start gap-2 px-3.5 py-3 text-left hover:bg-slate-50 transition-colors"
+                    >
+                      <span className="text-[10px] text-slate-400 mt-1 w-2.5 shrink-0">{open ? "▼" : "▶"}</span>
+                      <span className="flex-1 min-w-0 text-sm font-semibold text-slate-700 leading-snug">{g.name}</span>
+                      <span className="text-xs text-slate-400 mt-0.5">{total}</span>
+                    </button>
+                    {open && (
+                      <div className="pb-2">
+                        {g.folders.map((f) => {
+                          const active = activeFolder === f.id && !searching;
+                          return (
+                            <button
+                              key={f.id}
+                              onClick={() => pickFolder(f.id)}
+                              className={`w-full flex items-start gap-2 pl-8 pr-3.5 py-2 text-left transition-colors ${
+                                active ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              <span className="flex-1 min-w-0 text-sm leading-snug">{f.name}</span>
+                              <span className={`text-xs mt-0.5 ${active ? "text-slate-300" : "text-slate-400"}`}>{docCount(f.id)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
-          )}
+
+            {/* Documents */}
+            <div className="flex-1 min-w-0">
+              <div className="mb-2.5 px-1 text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                {searching ? `Search results · ${folderDocs.length}` : activeFolderObj?.name || ""}
+              </div>
+
+              {folderDocs.length === 0 ? (
+                <p className="text-sm text-slate-400 px-1 py-12 text-center">
+                  {searching ? "No documents match your search." : "No documents in this folder yet."}
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {folderDocs.map((doc) => {
+                    const tag = fileTag(doc.file_name);
+                    return (
+                      <a
+                        key={doc.id}
+                        href={doc.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 bg-white rounded-xl border border-slate-100 px-3.5 py-3 hover:border-slate-300 hover:shadow-sm transition-all"
+                      >
+                        <span className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded-md border ${tag.cls}`}>
+                          {tag.label}
+                        </span>
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm font-medium text-slate-800 truncate">{doc.title}</span>
+                          {searching && (
+                            <span className="block text-[11px] text-slate-400 truncate">{folderName(doc.folder_id)}</span>
+                          )}
+                        </span>
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
