@@ -786,7 +786,10 @@ export default function DocumentsPage() {
                           {tag.label}
                         </span>
                         <span className="flex-1 min-w-0">
-                          <span className="block text-sm font-medium text-slate-800 truncate">{doc.title}</span>
+                          <span className="flex items-baseline gap-1.5 min-w-0">
+                            <span className="text-sm font-medium text-slate-800 truncate">{doc.title}</span>
+                            {doc.version && <span className="shrink-0 text-[11px] text-slate-400">v{doc.version}</span>}
+                          </span>
                           {searching && (
                             <span className="block text-[11px] text-slate-400 truncate">{folderName(doc.folder_id)}</span>
                           )}

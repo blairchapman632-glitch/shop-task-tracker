@@ -9,7 +9,7 @@ import StaffNeedsAttention from "../components/StaffNeedsAttention";
 import DocumentSections from "../components/DocumentSections";
 import { AskToReadModal, PolicyProgress } from "../components/PolicyRequests";
 import { REQUEST_COLUMNS } from "../lib/policyReads";
-import { groupFolders, fileTag, titleFromFileName, OTHER_GROUP } from "../lib/docFolders";
+import { groupFolders, fileTag, titleFromFileName, nextMinorVersion, perthDate, storageSafeName, OTHER_GROUP } from "../lib/docFolders";
 import { fetchAllRows } from "../lib/trainingPlan";
 import { docSections, loadServiceConfig, updateStaffDocument } from "../lib/staffDocuments";
 import { uploadStaffDoc, openStaffDoc, removeStaffDoc, attachTrainingCert, openTrainingCert, deleteTrainingRecord, recordHasCert } from "../lib/staffFiles";
@@ -2752,6 +2752,89 @@ const DOC_BUCKET = "pharmacy-documents";
 const slugify = (s) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "folder";
 
+function NewVersionModal({ doc, staff, onClose, onSave }) {
+  const [file, setFile] = useState(null);
+  const [version, setVersion] = useState(nextMinorVersion(doc.version));
+  const [staffId, setStaffId] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const canSave = file && version.trim() && staffId && !saving;
+
+  const save = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onSave({ file, version: version.trim(), staffId, note });
+    } catch (err) {
+      setError(err?.message || String(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl max-w-md w-full max-h-[85vh] overflow-y-auto p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-gray-800">Upload new version</h2>
+            <p className="text-xs text-gray-500 mt-0.5 break-words">{doc.title} · currently v{doc.version || "1.0"}</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+        </div>
+
+        <label className="block">
+          <span className="block text-xs font-medium text-gray-600 mb-1">File</span>
+          <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="block w-full text-sm" />
+        </label>
+
+        <label className="block">
+          <span className="block text-xs font-medium text-gray-600 mb-1">Version</span>
+          <input
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+            placeholder="e.g. 1.1"
+            className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+        </label>
+
+        <label className="block">
+          <span className="block text-xs font-medium text-gray-600 mb-1">Updated by</span>
+          <select
+            value={staffId}
+            onChange={(e) => setStaffId(e.target.value)}
+            className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          >
+            <option value="">Choose…</option>
+            {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="block text-xs font-medium text-gray-600 mb-1">What changed <span className="text-gray-400 font-normal">(optional)</span></span>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={3}
+            className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+        </label>
+
+        {error && <p className="text-sm text-red-500">{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="text-sm px-3 py-1.5 rounded-lg border text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button type="button" onClick={save} disabled={!canSave} className="text-sm px-3 py-1.5 rounded-lg bg-blue-600 text-white disabled:opacity-40">
+            {saving ? "Uploading…" : "Save new version"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
   const [subTab, setSubTab] = useState("documents");
   const [requests, setRequests] = useState([]);    // policy_read_requests (all statuses)
@@ -2770,6 +2853,12 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
   const [renameValue, setRenameValue] = useState("");
   const [renameGroup, setRenameGroup] = useState("");
   const [search, setSearch] = useState("");
+  const [uploadBy, setUploadBy] = useState("");          // staff id for new document uploads
+  const [versionDoc, setVersionDoc] = useState(null);    // document with "Upload new version" open
+  const [openHistory, setOpenHistory] = useState({});    // document id -> history expanded
+  const [history, setHistory] = useState({});            // document id -> document_versions rows
+  const activeStaff = staffList.filter((s) => s.active);
+  const staffName = (id) => staffList.find((s) => Number(s.id) === Number(id))?.name || "";
 
   const load = async () => {
     setLoading(true);
@@ -2870,6 +2959,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
 
   const handleUpload = async (fileList) => {
     if (!fileList || !activeFolderObj) return;
+    if (!uploadBy) { setError("Choose who is uploading first."); return; }
     const files = Array.from(fileList);
     setUploading(true);
     setError("");
@@ -2881,6 +2971,8 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
         const { error: upErr } = await supabase.storage.from(DOC_BUCKET).upload(path, file, { upsert: true });
         if (upErr) throw upErr;
         const { data: urlData } = supabase.storage.from(DOC_BUCKET).getPublicUrl(path);
+        const now = new Date().toISOString();
+        const staffId = Number(uploadBy);
         const { data: row, error: insErr } = await supabase
           .from("pharmacy_documents")
           .insert([{
@@ -2889,11 +2981,26 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
             title: titleFromFileName(file.name),
             file_url: urlData.publicUrl,
             file_name: path,
+            version: "1.0",
+            uploaded_by: staffId,
+            updated_by_staff_id: staffId,
+            updated_at: now,
           }])
           .select()
           .single();
         if (insErr) throw insErr;
         setDocs((prev) => [...prev, row]);
+        const { error: verErr } = await supabase.from("document_versions").insert([{
+          pharmacy_id: PHARMACY_ID,
+          document_id: row.id,
+          version: "1.0",
+          file_name: path,
+          file_url: urlData.publicUrl,
+          updated_by_staff_id: staffId,
+          change_note: "First version",
+          created_at: now,
+        }]);
+        if (verErr) throw verErr;
       }
     } catch (err) {
       setError("Upload failed: " + (err?.message || String(err)));
@@ -2902,31 +3009,54 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
     }
   };
 
-  const handleReplace = async (doc, file) => {
-    if (!file) return;
-    setUploading(true);
-    setError("");
-    try {
-      const oldPath = storagePathFromUrl(doc.file_url);
-      const slug = (doc.file_name && doc.file_name.includes("/")) ? doc.file_name.split("/")[0] : slugify(activeFolderObj?.name || "folder");
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "_");
-      const path = `${slug}/${Date.now()}_${safeName}`;
-      const { error: upErr } = await supabase.storage.from(DOC_BUCKET).upload(path, file, { upsert: true });
-      if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from(DOC_BUCKET).getPublicUrl(path);
-      await supabase.from("pharmacy_documents").update({
-        file_url: urlData.publicUrl,
-        file_name: path,
-        uploaded_at: new Date().toISOString(),
-      }).eq("id", doc.id);
-      const readThisVersion = requests.some((r) => r.status === "read" && r.read_file_url === doc.file_url);
-      if (oldPath && !readThisVersion) await supabase.storage.from(DOC_BUCKET).remove([oldPath]);
-      setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, file_url: urlData.publicUrl, file_name: path } : d)));
-    } catch (err) {
-      setError("Replace failed: " + (err?.message || String(err)));
-    } finally {
-      setUploading(false);
-    }
+  // Upload a new version: new storage path every time, old files are never deleted
+  const handleNewVersion = async (doc, { file, version, staffId, note }) => {
+    const dir = (doc.file_name || "").includes("/")
+      ? doc.file_name.slice(0, doc.file_name.lastIndexOf("/"))
+      : slugify(folderName(doc.folder_id) || "folder");
+    const path = `${dir}/${Date.now()} - ${storageSafeName(file.name)}`;
+    const { error: upErr } = await supabase.storage.from(DOC_BUCKET).upload(path, file, { upsert: false });
+    if (upErr) throw upErr;
+    const { data: urlData } = supabase.storage.from(DOC_BUCKET).getPublicUrl(path);
+    const now = new Date().toISOString();
+    const changes = {
+      file_url: urlData.publicUrl,
+      file_name: path,
+      version,
+      updated_by_staff_id: Number(staffId),
+      updated_at: now,
+    };
+    const { error: updErr } = await supabase.from("pharmacy_documents").update(changes).eq("id", doc.id);
+    if (updErr) throw updErr;
+    setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, ...changes } : d)));
+    const { error: verErr } = await supabase.from("document_versions").insert([{
+      pharmacy_id: PHARMACY_ID,
+      document_id: doc.id,
+      version,
+      file_name: path,
+      file_url: urlData.publicUrl,
+      updated_by_staff_id: Number(staffId),
+      change_note: note.trim() || null,
+      created_at: now,
+    }]);
+    if (verErr) throw new Error("New version saved, but its history entry failed: " + verErr.message);
+    if (openHistory[doc.id]) await loadHistory(doc.id);
+  };
+
+  const loadHistory = async (docId) => {
+    const { data, error: err } = await supabase
+      .from("document_versions")
+      .select("*")
+      .eq("document_id", docId)
+      .order("created_at", { ascending: false });
+    if (err) { setError("Couldn't load history: " + err.message); return; }
+    setHistory((h) => ({ ...h, [docId]: data || [] }));
+  };
+
+  const toggleHistory = (docId) => {
+    const opening = !openHistory[docId];
+    setOpenHistory((o) => ({ ...o, [docId]: opening }));
+    if (opening) loadHistory(docId);
   };
 
   const handleMove = async (doc, folderId) => {
@@ -2947,14 +3077,29 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
 
   const handleDeleteDoc = async (doc) => {
     if (requests.some((r) => String(r.document_id) === String(doc.id))) {
-      alert("Staff have been asked to read this document, so it can't be deleted (the read records are QSPP evidence). Use Replace to upload a new version instead.");
+      alert("Staff have been asked to read this document, so it can't be deleted (the read records are QSPP evidence). Use Upload new version instead.");
       return;
     }
-    if (!window.confirm("Delete this document? This removes the file permanently.")) return;
-    const path = storagePathFromUrl(doc.file_url);
-    if (path) await supabase.storage.from(DOC_BUCKET).remove([path]);
-    await supabase.from("pharmacy_documents").delete().eq("id", doc.id);
+    if (!window.confirm("Delete this document and all its versions? This removes the files permanently.")) return;
+    setError("");
+    // Collect every version's file before the row goes (versions cascade with it)
+    const { data: versions, error: vErr } = await supabase
+      .from("document_versions")
+      .select("file_name, file_url")
+      .eq("document_id", doc.id);
+    if (vErr) { setError("Delete failed: " + vErr.message); return; }
+    const paths = new Set();
+    for (const v of [...(versions || []), doc]) {
+      const p = v.file_name || storagePathFromUrl(v.file_url);
+      if (p) paths.add(p);
+    }
+    const { error: delErr } = await supabase.from("pharmacy_documents").delete().eq("id", doc.id);
+    if (delErr) { setError("Delete failed: " + delErr.message); return; }
     setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+    if (paths.size) {
+      const { error: rmErr } = await supabase.storage.from(DOC_BUCKET).remove([...paths]);
+      if (rmErr) setError("Document deleted, but some files couldn't be removed from storage: " + rmErr.message);
+    }
   };
 
   if (loading) return <div className="p-6 text-sm text-gray-400">Loading…</div>;
@@ -3081,9 +3226,21 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
               placeholder="Search…"
               className="border rounded-lg px-3 py-1.5 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-400"
             />
-            <label className={`text-xs px-3 py-1.5 rounded-lg cursor-pointer font-medium ${uploading ? "bg-blue-200 text-white" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
+            <select
+              value={uploadBy}
+              onChange={(e) => setUploadBy(e.target.value)}
+              className={`border rounded-lg px-2 py-1.5 text-xs ${uploadBy ? "text-gray-700" : "text-gray-400"}`}
+              title="Updated by (required to upload)"
+            >
+              <option value="">Updated by…</option>
+              {activeStaff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <label
+              title={uploadBy ? "" : "Choose who is uploading first"}
+              className={`text-xs px-3 py-1.5 rounded-lg font-medium ${uploading || !uploadBy ? "bg-blue-200 text-white cursor-not-allowed" : "bg-blue-600 text-white hover:bg-blue-700 cursor-pointer"}`}
+            >
               {uploading ? "Uploading…" : "+ Upload"}
-              <input type="file" multiple className="hidden" disabled={uploading || !activeFolderObj} onChange={(e) => handleUpload(e.target.files)} />
+              <input type="file" multiple className="hidden" disabled={uploading || !activeFolderObj || !uploadBy} onChange={(e) => { handleUpload(e.target.files); e.target.value = ""; }} />
             </label>
           </div>
         </div>
@@ -3107,7 +3264,12 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                         onBlur={(e) => e.target.value !== doc.title && handleRenameDoc(doc, e.target.value)}
                         className="w-full bg-transparent text-sm font-medium text-gray-800 focus:outline-none focus:bg-white focus:border focus:rounded px-1 py-0.5"
                       />
-                      {searching && <div className="text-[11px] text-gray-400 px-1">{folderName(doc.folder_id)}</div>}
+                      <div className="text-[11px] text-gray-400 px-1">
+                        v{doc.version || "1.0"}
+                        {perthDate(doc.updated_at || doc.uploaded_at) && ` · updated ${perthDate(doc.updated_at || doc.uploaded_at)}`}
+                        {doc.updated_by_staff_id && staffName(doc.updated_by_staff_id) && ` by ${staffName(doc.updated_by_staff_id)}`}
+                        {searching && ` · ${folderName(doc.folder_id)}`}
+                      </div>
                     </div>
                     <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Open</a>
                   </div>
@@ -3132,13 +3294,37 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                         </optgroup>
                       ))}
                     </select>
-                    <label className="text-[11px] text-blue-600 hover:underline cursor-pointer">
-                      Replace
-                      <input type="file" className="hidden" disabled={uploading} onChange={(e) => handleReplace(doc, e.target.files?.[0])} />
-                    </label>
+                    <button onClick={() => setVersionDoc(doc)} className="text-[11px] text-blue-600 hover:underline">Upload new version</button>
+                    <button onClick={() => toggleHistory(doc.id)} className="text-[11px] text-gray-500 hover:text-gray-700">
+                      {openHistory[doc.id] ? "Hide history" : "History"}
+                    </button>
                     <button onClick={() => handleDeleteDoc(doc)} className="text-[11px] text-red-500 hover:text-red-700">Delete</button>
                     <button onClick={() => setAskDoc(doc)} className="text-[11px] text-blue-600 hover:underline ml-auto">Ask staff to read</button>
                   </div>
+                  {openHistory[doc.id] && (
+                    <div className="mt-2 ml-10 rounded-lg border border-gray-200 bg-white divide-y">
+                      {!history[doc.id] ? (
+                        <div className="px-3 py-2 text-[11px] text-gray-400">Loading…</div>
+                      ) : history[doc.id].length === 0 ? (
+                        <div className="px-3 py-2 text-[11px] text-gray-400">No version history.</div>
+                      ) : (
+                        history[doc.id].map((v, i) => (
+                          <div key={v.id} className="px-3 py-2 flex items-start gap-3 text-[11px]">
+                            <span className="font-semibold text-gray-700 w-12 shrink-0">v{v.version}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-gray-600">
+                                {perthDate(v.created_at)}
+                                {v.updated_by_staff_id && staffName(v.updated_by_staff_id) && ` · ${staffName(v.updated_by_staff_id)}`}
+                                {i === 0 && <span className="ml-2 px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-100 font-semibold">Current</span>}
+                              </div>
+                              {v.change_note && <div className="text-gray-500 mt-0.5 break-words">{v.change_note}</div>}
+                            </div>
+                            <a href={v.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0">Open</a>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                   <PolicyProgress
                     doc={doc}
                     requests={requests}
@@ -3155,6 +3341,14 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
         </div>
       </div>
       </div>
+      )}
+      {versionDoc && (
+        <NewVersionModal
+          doc={versionDoc}
+          staff={activeStaff}
+          onClose={() => setVersionDoc(null)}
+          onSave={async (values) => { await handleNewVersion(versionDoc, values); setVersionDoc(null); }}
+        />
       )}
       {askDoc && (
         <AskToReadModal
