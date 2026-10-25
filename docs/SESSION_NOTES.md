@@ -369,11 +369,30 @@
   - No new tables. Add the **`staff-inductions`** storage bucket (private, service-role routes only) and the new `staff_inductions` columns above (table already listed).
 
   ### Follow-ups / parked
-  - Drop later once happy: `induction_template_items_backup_20261025`, `induction_template_items_backup_20261025b`, `induction_template_items_backup_20261025c`.
+  - Drop later once happy: `induction_template_items_backup_20261025`, `induction_template_items_backup_20261025b`, `induction_template_items_backup_20261025c`, `induction_template_items_backup_20261025d`.
   - Test inductions started before each stage keep their old copy — delete and restart them.
   - A change to a line after the employee has confirmed doesn't clear the confirmation (sign-off still re-checks readiness).
   - Kiosk confirm list leaves out Office use lines.
   - Admin ticks / Section 6 saves use the browser client (like the rest of Admin); sign-off, confirm, PDF and reopen are server routes.
+
+  ### Not committed
+  - This session-notes entry.
+
+  ## 2026-10-25 (cont.) — Induction speed fixes + template tweaks
+
+  ### Done
+  - **/me speed:** ticks update instantly (optimistic; answer / mark-section routes return the saved lines; failed saves put the line back with the error); one save per line at a time (also Admin, which stops a double-click unticking). Inductions list preloaded when /me loads. Opening an induction shows saved lines at once (placeholder while loading); auto-checks run in the background via new `pages/api/inductions/auto-check` ("checking…" by Refresh). Admin step 4 and kiosk cards also show saved lines first and merge auto-check changes after. Committed `6d089c7`, `9f5a460`.
+  - **Template (still v2.2):** Section 4 "Supplying Pharmacy and Pharmacist Only medicines…" deactivated (S2/S3 certificate covers it; run by hand). RUM line reworded; "Disposal of Expired & Unwanted Products (Procedure)" added to Section 3 All staff (linked). Section 5 lines moved: Training page → Getting started / Chalkboard; Training & Development Plan → Office use (still auto for plan roles). Empty Section 5 hidden everywhere; sign-off section now shown as "5. Probation review and sign-off" (display only). Committed `17e55ac`.
+
+  ### Schema changes
+  - `2026-10-25_induction_rum_section5.sql` (run): template rows only. Now 74 active lines (start 17 · 2 = 4 · 3 = 27 · 4 = 13 · office = 13).
+
+  ### New tables (add to RLS pass)
+  - None.
+
+  ### Follow-ups / parked
+  - Backup `induction_template_items_backup_20261025d` added to the drop-later list above.
+  - Katelyn's test induction keeps its old lines (S2/S3 supply line → mark N/A; old Section 5 lines show under an unnumbered "Your training").
 
   ### Not committed
   - This session-notes entry.
