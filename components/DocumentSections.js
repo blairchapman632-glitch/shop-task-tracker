@@ -5,7 +5,7 @@
 //   actions.open(doc)            -> opens the file (private storage — a short-lived signed link)
 //   actions.update(doc, patch)   -> Promise   patch: { expiry_date | completion_date | title }
 // Sections + status rules: lib/staffDocuments.js
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sectionDocs, sectionStatus, docExpiry, unmatchedDocs, DOC_STATE_STYLE } from "../lib/staffDocuments";
 import { docTypeLabel } from "../lib/trainingPlan";
 import { fmtDateShort } from "../lib/performanceReview";
@@ -114,9 +114,7 @@ function FileRow({ doc, sec, actions, older = false, label = null, staffName = "
         <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[11px] text-gray-500">
           <label className="flex items-center gap-1">
             Completed
-            <input type="date" value={doc.completion_date || ""} disabled={busy}
-              onChange={(e) => run(() => actions.update(doc, { completion_date: e.target.value || null }))}
-              className="border rounded px-1 py-0.5 text-[11px] bg-white" />
+            <RowDate saved={doc.completion_date} onSave={(v) => actions.update(doc, { completion_date: v })} />
           </label>
           {sec.certificate.renew_months ? <span>{exp ? `→ expires ${fmtDateShort(exp)}` : "→ add the completion date"}</span> : <span>one-off, no expiry</span>}
         </div>
@@ -125,14 +123,51 @@ function FileRow({ doc, sec, actions, older = false, label = null, staffName = "
         <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[11px] text-gray-500">
           <label className="flex items-center gap-1">
             Expires
-            <input type="date" value={doc.expiry_date || ""} disabled={busy}
-              onChange={(e) => run(() => actions.update(doc, { expiry_date: e.target.value || null }))}
-              className="border rounded px-1 py-0.5 text-[11px] bg-white" />
+            <RowDate saved={doc.expiry_date} onSave={(v) => actions.update(doc, { expiry_date: v })} />
           </label>
           {sec.kind === "other_qual" && <span className="text-gray-400">optional</span>}
         </div>
       )}
     </div>
+  );
+}
+
+// Date box on an uploaded file's row. Keeps its own value while typing and only saves a complete, sensible date
+// (typing the year gives 0002, 0020, 0202… on the way), or a cleared box when you leave it. Never disabled mid-save,
+// so focus stays put.
+const fullDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && Number(v.slice(0, 4)) >= 1900 && Number(v.slice(0, 4)) <= 2100;
+function RowDate({ saved, onSave }) {
+  const savedStr = saved ? String(saved).slice(0, 10) : "";
+  const [val, setVal] = useState(savedStr);
+  const [focused, setFocused] = useState(false);
+  const lastSent = useRef(savedStr);
+  useEffect(() => { if (!focused) { setVal(savedStr); lastSent.current = savedStr; } }, [savedStr, focused]);
+
+  const save = async (v) => {
+    if (v === lastSent.current) return;
+    lastSent.current = v;
+    try {
+      await onSave(v || null);
+    } catch (err) {
+      lastSent.current = savedStr;
+      alert(err?.message || String(err));
+    }
+  };
+
+  return (
+    <input
+      type="date"
+      value={val}
+      onFocus={() => setFocused(true)}
+      onChange={(e) => { const v = e.target.value; setVal(v); if (fullDate(v)) save(v); }}
+      onBlur={(e) => {
+        setFocused(false);
+        // A half-typed date also reads as "" — the browser flags it as badInput: put the saved date back, don't clear it
+        if (e.target.validity?.badInput || (val !== "" && !fullDate(val))) { setVal(savedStr); return; }
+        save(val);
+      }}
+      className="border rounded px-1 py-0.5 text-[11px] bg-white"
+    />
   );
 }
 
@@ -151,7 +186,7 @@ function Uploader({ sec, actions, hasFiles, mode }) {
 
   const handleFile = async (file) => {
     if (!file) return;
-    if (!ready) { setError("Enter the qualification name first."); return; }
+    if (!ready) { setError("Type the qualification name first."); return; }
     setBusy(true);
     setError("");
     try {
@@ -180,7 +215,7 @@ function Uploader({ sec, actions, hasFiles, mode }) {
       {(needsDate || needsTitle || hasExpiry) && (
         <div className="flex flex-wrap items-center gap-2">
           {needsTitle && (
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Qualification name"
+            <input value={title} onChange={(e) => { setTitle(e.target.value); if (e.target.value.trim()) setError(""); }} placeholder="Qualification name"
               className="flex-1 min-w-[160px] border rounded-lg px-2 py-1.5 text-xs" />
           )}
           {needsDate && (
@@ -197,7 +232,9 @@ function Uploader({ sec, actions, hasFiles, mode }) {
           )}
         </div>
       )}
-      <label className={`flex items-center gap-2 w-full border-2 border-dashed rounded-lg px-3 py-2.5 transition-colors ${!ready ? "border-gray-100 bg-gray-50 cursor-not-allowed" : busy ? "border-blue-200 bg-blue-50 cursor-wait" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50 cursor-pointer"}`}>
+      <label
+        onClick={(e) => { if (!ready && !busy) { e.preventDefault(); setError("Type the qualification name first."); } }}
+        className={`flex items-center gap-2 w-full border-2 border-dashed rounded-lg px-3 py-2.5 transition-colors ${!ready ? "border-gray-100 bg-gray-50 cursor-not-allowed" : busy ? "border-blue-200 bg-blue-50 cursor-wait" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50 cursor-pointer"}`}>
         <span className="text-gray-400">📎</span>
         <span className={`text-xs ${ready ? "text-gray-500" : "text-gray-300"}`}>{label}</span>
         <input type="file" accept={ACCEPT} className="hidden" disabled={busy || !ready}
