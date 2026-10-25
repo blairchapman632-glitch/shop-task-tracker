@@ -8,7 +8,7 @@ import supabase from "../lib/supabaseClient";
 import { adminFetch } from "../lib/adminFetch";
 import { fmtDateShort, perthDateOf } from "../lib/performanceReview";
 import {
-  TEMPLATE_VERSION, SECTIONS, STUDENT_TEMPLATE_KEY, VIA_LABEL, OUTCOMES,
+  TEMPLATE_VERSION, SECTIONS, STUDENT_TEMPLATE_KEY, VIA_LABEL, OUTCOMES, SIGNOFF_TITLE,
   positionForRole, dueDateFor, templateItemsFor, snapshotItem, inductionProgress, answerLabel,
   pickProbationReview, reviewDateOf, inductionReadiness,
 } from "../lib/induction";
@@ -592,7 +592,7 @@ function SectionSix({ induction, items, member, review, nameOf, locked, onInduct
 
   return (
     <div className="rounded-lg border border-gray-200 p-3 space-y-3">
-      <div className="text-sm font-medium text-gray-800">6. Probation review and sign-off</div>
+      <div className="text-sm font-medium text-gray-800">{SIGNOFF_TITLE}</div>
 
       {/* Probation review */}
       <div className="space-y-1">
