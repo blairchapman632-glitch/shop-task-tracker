@@ -5,7 +5,6 @@ import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { fail } from "../../../lib/reviewServer";
 import { signerFromRequest, loadInductionFor, loadItems, itemForMe, isPharmacist, ME_SECTIONS } from "../../../lib/inductionServer";
 import { inductionProgress, inductionReadiness, pickProbationReview } from "../../../lib/induction";
-import { syncInductionAuto } from "../../../lib/inductionAuto";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
@@ -14,7 +13,7 @@ export default async function handler(req, res) {
     const id = req.query.id;
     if (!id) return res.status(400).json({ error: "id required" });
     const ind = await loadInductionFor(signer, id);
-    const { items: all } = await syncInductionAuto(supabaseAdmin(), ind, await loadItems([ind.id])); // auto lines first
+    const all = await loadItems([ind.id]); // saved lines only — auto-checks run separately (pages/api/inductions/auto-check)
     const items = all.filter((i) => ME_SECTIONS.includes(i.section));
 
     const peopleIds = [...new Set([ind.staff_id, ind.supervisor_staff_id, ...items.map((i) => i.signed_by_staff_id)].filter(Boolean).map(Number))];

@@ -6,7 +6,7 @@ import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib
 import { fetchMyReview, prepWaiting, MyReviewBanner, MyReviewSection } from "../components/MyReview";
 import { fetchMyPolicies, policiesToRead, MyPoliciesBanner, MyPoliciesSection } from "../components/MyPolicies";
 import MyTrainingTab from "../components/MyTraining";
-import { MyInductionsSection } from "../components/MyInductions";
+import { MyInductionsSection, fetchMyInductions } from "../components/MyInductions";
 import { fetchMyTrainingNudges, TrainingNudges } from "../components/MyCertificates";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -2214,7 +2214,7 @@ function DeliveriesCard({ onOpen }) {
 
 // To do: performance review (Section 2 prep / comments) + policies to read
 // + Inductions (only for staff who can sign them off; not part of the badge count)
-function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, nudges, onOpenNudge }) {
+function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, nudges, onOpenNudge, inductions }) {
   const hasReview = !!(myReview?.mode && myReview.review);
   const hasPolicies = !!(myPolicies?.outstanding?.length || myPolicies?.read?.length);
   return (
@@ -2227,7 +2227,7 @@ function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPoli
           Nothing to do right now.
         </div>
       )}
-      <MyInductionsSection />
+      <MyInductionsSection initial={inductions} />
     </div>
   );
 }
@@ -3316,6 +3316,15 @@ export default function MePage() {
   const [showProfile, setShowProfile] = useState(false); // profile panel, opened from the header photo
   const [myNudges, setMyNudges] = useState(null); // To do → Training items (Admin's Needs attention rules, mine only)
   const [trainingTarget, setTrainingTarget] = useState(null); // { sub, section, n } — where a nudge opens Training
+  const [myInductions, setMyInductions] = useState(null); // To do → Inductions list (signers only; false = hidden), preloaded
+
+  // Inductions list: loaded once when /me loads so the To do card is ready (the card refreshes itself when shown)
+  useEffect(() => {
+    if (!staff?.id) return;
+    let cancelled = false;
+    fetchMyInductions().then((r) => { if (!cancelled && r !== null) setMyInductions(r); });
+    return () => { cancelled = true; };
+  }, [staff?.id]);
 
   // Own performance review + policies + training nudges (Roster banners, To do badge, To do sections).
   // Loaded once at start (for the badge and banners) and again whenever To do is opened — not on every tab switch.
@@ -3590,6 +3599,7 @@ export default function MePage() {
             myReview={myReview} onReviewChanged={setMyReview} focusReview={focusReview}
             myPolicies={myPolicies} focusPolicies={focusPolicies}
             nudges={myNudges}
+            inductions={myInductions}
             onOpenNudge={(sub, section) => { setTrainingTarget((t) => ({ sub, section, n: (t?.n || 0) + 1 })); setTab("training"); }}
           />
         ) : (

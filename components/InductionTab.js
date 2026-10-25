@@ -72,6 +72,7 @@ export default function InductionStep({ member, contracts, adminUser, onStaffUpd
   const [starting, setStarting] = useState(false);
   const [autoSrc, setAutoSrc] = useState(null); // sources the auto lines were checked against (for "Add" links)
   const [reviews, setReviews] = useState([]);   // their performance reviews (Section 6 uses the probation one)
+  const [autoChecking, setAutoChecking] = useState(false); // background auto-checks running
 
   const load = async () => {
     const [{ data: ind, error: e1 }, { data: ppl }, { data: rv }] = await Promise.all([
@@ -82,25 +83,35 @@ export default function InductionStep({ member, contracts, adminUser, onStaffUpd
     setReviews(rv || []);
     let rows = [];
     let e2 = null;
-    let src = null;
     if (ind) {
       const res = await supabase.from("staff_induction_items").select("*").eq("induction_id", ind.id).order("sort_order");
       rows = res.data || [];
       e2 = res.error;
-      if (!e2) {
-        try {
-          ({ items: rows, src } = await syncInductionAuto(supabase, ind, rows)); // auto lines tick / untick themselves
-        } catch (err) {
-          console.error("[induction auto]", err);
-        }
-      }
     }
+    // Saved lines show straight away; the auto-checks run behind them
     setError(e1 || e2 ? (e1 || e2).message : "");
     setInduction(ind || null);
     setItems(rows);
-    setAutoSrc(src);
     setPeople(ppl || []);
     setLoading(false);
+    if (ind && !e2) runAutoChecks(ind, rows);
+  };
+
+  // Auto lines tick / untick themselves; only the changed lines are merged (Admin ticks made meanwhile are kept)
+  const runAutoChecks = async (ind, rows) => {
+    if (ind.status !== "in_progress") return;
+    setAutoChecking(true);
+    try {
+      const { changed, src } = await syncInductionAuto(supabase, ind, rows);
+      setAutoSrc(src);
+      if (changed.length) {
+        const byId = new Map(changed.map((c) => [c.id, c]));
+        setItems((cur) => cur.map((i) => byId.get(i.id) || i));
+      }
+    } catch (err) {
+      console.error("[induction auto]", err);
+    }
+    setAutoChecking(false);
   };
 
   useEffect(() => {
@@ -149,6 +160,7 @@ export default function InductionStep({ member, contracts, adminUser, onStaffUpd
       onDeleted={load}
       onReload={load}
       autoSrc={autoSrc}
+      autoChecking={autoChecking}
       review={pickProbationReview(reviews)}
       onOpenTab={onOpenTab}
     />
@@ -283,7 +295,7 @@ function StartInduction({ member, contracts, supervisors, adminUser, onCancel, o
 
 // ─── Checklist ───────────────────────────────────────────────────────────────
 
-function Checklist({ induction, items, member, supervisors, nameOf, onInductionChanged, onItemsChanged, onDeleted, onReload, autoSrc, review, onOpenTab }) {
+function Checklist({ induction, items, member, supervisors, nameOf, onInductionChanged, onItemsChanged, onDeleted, onReload, autoSrc, autoChecking, review, onOpenTab }) {
   const [open, setOpen] = useState({}); // section key -> expanded
   const [error, setError] = useState("");
   const locked = induction.status === "signed_off";
@@ -491,6 +503,7 @@ function Checklist({ induction, items, member, supervisors, nameOf, onInductionC
           <span className="font-medium">{progress.done} of {progress.total}</span>
           {" · "}due {fmtDateShort(induction.due_date)}
           {" · "}supervisor {nameOf(induction.supervisor_staff_id) || "—"}
+          {autoChecking && <span className="ml-2 text-[11px] text-gray-400">checking…</span>}
         </div>
         {!locked && (
           <select

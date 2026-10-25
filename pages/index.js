@@ -1236,28 +1236,36 @@ export default function HomePage() {
             .in("staff_id", (inds || []).map((i) => i.staff_id)),
         ]);
         if (rq.error || it.error || rv.error) throw rq.error || it.error || rv.error;
-        // Auto lines tick / untick themselves before counting "Shown or signed off"
-        let allItems = it.data || [];
-        for (const ind of inds) {
-          const mine = allItems.filter((i) => String(i.induction_id) === String(ind.id));
-          const { items: synced } = await syncInductionAuto(supabase, ind, mine)
-            .catch((e) => { console.error("[induction auto]", e); return { items: mine }; });
-          allItems = [...allItems.filter((i) => String(i.induction_id) !== String(ind.id)), ...synced];
-        }
         if (cancelled) return;
+        const reviewFor = (ind) => pickProbationReview((rv.data || []).filter((r) => Number(r.staff_id) === Number(ind.staff_id)));
+        // Ready + not yet confirmed -> the card becomes "Confirm your induction" (the server checks again)
+        const isConfirm = (ind, items) => inductionReadiness(ind, items, reviewFor(ind)).ready && !ind.employee_confirmed_at;
+        // Cards show straight away from saved lines…
         setInductionJobs((inds || []).map((ind) => {
-          const items = allItems.filter((i) => String(i.induction_id) === String(ind.id));
-          const review = pickProbationReview((rv.data || []).filter((r) => Number(r.staff_id) === Number(ind.staff_id)));
+          const items = (it.data || []).filter((i) => String(i.induction_id) === String(ind.id));
           return {
             id: ind.id,
             staffId: ind.staff_id,
             induction: ind,
             requests: (rq.data || []).filter((r) => String(r.induction_id) === String(ind.id) && r.document && r.document.active !== false),
             items,
-            // Ready + not yet confirmed -> the card becomes "Confirm your induction" (the server checks again)
-            confirm: inductionReadiness(ind, items, review).ready && !ind.employee_confirmed_at,
+            confirm: isConfirm(ind, items),
           };
         }));
+        // …then the auto lines tick / untick themselves in the background and only changed lines are merged
+        for (const ind of inds) {
+          const mine = (it.data || []).filter((i) => String(i.induction_id) === String(ind.id));
+          const { changed } = await syncInductionAuto(supabase, ind, mine)
+            .catch((e) => { console.error("[induction auto]", e); return { changed: [] }; });
+          if (cancelled) return;
+          if (!changed.length) continue;
+          const byId = new Map(changed.map((c) => [c.id, c]));
+          setInductionJobs((prev) => prev.map((j) => {
+            if (j.id !== ind.id) return j;
+            const items = j.items.map((i) => byId.get(i.id) || i);
+            return { ...j, items, confirm: isConfirm(j.induction, items) };
+          }));
+        }
       } catch (err) {
         console.error("[induction jobs]", err);
         if (!cancelled) setInductionJobs([]);

@@ -31,30 +31,40 @@ const ANSWER_STYLE = {
   declined: "bg-amber-500 text-white border-amber-500",
 };
 
-export function MyInductionsSection() {
-  const [list, setList] = useState(null); // null = loading, false = hidden (no flag / not available)
+// List for the To do card -> array, false (no flag / no Auth session — hide the card) or null (couldn't load).
+// pages/me.js calls this when /me first loads, so the card is ready before To do is opened. No auto-checks here.
+export const fetchMyInductions = async () => {
+  try {
+    const { status, body } = await api("/api/inductions/list");
+    if (status === 0 || status === 401 || status === 403) return false;
+    if (status !== 200) throw new Error(body?.error || "Couldn't load inductions");
+    return body.inductions || [];
+  } catch (err) {
+    console.error("[my-inductions]", err);
+    return null;
+  }
+};
+
+// initial: the list preloaded by pages/me.js (shown at once; refreshed quietly on mount and on Back)
+export function MyInductionsSection({ initial }) {
+  const [list, setList] = useState(initial ?? null); // null = loading, false = hidden (no flag / not available)
   const [error, setError] = useState("");
-  const [openId, setOpenId] = useState(null);
+  const [open, setOpenRow] = useState(null); // the list row tapped (its header shows while the detail loads)
 
   const loadList = async () => {
-    try {
-      const { status, body } = await api("/api/inductions/list");
-      if (status === 0 || status === 401 || status === 403) { setList(false); return; }
-      if (status !== 200) throw new Error(body?.error || "Couldn't load inductions");
-      setList(body.inductions || []);
-      setError("");
-    } catch (err) {
-      setError(err?.message || String(err));
-      setList((l) => l || []);
-    }
+    const l = await fetchMyInductions();
+    if (l === null) { setError("Couldn't load inductions"); setList((x) => x || []); return; }
+    setList(l);
+    setError("");
   };
 
+  useEffect(() => { if (initial !== undefined && initial !== null) setList(initial); }, [initial]);
   useEffect(() => { loadList(); }, []);
 
   if (list === false || list === null) return null;
 
-  if (openId) {
-    return <InductionDetail id={openId} onBack={() => { setOpenId(null); loadList(); }} />;
+  if (open) {
+    return <InductionDetail id={open.id} preview={open} onBack={() => { setOpenRow(null); loadList(); }} />;
   }
 
   return (
@@ -69,7 +79,7 @@ export function MyInductionsSection() {
             <button
               key={i.id}
               type="button"
-              onClick={() => setOpenId(i.id)}
+              onClick={() => setOpenRow(i)}
               style={{ touchAction: "manipulation" }}
               className="w-full flex items-center justify-between gap-2 py-3 text-left"
             >
@@ -86,26 +96,44 @@ export function MyInductionsSection() {
   );
 }
 
-function InductionDetail({ id, onBack }) {
+function InductionDetail({ id, preview, onBack }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");          // "signoff" while signing off
   const [saving, setSaving] = useState(new Set()); // line ids with a save in flight (their buttons are disabled)
   const [loadingFull, setLoadingFull] = useState(false);
+  const [checking, setChecking] = useState(false); // background auto-checks running
   const [open, setOpen] = useState({});
 
-  // Full load (also runs the auto-checks on the server) — only when opened and on Refresh, never after a tap
+  // Saved lines first (fast), then the auto-checks in the background — only when opened and on Refresh, never after a tap
   const load = async () => {
     setLoadingFull(true);
+    let ok = false;
     try {
       const { status, body } = await api(`/api/inductions/detail?id=${encodeURIComponent(id)}`);
       if (status !== 200) throw new Error(body?.error || "Couldn't load this induction");
       setData(body);
       setError("");
+      ok = true;
     } catch (err) {
       setError(err?.message || String(err));
     }
     setLoadingFull(false);
+    if (ok) runAutoChecks();
+  };
+
+  const runAutoChecks = async () => {
+    setChecking(true);
+    try {
+      const { status, body } = await api("/api/inductions/auto-check", { id });
+      if (status === 200) {
+        if (body.changed?.length) replaceItems(body.changed);
+        setData((d) => (d ? { ...d, induction: { ...d.induction, done: body.done } } : d));
+      }
+    } catch (err) {
+      console.error("[induction auto-check]", err); // lines already shown from saved data
+    }
+    setChecking(false);
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
@@ -183,10 +211,20 @@ function InductionDetail({ id, onBack }) {
   );
 
   if (!data) {
+    // Shown the moment the row is tapped: the header from the list, grey placeholders for the sections
     return (
-      <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-2">
-        {back}
-        {error ? <p className="text-sm text-red-500">{error}</p> : <p className="text-sm text-gray-400">Loading…</p>}
+      <div className="space-y-3">
+        <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-1">
+          {back}
+          {preview && <div className="text-base font-semibold text-gray-800">{preview.name}</div>}
+          {preview && <div className="text-sm text-gray-600">{preview.role} · {preview.done} of {preview.total} · due {dayMonth(preview.due_date)}</div>}
+          {error ? <p className="text-sm text-red-500 pt-1">{error}</p> : <p className="text-sm text-gray-400 pt-1">Loading…</p>}
+        </div>
+        {!error && [0, 1, 2, 3].map((k) => (
+          <div key={k} className="bg-white rounded-2xl shadow-sm border px-5 py-4 animate-pulse">
+            <div className="h-3.5 w-1/2 bg-gray-200 rounded" />
+          </div>
+        ))}
       </div>
     );
   }
@@ -203,9 +241,12 @@ function InductionDetail({ id, onBack }) {
         <div className="text-sm text-gray-600">Supervisor: {ind.supervisor || "—"}</div>
         <div className="flex items-center justify-between gap-2 pt-1">
           <span className="text-sm font-medium text-gray-800">{ind.done} of {ind.total} done</span>
-          <button type="button" onClick={load} disabled={loadingFull || saving.size > 0} style={{ touchAction: "manipulation" }} className="text-sm text-blue-600 min-h-[36px] disabled:opacity-40">
-            {loadingFull ? "Refreshing…" : "Refresh"}
-          </button>
+          <span className="flex items-center gap-2">
+            {checking && <span className="text-xs text-gray-400">checking…</span>}
+            <button type="button" onClick={load} disabled={loadingFull || checking || saving.size > 0} style={{ touchAction: "manipulation" }} className="text-sm text-blue-600 min-h-[36px] disabled:opacity-40">
+              {loadingFull ? "Refreshing…" : "Refresh"}
+            </button>
+          </span>
         </div>
         {error && <p className="text-sm text-red-500 pt-1">{error}</p>}
       </div>
