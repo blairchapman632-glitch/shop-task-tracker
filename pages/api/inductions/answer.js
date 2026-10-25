@@ -4,7 +4,7 @@
 // Pharmacist, and an answered line can only be changed by whoever answered it from /me (Admin can change anything).
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { fail } from "../../../lib/reviewServer";
-import { signerFromRequest, loadInductionFor, answerBlock, forbidden, notFound, conflict } from "../../../lib/inductionServer";
+import { signerFromRequest, loadInductionFor, answerBlock, itemForMe, forbidden, notFound, conflict } from "../../../lib/inductionServer";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -33,11 +33,12 @@ export default async function handler(req, res) {
     // Only write if the line is still as we checked it (unanswered, or answered by this caller)
     let q = db.from("staff_induction_items").update(patch).eq("id", item.id);
     q = item.result ? q.eq("signed_via", "me").eq("signed_by_staff_id", Number(signer.id)) : q.is("result", null);
-    const { data: updated, error: upErr } = await q.select("id");
+    const { data: updated, error: upErr } = await q.select("*");
     if (upErr) throw upErr;
     if (!updated?.length) throw conflict("This line was just changed by someone else — refresh and try again.");
 
-    res.status(200).json({ ok: true });
+    // The saved line, so /me updates just this line (no full reload)
+    res.status(200).json({ ok: true, item: itemForMe(signer, updated[0], () => signer.name) });
   } catch (err) {
     fail(res, err);
   }

@@ -3,7 +3,7 @@
 // Section 6 + sign-off: outcome / late reason saved here; employee confirms on the kiosk; supervisor signs off here or
 // in their /me (pages/api/inductions/sign-off — rules checked server-side); PDF in the private staff-inductions bucket.
 // onStaffUpdated(staffRow): called when starting the induction filled in an empty staff start date.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { adminFetch } from "../lib/adminFetch";
 import { fmtDateShort, perthDateOf } from "../lib/performanceReview";
@@ -289,16 +289,23 @@ function Checklist({ induction, items, member, supervisors, nameOf, onInductionC
   const locked = induction.status === "signed_off";
   const progress = inductionProgress(items);
 
+  // Optimistic: the line changes at once, the save runs behind it (no reload). One save per line at a time.
+  const inFlight = useRef(new Set());
   const updateItem = async (item, patch) => {
+    if (inFlight.current.has(item.id)) return;
+    inFlight.current.add(item.id);
     setError("");
-    const prev = items;
-    onItemsChanged(items.map((i) => (i.id === item.id ? { ...i, ...patch } : i)));
+    onItemsChanged((cur) => cur.map((i) => (i.id === item.id ? { ...i, ...patch } : i)));
     const { error: err } = await supabase.from("staff_induction_items").update(patch).eq("id", item.id);
-    if (err) { onItemsChanged(prev); setError("Couldn't save: " + err.message); }
+    if (err) {
+      onItemsChanged((cur) => cur.map((i) => (i.id === item.id ? item : i))); // put the line back
+      setError("Couldn't save: " + err.message);
+    }
+    inFlight.current.delete(item.id);
   };
 
   const setAnswer = (item, answer) => {
-    if (locked) return;
+    if (locked || inFlight.current.has(item.id)) return;
     if (item.result === answer && item.signed_via !== "auto") { // tapping Done on an auto tick makes it a manual Done
       updateItem(item, { result: null, signed_via: null, signed_at: null, signed_by_staff_id: null }); // untick
     } else {

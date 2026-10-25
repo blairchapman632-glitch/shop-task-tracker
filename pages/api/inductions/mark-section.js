@@ -2,7 +2,7 @@
 // Getting started only: ticks every unanswered line the caller is allowed to answer as Done, signed by the caller via /me.
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { fail } from "../../../lib/reviewServer";
-import { signerFromRequest, loadInductionFor, answerBlock } from "../../../lib/inductionServer";
+import { signerFromRequest, loadInductionFor, answerBlock, itemForMe } from "../../../lib/inductionServer";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -20,13 +20,14 @@ export default async function handler(req, res) {
     const ids = (rows || [])
       .filter((i) => !answerBlock(signer, i) && (i.allowed_answers || ["done"]).includes("done"))
       .map((i) => i.id);
-    if (!ids.length) return res.status(200).json({ ok: true, count: 0 });
+    if (!ids.length) return res.status(200).json({ ok: true, count: 0, items: [] });
 
     const { data: updated, error: upErr } = await db.from("staff_induction_items")
       .update({ result: "done", signed_by_staff_id: Number(signer.id), signed_via: "me", signed_at: new Date().toISOString() })
-      .in("id", ids).is("result", null).select("id");
+      .in("id", ids).is("result", null).select("*");
     if (upErr) throw upErr;
-    res.status(200).json({ ok: true, count: updated?.length || 0 });
+    // The saved lines, so /me updates just those (no full reload)
+    res.status(200).json({ ok: true, count: updated?.length || 0, items: (updated || []).map((i) => itemForMe(signer, i, () => signer.name)) });
   } catch (err) {
     fail(res, err);
   }

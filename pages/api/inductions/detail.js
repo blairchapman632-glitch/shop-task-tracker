@@ -3,7 +3,7 @@
 // Lines for Getting started and Sections 2–5 only (never Office use). Each line says whether the caller can answer it.
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { fail } from "../../../lib/reviewServer";
-import { signerFromRequest, loadInductionFor, loadItems, answerBlock, isPharmacist, ME_SECTIONS } from "../../../lib/inductionServer";
+import { signerFromRequest, loadInductionFor, loadItems, itemForMe, isPharmacist, ME_SECTIONS } from "../../../lib/inductionServer";
 import { inductionProgress, inductionReadiness, pickProbationReview } from "../../../lib/induction";
 import { syncInductionAuto } from "../../../lib/inductionAuto";
 
@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     const isSupervisor = Number(ind.supervisor_staff_id) === Number(signer.id);
     res.setHeader("Cache-Control", "no-store");
     res.status(200).json({
-      me: { isPharmacist: isPharmacist(signer), isSupervisor },
+      me: { name: signer.name, isPharmacist: isPharmacist(signer), isSupervisor },
       signOff: isSupervisor ? {
         ready: readiness.ready,
         missing: readiness.missing,
@@ -49,21 +49,7 @@ export default async function handler(req, res) {
       },
       items: items
         .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
-        .map((i) => ({
-          id: i.id,
-          section: i.section,
-          group_heading: i.group_heading,
-          wording: i.wording,
-          pharmacist_only: i.pharmacist_only,
-          allowed_answers: i.allowed_answers,
-          note_hint: i.note_hint,
-          result: i.result,
-          signed_via: i.signed_via,
-          signer: i.signed_via === "me" ? person(i.signed_by_staff_id)?.name || "" : null,
-          signed_at: i.signed_at,
-          note: i.note,
-          blocked: answerBlock(signer, i), // null = caller can answer / change it
-        })),
+        .map((i) => itemForMe(signer, i, (pid) => person(pid)?.name)),
     });
   } catch (err) {
     fail(res, err);

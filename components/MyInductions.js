@@ -89,10 +89,14 @@ export function MyInductionsSection() {
 function InductionDetail({ id, onBack }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(""); // item id or section key being saved
+  const [busy, setBusy] = useState("");          // "signoff" while signing off
+  const [saving, setSaving] = useState(new Set()); // line ids with a save in flight (their buttons are disabled)
+  const [loadingFull, setLoadingFull] = useState(false);
   const [open, setOpen] = useState({});
 
+  // Full load (also runs the auto-checks on the server) — only when opened and on Refresh, never after a tap
   const load = async () => {
+    setLoadingFull(true);
     try {
       const { status, body } = await api(`/api/inductions/detail?id=${encodeURIComponent(id)}`);
       if (status !== 200) throw new Error(body?.error || "Couldn't load this induction");
@@ -101,26 +105,62 @@ function InductionDetail({ id, onBack }) {
     } catch (err) {
       setError(err?.message || String(err));
     }
+    setLoadingFull(false);
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
 
-  const post = async (key, path, payload) => {
-    setBusy(key);
+  // Swap lines in state; the header count moves with them (it also covers Office use lines /me doesn't get)
+  const replaceItems = (updated) => setData((d) => {
+    if (!d) return d;
+    const byId = new Map(updated.map((u) => [u.id, u]));
+    const items = d.items.map((i) => (byId.has(i.id) ? { ...i, ...byId.get(i.id) } : i));
+    const delta = items.filter((i) => i.result).length - d.items.filter((i) => i.result).length;
+    return { ...d, items, induction: { ...d.induction, done: d.induction.done + delta } };
+  });
+  const setSavingIds = (ids, on) => setSaving((s) => {
+    const n = new Set(s);
+    ids.forEach((x) => (on ? n.add(x) : n.delete(x)));
+    return n;
+  });
+
+  // Optimistic save: show the change now, save in the background, put the line(s) back if it fails
+  const saveOptimistic = async (before, guess, path, payload, pickSaved) => {
+    const ids = before.map((i) => i.id);
     setError("");
+    setSavingIds(ids, true);
+    replaceItems(guess);
     try {
       const { status, body } = await api(path, payload);
       if (status !== 200) throw new Error(body?.error || "Couldn't save");
+      replaceItems(pickSaved(body));
     } catch (err) {
+      replaceItems(before);
       setError(err?.message || String(err));
     }
-    await load(); // always show what's really saved
-    setBusy("");
+    setSavingIds(ids, false);
   };
 
-  const answer = (item, a) => post(item.id, "/api/inductions/answer", { itemId: item.id, result: item.result === a ? null : a });
-  const saveNote = (item, note) => post(item.id, "/api/inductions/answer", { itemId: item.id, result: item.result, note });
-  const markSection = () => post("start", "/api/inductions/mark-section", { inductionId: id, section: "start" });
+  const signedByMe = (item, result) => (result
+    ? { ...item, result, signed_via: "me", signer: data?.me?.name || "", signed_at: new Date().toISOString() }
+    : { ...item, result: null, signed_via: null, signer: null, signed_at: null });
+
+  const answer = (item, a) => {
+    if (saving.has(item.id)) return; // no double saves
+    const result = item.result === a ? null : a;
+    saveOptimistic([item], [signedByMe(item, result)], "/api/inductions/answer", { itemId: item.id, result }, (b) => [b.item]);
+  };
+  const saveNote = (item, note) => {
+    if (saving.has(item.id)) return;
+    saveOptimistic([item], [{ ...item, note: note || null }], "/api/inductions/answer", { itemId: item.id, result: item.result, note }, (b) => [b.item]);
+  };
+  const markSection = () => {
+    const rows = (data?.items || []).filter((i) => i.section === "start" && !i.result && !i.blocked && !saving.has(i.id)
+      && (i.allowed_answers || ["done"]).includes("done"));
+    if (!rows.length) return;
+    saveOptimistic(rows, rows.map((i) => signedByMe(i, "done")), "/api/inductions/mark-section",
+      { inductionId: id, section: "start" }, (b) => b.items || []);
+  };
   const signOff = async () => {
     if (!window.confirm("Sign off this induction as supervisor? It will be closed and filed.")) return;
     setBusy("signoff");
@@ -161,7 +201,12 @@ function InductionDetail({ id, onBack }) {
         <div className="text-sm text-gray-600">{ind.role}{ind.is_student ? " (student)" : ""}</div>
         <div className="text-sm text-gray-600">Started {fmtDateShort(ind.start_date)} · complete by {fmtDateShort(ind.due_date)}</div>
         <div className="text-sm text-gray-600">Supervisor: {ind.supervisor || "—"}</div>
-        <div className="text-sm font-medium text-gray-800 pt-1">{ind.done} of {ind.total} done</div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className="text-sm font-medium text-gray-800">{ind.done} of {ind.total} done</span>
+          <button type="button" onClick={load} disabled={loadingFull || saving.size > 0} style={{ touchAction: "manipulation" }} className="text-sm text-blue-600 min-h-[36px] disabled:opacity-40">
+            {loadingFull ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
         {error && <p className="text-sm text-red-500 pt-1">{error}</p>}
       </div>
 
@@ -230,7 +275,7 @@ function InductionDetail({ id, onBack }) {
                         {g.heading && <div className="text-[11px] font-semibold text-gray-500 uppercase">{g.heading}</div>}
                         <div className="divide-y">
                           {g.rows.map((item) => (
-                            <MeItemRow key={item.id} item={item} busy={busy === item.id || busy === "start"} onAnswer={answer} onNote={saveNote} />
+                            <MeItemRow key={item.id} item={item} busy={saving.has(item.id)} onAnswer={answer} onNote={saveNote} />
                           ))}
                         </div>
                       </div>
@@ -239,11 +284,11 @@ function InductionDetail({ id, onBack }) {
                       <button
                         type="button"
                         onClick={markSection}
-                        disabled={!!busy}
+                        disabled={rows.some((i) => saving.has(i.id))}
                         style={{ touchAction: "manipulation" }}
                         className="w-full min-h-[44px] rounded-xl border border-green-300 text-sm font-medium text-green-700 disabled:opacity-40"
                       >
-                        {busy === "start" ? "Saving…" : "Mark section done"}
+                        Mark section done
                       </button>
                     )}
                   </>
@@ -295,7 +340,7 @@ function MeItemRow({ item, busy, onAnswer, onNote }) {
                 disabled={busy}
                 onClick={() => onAnswer(item, a)}
                 style={{ touchAction: "manipulation" }}
-                className={`flex-1 min-h-[40px] rounded-xl border text-sm font-medium disabled:opacity-50 ${item.result === a ? ANSWER_STYLE[a] : "bg-white text-gray-600 border-gray-300"}`}
+                className={`flex-1 min-h-[40px] rounded-xl border text-sm font-medium ${item.result === a ? ANSWER_STYLE[a] : "bg-white text-gray-600 border-gray-300 disabled:opacity-50"}`}
               >
                 {answerLabel(a, item.section)}
               </button>
