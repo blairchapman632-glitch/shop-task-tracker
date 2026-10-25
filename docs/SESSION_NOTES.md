@@ -323,3 +323,31 @@
 
   ### Not committed
   - This session-notes entry.
+
+  ## 2026-10-25 — Staff induction, Stage 1 of 5 (Admin core)
+
+  ### Done
+  - **`lib/induction.js`** (new): role → position (Pharmacist PH, Intern INT, Pharmacy Assistant / Retail Manager PA, DAA Coordinator DT, Locum excluded), sections, due date = start + 3 months, progress (any result counts, N/A included), Needs attention state (amber 14 days before due, red overdue).
+  - **Admin → New starter → "4. Induction"** (`components/InductionTab.js`): Start induction (supervisor = active non-locum staff; asks for start date if missing and fills the empty staff start date; "Pharmacy student" tick, pre-ticked from a Casual Pharmacy Student contract). Snapshots active template lines for the person's position (student-only lines only for students).
+  - Checklist: Section 1 read-only header, progress line + change supervisor, collapsible sections with x of y, Done / N/A / Declined (Section 4 "Competent"), click again to untick, notes (with prompts), "Pharmacist" label, "Add other item" in Sections 4 and 5 (removable), Section 6 placeholder, "Mark section done" on Getting started only, "Delete induction" (confirm; not once signed off).
+  - Contract history moved under step 2. Profile tab: "Paper induction on file" tick (hides step 4).
+  - **Needs attention → New starters**: "Induction x of y · Due [date]" for in-progress inductions.
+  - Template is now **v2.2**: streamlined (6 lines inactive, 3 reworded) + new "Getting started" section (16 lines; PDF label "Practical — not a QSPP requirement" for Stage 5).
+  - Committed: `11ace0f`.
+
+  ### Schema changes (all run by Blair)
+  - `2026-10-25_inductions.sql`: 3 new tables; `staff.can_sign_inductions`, `staff.paper_induction_on_file`; `policy_read_requests.induction_id`; v2.1 template seed (63).
+  - `2026-10-25_inductions_students.sql`: `student_only` on template + induction items, `staff_inductions.is_student`; student lines + separate AHPRA student line.
+  - `2026-10-25_inductions_v2_2.sql`: section check allows `start`; template renamed v2.1 → v2.2; 74 active / 80 rows.
+
+  ### New tables (add to RLS pass)
+  - `induction_template_items`, `staff_inductions`, `staff_induction_items`.
+
+  ### Follow-ups / parked
+  - Drop later once happy: `induction_template_items_backup_20261025`, `induction_template_items_backup_20261025b`.
+  - Stage 2: /me sign-off for senior staff (`can_sign_inductions` UI). Stage 3: induction policies + kiosk card (`kind = policy`, `document_id`, `policy_read_requests.induction_id`). Stage 4: auto-ticks (`auto_source` keys incl. `issued_items`). Stage 5: Section 6 from the probation review + PDF (`pdf_path`).
+  - Admin ticks store `signed_via = admin` with no staff member (Admin login isn't a staff record).
+  - Template lines are snapshotted at start — template changes don't reach inductions already started.
+
+  ### Not committed
+  - This session-notes entry.

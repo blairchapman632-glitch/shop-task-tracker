@@ -6,7 +6,7 @@ import ContractForm, { ContractHistory, ContractSignatureSettings } from "../com
 import EmploymentContractsList from "../components/EmploymentContractsList";
 import ReviewsTab, { ReviewsOverview } from "../components/PerformanceReviews";
 import StaffNeedsAttention from "../components/StaffNeedsAttention";
-import InductionStep from "../components/InductionTab";
+import InductionStep, { InductionPdfEntry } from "../components/InductionTab";
 import DocumentSections from "../components/DocumentSections";
 import { AskToReadModal, PolicyProgress } from "../components/PolicyRequests";
 import { REQUEST_COLUMNS } from "../lib/policyReads";
@@ -233,6 +233,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     is_driver: member?.is_driver ?? false,
     can_conduct_reviews: member?.can_conduct_reviews ?? false,
     exclude_from_reviews: member?.exclude_from_reviews ?? false,
+    can_sign_inductions: member?.can_sign_inductions ?? false,
     paper_induction_on_file: member?.paper_induction_on_file ?? false,
     uniforms_supplied: member?.uniforms_supplied ?? "",
     badge_supplied: member?.badge_supplied ?? false,
@@ -482,6 +483,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
       is_driver: form.is_driver,
       can_conduct_reviews: form.can_conduct_reviews,
       exclude_from_reviews: form.exclude_from_reviews,
+      can_sign_inductions: form.can_sign_inductions,
       paper_induction_on_file: form.paper_induction_on_file,
       uniforms_supplied: form.uniforms_supplied === "" ? null : Number(form.uniforms_supplied),
       badge_supplied: form.badge_supplied,
@@ -736,6 +738,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             { field: "is_roster_manager", label: "Roster manager", desc: "Receives push notifications for leave requests and availability changes" },
             { field: "is_driver", label: "Delivery driver", desc: "Sees the Deliveries tab on their phone app" },
             { field: "can_conduct_reviews", label: "Can conduct performance reviews", desc: "Appears in the reviewer list when starting a review" },
+            ...(form.role !== "Locum" ? [{ field: "can_sign_inductions", label: "Can sign off inductions", desc: "Can tick induction items for new starters in their staff app" }] : []),
             { field: "exclude_from_reviews", label: "Exclude from performance reviews", desc: "Never shown as due for a review" },
             ...(form.role !== "Locum" ? [{ field: "paper_induction_on_file", label: "Paper induction on file", desc: "Inducted on the paper checklist — no induction in the New starter tab" }] : []),
           ].map(({ field, label, desc }) => (
@@ -1121,6 +1124,8 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                 Documents {documents.length > 0 && <span className="text-gray-400 font-normal">({documents.length})</span>}
               </div>
 
+              <InductionPdfEntry member={member} />
+
               <DocumentSections
                 sections={docSections({ id: member.id, role: form.role, active: form.active }, serviceConfig)}
                 docs={documents}
@@ -1272,7 +1277,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
           {!isNew && (
             <>
               {/* b) Contract */}
-              <div className="border-t pt-4 space-y-3">
+              <div id="ns-contract" className="border-t pt-4 space-y-3 scroll-mt-4">
                 <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">2. Contract</div>
                 <ContractForm
                   member={member}
@@ -1334,6 +1339,10 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                     member={member}
                     contracts={contracts}
                     adminUser={adminUser}
+                    onOpenTab={(tab, reviewId) => {
+                      if (tab === "newstarter") document.getElementById("ns-contract")?.scrollIntoView({ behavior: "smooth" });
+                      else { if (tab === "reviews") setReviewToOpen(reviewId || null); setActiveTab(tab); }
+                    }}
                     onStaffUpdated={(row) => {
                       setForm((f) => (f.start_date ? f : { ...f, start_date: row.start_date || "" }));
                       onRefresh?.(row);

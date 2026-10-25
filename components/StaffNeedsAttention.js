@@ -108,7 +108,7 @@ export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy })
       {
         title: "Policies", tab: null,
         items: data.policyDocs
-          .map((d) => ({ d, p: docProgress(d.id, data.policyRequests, active) }))
+          .map((d) => ({ d, p: docProgress(d.id, data.policyRequests.filter((r) => !r.induction_id), active) })) // induction reads: covered by the induction line
           .filter(({ p }) => p.outstanding > 0)
           .sort((a, b) => String(a.d.title).localeCompare(String(b.d.title)))
           .map(({ d, p }) => ({

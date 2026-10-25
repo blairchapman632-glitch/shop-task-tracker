@@ -3,6 +3,7 @@
 // read_at, read_via = 'phone', and a snapshot of the file version (name + URL) they read.
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { staffFromRequest, fail } from "../../../lib/reviewServer";
+import { tickInductionLine } from "../../../lib/policyReads";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -26,9 +27,10 @@ export default async function handler(req, res) {
       read_via: "phone",
       read_file_name: request.document?.title || request.document?.file_name || null,
       read_file_url: request.document?.file_url || null,
-    }).eq("id", request.id).eq("staff_id", Number(staff.id)).eq("status", "outstanding").select("id");
+    }).eq("id", request.id).eq("staff_id", Number(staff.id)).eq("status", "outstanding").select("id, document_id, induction_id, read_at, read_via");
     if (upErr) throw upErr;
     if (!updated?.length) return res.status(409).json({ error: "This policy is no longer waiting to be read." });
+    await tickInductionLine(db, updated[0]); // induction requests tick their Section 3 line
 
     res.status(200).json({ ok: true });
   } catch (err) {

@@ -6,6 +6,10 @@ import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
+import { fmtDateShort, perthDateOf } from "../lib/performanceReview";
+import { syncInductionAuto } from "../lib/inductionAuto";
+import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
+import { adminFetch } from "../lib/adminFetch";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -658,6 +662,9 @@ export default function HomePage() {
   const [policyJobs, setPolicyJobs] = useState([]);          // outstanding policy reads for staff rostered on today
   const [openPolicyJob, setOpenPolicyJob] = useState(null);  // policy card tapped (shows the "I have read and understood" panel)
   const [policyAckBusy, setPolicyAckBusy] = useState(false);
+  const [inductionJobs, setInductionJobs] = useState([]);     // in-progress inductions of staff rostered on today: { id, staffId, requests, items }
+  const [openInductionId, setOpenInductionId] = useState(null); // induction card tapped (policies panel)
+  const [inductionAckId, setInductionAckId] = useState(null);   // request being acknowledged in that panel
 
   // ── Leaderboard ──
   const [leadersWeek, setLeadersWeek] = useState([]);
@@ -1199,10 +1206,105 @@ export default function HomePage() {
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error) { console.error("[policy jobs]", error); setPolicyJobs([]); return; }
-        setPolicyJobs((data || []).filter((r) => r.document && r.document.active !== false));
+        // Induction requests are read inside the one induction card instead
+        setPolicyJobs((data || []).filter((r) => r.document && r.document.active !== false && !r.induction_id));
       });
     return () => { cancelled = true; };
   }, [todayRosteredIds, currentPharmacyId, staff]);
+
+  // Induction card: one per rostered-on staff member with an in-progress induction and at least one policy still to read.
+  // Same rules as policy cards (no task rows, not in the progress count, no leaderboard).
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    const activeIds = new Set(staff.map((st) => Number(st.id)));
+    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    if (!ids.length) { setInductionJobs([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: inds, error } = await supabase.from("staff_inductions").select("*")
+          .eq("pharmacy_id", currentPharmacyId).eq("status", "in_progress").in("staff_id", ids);
+        if (error) throw error;
+        const indIds = (inds || []).map((i) => i.id);
+        if (!indIds.length) { if (!cancelled) setInductionJobs([]); return; }
+        const [rq, it, rv] = await Promise.all([
+          supabase.from("policy_read_requests")
+            .select(`${REQUEST_COLUMNS}, document:document_id(id, title, file_url, file_name, active)`)
+            .in("induction_id", indIds).neq("status", "cancelled").order("requested_at"),
+          supabase.from("staff_induction_items").select("*").in("induction_id", indIds),
+          supabase.from("performance_reviews").select("id, staff_id, review_type, status, signed_at, created_at")
+            .in("staff_id", (inds || []).map((i) => i.staff_id)),
+        ]);
+        if (rq.error || it.error || rv.error) throw rq.error || it.error || rv.error;
+        // Auto lines tick / untick themselves before counting "Shown or signed off"
+        let allItems = it.data || [];
+        for (const ind of inds) {
+          const mine = allItems.filter((i) => String(i.induction_id) === String(ind.id));
+          const { items: synced } = await syncInductionAuto(supabase, ind, mine)
+            .catch((e) => { console.error("[induction auto]", e); return { items: mine }; });
+          allItems = [...allItems.filter((i) => String(i.induction_id) !== String(ind.id)), ...synced];
+        }
+        if (cancelled) return;
+        setInductionJobs((inds || []).map((ind) => {
+          const items = allItems.filter((i) => String(i.induction_id) === String(ind.id));
+          const review = pickProbationReview((rv.data || []).filter((r) => Number(r.staff_id) === Number(ind.staff_id)));
+          return {
+            id: ind.id,
+            staffId: ind.staff_id,
+            induction: ind,
+            requests: (rq.data || []).filter((r) => String(r.induction_id) === String(ind.id) && r.document && r.document.active !== false),
+            items,
+            // Ready + not yet confirmed -> the card becomes "Confirm your induction" (the server checks again)
+            confirm: inductionReadiness(ind, items, review).ready && !ind.employee_confirmed_at,
+          };
+        }));
+      } catch (err) {
+        console.error("[induction jobs]", err);
+        if (!cancelled) setInductionJobs([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [todayRosteredIds, currentPharmacyId, staff]);
+
+  const inductionCards = inductionJobs.filter((j) => j.confirm || j.requests.some((r) => r.status === "outstanding"));
+  const openInduction = inductionJobs.find((j) => j.id === openInductionId) || null;
+
+  // "These were explained to me and I understand them" (kiosk; server checks ready + rostered on today)
+  const [inductionConfirmBusy, setInductionConfirmBusy] = useState(false);
+  const handleInductionConfirm = async (j) => {
+    setInductionConfirmBusy(true);
+    try {
+      const res = await adminFetch("/api/inductions/kiosk-confirm", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: j.id }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Couldn't save");
+      setInductionJobs((prev) => prev.map((x) => (x.id === j.id
+        ? { ...x, confirm: false, induction: { ...x.induction, employee_confirmed_at: new Date().toISOString() } } : x)));
+      setOpenInductionId(null);
+    } catch (err) {
+      alert("Couldn't confirm: " + (err?.message || String(err)));
+    } finally {
+      setInductionConfirmBusy(false);
+    }
+  };
+
+  // "I have read and understood" inside the induction panel (acknowledgeRequest also ticks the Section 3 line)
+  const handleInductionAck = async (r) => {
+    setInductionAckId(r.id);
+    try {
+      await acknowledgeRequest(supabase, r, r.document, "kiosk"); // false = already recorded elsewhere
+      const readAt = new Date().toISOString();
+      setInductionJobs((prev) => prev.map((j) => ({
+        ...j,
+        requests: j.requests.map((x) => (x.id === r.id ? { ...x, status: "read", read_at: x.read_at || readAt, read_via: x.read_via || "kiosk" } : x)),
+      })));
+    } catch (err) {
+      alert("Couldn't save: " + (err?.message || String(err)));
+    } finally {
+      setInductionAckId(null);
+    }
+  };
 
   // "I have read and understood" for the named person on the card (read_via kiosk + file snapshot)
   const handlePolicyAck = async () => {
@@ -1726,7 +1828,7 @@ const handleDeliveryTap = async (d) => {
                   </div>
 
                   {/* On the List section */}
-                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped") || hireDueBack.length > 0 || policyJobs.length > 0) && (
+                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped") || hireDueBack.length > 0 || policyJobs.length > 0 || inductionCards.length > 0) && (
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">Today's Jobs</div>
@@ -1783,6 +1885,33 @@ const handleDeliveryTap = async (d) => {
                             <div className="text-[10px] text-gray-400">Tap to open, then tick when read</div>
                           </button>
                         ))}
+                        {inductionCards.map((j) => {
+                          const read = j.requests.filter((r) => r.status === "read").length;
+                          if (j.confirm) {
+                            return (
+                              <button
+                                key={`induction-${j.id}`}
+                                onClick={() => setOpenInductionId(j.id)}
+                                className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-green-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
+                              >
+                                <div className="font-semibold text-sm leading-tight text-gray-800 mb-1 break-words">📋 Confirm your induction</div>
+                                <div className="text-xs text-green-700 font-medium mb-1">👤 {staffById[j.staffId]?.name || "Staff member"}</div>
+                                <div className="text-[10px] text-gray-400">Tap to check and confirm</div>
+                              </button>
+                            );
+                          }
+                          return (
+                            <button
+                              key={`induction-${j.id}`}
+                              onClick={() => setOpenInductionId(j.id)}
+                              className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-blue-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
+                            >
+                              <div className="font-semibold text-sm leading-tight text-gray-800 mb-1 break-words">📋 {staffById[j.staffId]?.name || "Staff member"}'s induction</div>
+                              <div className="text-xs text-blue-600 font-medium mb-1">{read} of {j.requests.length} policies read</div>
+                              <div className="text-[10px] text-gray-400">Tap to see the policies to read</div>
+                            </button>
+                          );
+                        })}
                         {monthlyTasks.map((task) => {
                           const isWeekly = task.frequency === "weekly";
                           const isDone = isWeekly
@@ -2640,6 +2769,124 @@ const handleDeliveryTap = async (d) => {
         </>,
         document.body
       )}
+      {/* Induction policies panel */}
+      {openInduction?.confirm && createPortal(
+        (() => {
+          const name = staffById[openInduction.staffId]?.name || "this staff member";
+          const nameOf = (id) => staffById[id]?.name || "";
+          const sections = INDUCTION_SECTIONS.filter((s) => s.key !== "office"); // office use isn't explained to them
+          return (
+            <>
+              <div className="fixed inset-0 z-40 bg-black/40" onClick={() => !inductionConfirmBusy && setOpenInductionId(null)} />
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+                    <h2 className="font-semibold text-gray-800">📋 Confirm your induction</h2>
+                    <button onClick={() => setOpenInductionId(null)} disabled={inductionConfirmBusy} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+                  </div>
+                  <div className="px-5 py-4 overflow-y-auto space-y-4">
+                    <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm text-blue-800">
+                      For <span className="font-semibold">{name}</span>
+                    </div>
+                    {sections.map((s) => {
+                      const rows = openInduction.items.filter((i) => i.section === s.key && i.result)
+                        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+                      if (!rows.length) return null;
+                      return (
+                        <div key={s.key}>
+                          <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{s.title}{s.sub ? ` — ${s.sub}` : ""}</div>
+                          <div className="divide-y">
+                            {rows.map((i) => (
+                              <div key={i.id} className="py-1.5">
+                                <div className="text-sm text-gray-700 break-words">{i.wording}</div>
+                                <div className="text-[11px] text-gray-400">
+                                  {answerLabel(i.result, i.section)} · {signerLabel(i, nameOf)}{i.signed_at ? ` · ${fmtDateShort(perthDateOf(i.signed_at))}` : ""}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="px-5 py-4 border-t shrink-0">
+                    <button onClick={() => handleInductionConfirm(openInduction)} disabled={inductionConfirmBusy} className="w-full bg-green-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
+                      {inductionConfirmBusy ? "Saving…" : "These were explained to me and I understand them"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          );
+        })(),
+        document.body
+      )}
+
+      {openInduction && !openInduction.confirm && createPortal(
+        (() => {
+          const toRead = openInduction.requests.filter((r) => r.status === "outstanding");
+          const done = openInduction.requests.filter((r) => r.status === "read")
+            .sort((a, b) => String(b.read_at || "").localeCompare(String(a.read_at || "")));
+          const shown = openInduction.items.filter((i) => ["start", "2", "4", "5"].includes(i.section));
+          const shownDone = shown.filter((i) => i.result).length;
+          return (
+            <>
+              <div className="fixed inset-0 z-40 bg-black/40" onClick={() => !inductionAckId && setOpenInductionId(null)} />
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+                    <h2 className="font-semibold text-gray-800">📋 Induction</h2>
+                    <button onClick={() => setOpenInductionId(null)} disabled={!!inductionAckId} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+                  </div>
+                  <div className="px-5 py-4 overflow-y-auto space-y-4">
+                    <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm text-blue-800">
+                      For <span className="font-semibold">{staffById[openInduction.staffId]?.name || "this staff member"}</span>
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Policies to read ({toRead.length})</div>
+                      {toRead.length === 0 ? (
+                        <p className="text-sm text-green-700">✓ All policies read.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {toRead.map((r) => (
+                            <div key={r.id} className="rounded-lg border border-gray-200 p-3 space-y-2">
+                              <div className="text-sm font-medium text-gray-800 break-words">{r.document.title}</div>
+                              <div className="flex gap-2">
+                                <a href={r.document.file_url} target="_blank" rel="noopener noreferrer" className="flex-1 text-center border border-gray-300 rounded-lg py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                  Open
+                                </a>
+                                <button onClick={() => handleInductionAck(r)} disabled={!!inductionAckId} className="flex-[2] bg-blue-600 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-40">
+                                  {inductionAckId === r.id ? "Saving…" : "I have read and understood"}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {done.length > 0 && (
+                      <div>
+                        <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Policies read ({done.length})</div>
+                        <div className="divide-y">
+                          {done.map((r) => (
+                            <div key={r.id} className="flex items-start justify-between gap-2 py-1.5 text-gray-400">
+                              <span className="text-sm break-words">{r.document.title}</span>
+                              <span className="text-xs shrink-0">{fmtDateShort(perthDateOf(r.read_at))}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500 border-t pt-3">Shown or signed off: {shownDone} of {shown.length}</p>
+                  </div>
+                </div>
+              </div>
+            </>
+          );
+        })(),
+        document.body
+      )}
+
       {/* Deliveries modal */}
       {openPolicyJob && createPortal(
         <>

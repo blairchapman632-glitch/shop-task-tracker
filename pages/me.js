@@ -6,6 +6,7 @@ import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib
 import { fetchMyReview, prepWaiting, MyReviewBanner, MyReviewSection } from "../components/MyReview";
 import { fetchMyPolicies, policiesToRead, MyPoliciesBanner, MyPoliciesSection } from "../components/MyPolicies";
 import MyTrainingTab from "../components/MyTraining";
+import { MyInductionsSection } from "../components/MyInductions";
 import { fetchMyTrainingNudges, TrainingNudges } from "../components/MyCertificates";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -2212,6 +2213,7 @@ function DeliveriesCard({ onOpen }) {
 }
 
 // To do: performance review (Section 2 prep / comments) + policies to read
+// + Inductions (only for staff who can sign them off; not part of the badge count)
 function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, nudges, onOpenNudge }) {
   const hasReview = !!(myReview?.mode && myReview.review);
   const hasPolicies = !!(myPolicies?.outstanding?.length || myPolicies?.read?.length);
@@ -2225,6 +2227,7 @@ function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPoli
           Nothing to do right now.
         </div>
       )}
+      <MyInductionsSection />
     </div>
   );
 }
