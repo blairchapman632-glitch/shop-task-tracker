@@ -351,3 +351,29 @@
 
   ### Not committed
   - This session-notes entry.
+
+  ## 2026-10-25 (cont.) — Staff induction, Stages 2–5
+
+  ### Done
+  - **Stage 2 — /me sign-off:** "Can sign off inductions" flag (Profile tab). Routes `pages/api/inductions/{list,detail,answer,mark-section}` (staff login + flag, else 401/403; rules in `lib/inductionServer.js`): no own induction, no Office use, Section 3 read-only, pharmacist-only lines need role Pharmacist, someone else's tick can't be changed from /me. /me To do → "Inductions" card (`components/MyInductions.js`), not in the badge. Admin shows the signer's name for /me ticks.
+  - **Stage 3 — policies:** all 26 Section 3 template lines linked to library documents (exact title match). Start induction sends read requests (`induction_id` set; an outstanding one is reused). Reading (any path through `acknowledgeRequest` or `/api/policies/acknowledge`) ticks the line ("Read [date] · kiosk"); an Admin N/A isn't overwritten. Kiosk: one "📋 Name's induction · x of y policies read" card instead of separate "📄 Read:" cards. Needs attention Policies group leaves out induction requests. Delete cancels only requests the induction created (`requested_at` = induction `created_at`); reused ones stay outstanding.
+  - **Stage 4 — auto-checks** (`lib/inductionAuto.js`), run on every load of an in-progress induction (Admin, /me detail, kiosk): contract accepted, emergency contact (name + phone), AHPRA / indemnity / S2/S3 / first aid or CPR on file and not expired (pharmacists: the Vaccinating service's first aid + CPR certificates), Vaccinating certificates complete, training plan (plan roles only), uniform (Uniforms Supplied ≥ 1 and Badge supplied). Manual answers always win; auto ticks drop back if the source goes. Admin "Add" links open the right tab.
+  - **Stage 5 — sign-off:** Section 6 in Admin (probation review link, outcome Confirmed / Extended to / Not confirmed, completed in 3 months + late reason). Order enforced server-side: ready → employee confirms on the kiosk ("📋 Confirm your induction", rostered on today) → supervisor signs off in Admin or their /me (`pages/api/inductions/{kiosk-confirm,sign-off}`). Locked after sign-off; gone from Needs attention / /me / kiosk. PDF (`lib/inductionPdf.js`, header from `FORM_META` in `lib/induction.js`) in the private bucket, opened by 10-minute signed URL from step 4 and the Documents tab. Rebuild PDF and Reopen (reason, keeps ticks) in Admin.
+  - Committed: `8c2fee6`.
+
+  ### Schema changes (all run by Blair)
+  - `2026-10-25_induction_policy_links.sql`: `document_id` on the 26 Section 3 template lines.
+  - `2026-10-25_induction_signoff.sql`: `staff_inductions.probation_outcome`, `probation_extended_to`, `probation_review_id`, `signed_off_via`, `reopened_at`, `reopened_reason`; new private bucket `staff-inductions`.
+
+  ### New tables (add to RLS pass)
+  - No new tables. Add the **`staff-inductions`** storage bucket (private, service-role routes only) and the new `staff_inductions` columns above (table already listed).
+
+  ### Follow-ups / parked
+  - Drop later once happy: `induction_template_items_backup_20261025`, `induction_template_items_backup_20261025b`, `induction_template_items_backup_20261025c`.
+  - Test inductions started before each stage keep their old copy — delete and restart them.
+  - A change to a line after the employee has confirmed doesn't clear the confirmation (sign-off still re-checks readiness).
+  - Kiosk confirm list leaves out Office use lines.
+  - Admin ticks / Section 6 saves use the browser client (like the rest of Admin); sign-off, confirm, PDF and reopen are server routes.
+
+  ### Not committed
+  - This session-notes entry.
