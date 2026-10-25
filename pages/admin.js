@@ -6,6 +6,7 @@ import ContractForm, { ContractHistory, ContractSignatureSettings } from "../com
 import EmploymentContractsList from "../components/EmploymentContractsList";
 import ReviewsTab, { ReviewsOverview } from "../components/PerformanceReviews";
 import StaffNeedsAttention from "../components/StaffNeedsAttention";
+import InductionStep from "../components/InductionTab";
 import DocumentSections from "../components/DocumentSections";
 import { AskToReadModal, PolicyProgress } from "../components/PolicyRequests";
 import { REQUEST_COLUMNS } from "../lib/policyReads";
@@ -232,6 +233,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     is_driver: member?.is_driver ?? false,
     can_conduct_reviews: member?.can_conduct_reviews ?? false,
     exclude_from_reviews: member?.exclude_from_reviews ?? false,
+    paper_induction_on_file: member?.paper_induction_on_file ?? false,
     uniforms_supplied: member?.uniforms_supplied ?? "",
     badge_supplied: member?.badge_supplied ?? false,
     keys_supplied: member?.keys_supplied ?? false,
@@ -273,7 +275,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     if (!member?.id) return;
     const [{ data }, { data: st }] = await Promise.all([
       supabase.from("employment_contracts")
-        .select("id, template_id, status, field_values, issued_at, issued_file_path, accepted_at, accepted_name, accepted_file_path, created_at, updated_at, contract_templates:template_id(label)")
+        .select("id, template_id, status, field_values, issued_at, issued_file_path, accepted_at, accepted_name, accepted_file_path, created_at, updated_at, contract_templates:template_id(label, key)")
         .eq("staff_id", member.id)
         .order("created_at", { ascending: false }),
       // Fresh read — set by the onboarding page when they submit their payroll details
@@ -480,6 +482,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
       is_driver: form.is_driver,
       can_conduct_reviews: form.can_conduct_reviews,
       exclude_from_reviews: form.exclude_from_reviews,
+      paper_induction_on_file: form.paper_induction_on_file,
       uniforms_supplied: form.uniforms_supplied === "" ? null : Number(form.uniforms_supplied),
       badge_supplied: form.badge_supplied,
       keys_supplied: form.keys_supplied,
@@ -734,6 +737,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             { field: "is_driver", label: "Delivery driver", desc: "Sees the Deliveries tab on their phone app" },
             { field: "can_conduct_reviews", label: "Can conduct performance reviews", desc: "Appears in the reviewer list when starting a review" },
             { field: "exclude_from_reviews", label: "Exclude from performance reviews", desc: "Never shown as due for a review" },
+            ...(form.role !== "Locum" ? [{ field: "paper_induction_on_file", label: "Paper induction on file", desc: "Inducted on the paper checklist — no induction in the New starter tab" }] : []),
           ].map(({ field, label, desc }) => (
             <div key={field} className="flex items-center justify-between">
               <div>
@@ -1224,7 +1228,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
         </div>
         )}
 
-        {/* ── NEW STARTER TAB ── (basics → contract → onboarding link → history) */}
+        {/* ── NEW STARTER TAB ── (basics → contract + history → onboarding link → induction) */}
         {activeTab === "newstarter" && (
         <div className="space-y-5">
 
@@ -1279,6 +1283,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                     onRefresh?.(row);
                   }}
                 />
+                <ContractHistory contracts={contracts} />
               </div>
 
               {/* c) Onboarding link + status */}
@@ -1319,9 +1324,22 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                 )}
               </div>
 
-              {/* d) History */}
-              <div className="border-t pt-4">
-                <ContractHistory contracts={contracts} />
+              {/* d) Induction (QSPP-4.9-induction-checklist) */}
+              <div className="border-t pt-4 space-y-2">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">4. Induction</div>
+                {member?.paper_induction_on_file ? (
+                  <p className="text-xs text-gray-500">Paper induction on file.</p>
+                ) : (
+                  <InductionStep
+                    member={member}
+                    contracts={contracts}
+                    adminUser={adminUser}
+                    onStaffUpdated={(row) => {
+                      setForm((f) => (f.start_date ? f : { ...f, start_date: row.start_date || "" }));
+                      onRefresh?.(row);
+                    }}
+                  />
+                )}
               </div>
             </>
           )}

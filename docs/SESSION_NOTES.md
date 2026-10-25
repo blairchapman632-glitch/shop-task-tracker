@@ -298,3 +298,28 @@
 
   ### Not committed
   - Stage 1 Part B, Stage 2 and Stage 3.
+
+  ## 2026-10-09 — QSPP Library: domain groups + document version control
+
+  ### Done
+  - **Grouped library** (`lib/docFolders.js` shared by kiosk + Admin): folders grouped by `document_folders.group_name`, group order = lowest `sort_order`, ungrouped → "Other" at the end.
+  - **Kiosk `/documents` Library tab**: two-column layout (wider page) — groups expand one at a time, section highlighted; phone gets group + section dropdowns. Search unchanged. Incidents tab untouched.
+  - **Admin QSPP → Documents**: folder list under group headings; Add folder and "Rename / group" take a Group (pick or type new); move-to-folder dropdown grouped.
+  - **File-type tag** now from `file_name` (PDF red / DOC blue / XLS green / grey FILE) on kiosk and Admin (Admin had a 📄 icon before).
+  - **Upload titles**: extension and leading "1.2 - " prefix stripped (`titleFromFileName`).
+  - **Version control**: "Replace" → "Upload new version" modal (version prefilled next minor, Updated by required, optional note). New file goes to a new timestamped path in the same folder; old files never deleted; title unchanged; `document_versions` row added. New uploads need "Updated by", start at v1.0 with "First version". Rows show "v1.1 · updated 9 Oct 2026 by Name" (Perth date); History list with Current marker and Open links. Delete (still blocked by read requests) removes every version's file. Kiosk shows grey "v1.1" next to titles.
+  - Committed: `5ae1bfc` (groups, tags, titles), `2119283` (version control).
+
+  ### Schema changes
+  - Run by Blair before the work: `document_folders.group_name` (filled); `pharmacy_documents.version` / `updated_by_staff_id` / `updated_at`; new `document_versions` table (208 rows, v1.0 "Initial import").
+
+  ### New tables (add to RLS pass)
+  - `document_versions`.
+
+  ### Follow-ups / parked
+  - Delete removes the document row first, then the storage files (leftover files at worst, never a row pointing at missing files).
+  - New document uploads still use the old `<folder-slug>/<timestamp>_<name>` storage path; new versions use `<same folder>/<timestamp> - <name>`.
+  - If a new version's history entry fails to save, the document is already on the new version (error says so).
+
+  ### Not committed
+  - This session-notes entry.
