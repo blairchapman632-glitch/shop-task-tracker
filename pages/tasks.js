@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 import Sidebar from "../components/Sidebar";
 import { ensureSectionYear, monthsOf, perthYear, perthMonthStart } from "../lib/sectionCleans";
+import { hasShowFrom, showFromLabel, LAST_DAY } from "../lib/taskPeriods";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -31,7 +32,10 @@ const freqLabel = (task) => {
     return arr.length ? arr.map((d) => DOW[d]).join("/") : "Weekly";
   }
   if (f === "monthly") return `Day ${task.day_of_month}`;
-  if (f === "monthly_anytime") return "Monthly";
+  if (f === "monthly_anytime") {
+    // On the List monthly with a show-from day: "Monthly · from 15th" / "Monthly · last day"
+    return hasShowFrom(task) ? `Monthly · ${showFromLabel(task.day_of_month)}` : "Monthly";
+  }
   if (f === "specific_date") return task.specific_date?.slice(0, 10) || "One-off";
   return f || "—";
 };
@@ -162,10 +166,21 @@ const handlePinSubmit = async () => {
     (searchQ ? t.title.toLowerCase().includes(searchQ.toLowerCase()) : true)
   ), [tasks, searchQ]);
 
-  const assignedTasks = useMemo(() => tasks.filter((t) =>
-    t.task_type === "on_the_list" &&
-    (searchQ ? t.title.toLowerCase().includes(searchQ.toLowerCase()) : true)
+  // On the List tasks are split across two tabs (organisation only — the kiosk, Insights and completions are unchanged):
+  //   "Assigned jobs"   = one-off (a specific date, or next shift)
+  //   "Recurring tasks" = monthly / day-of-month / weekly
+  const isRecurringOnList = (t) => !t.show_next_shift && ["monthly_anytime", "monthly", "weekly"].includes(t.frequency);
+  const matchesSearch = (t) => (searchQ ? t.title.toLowerCase().includes(searchQ.toLowerCase()) : true);
+  const assignedJobs = useMemo(() => tasks.filter((t) =>
+    t.task_type === "on_the_list" && !isRecurringOnList(t) && matchesSearch(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [tasks, searchQ]);
+  const recurringTasks = useMemo(() => tasks.filter((t) =>
+    t.task_type === "on_the_list" && isRecurringOnList(t) && matchesSearch(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [tasks, searchQ]);
+  // Both On the List tabs share the same form, columns and saving
+  const onListTab = activeTab === "assigned" || activeTab === "recurring";
 
   // ── Section cleans state ──
   const [sections, setSections] = useState([]);
@@ -460,7 +475,8 @@ const handleAutoBalance = async (staffId, staffName) => {
   // ── Open panel ──
   const openAdd = () => {
     setEditingTask(null);
-    const freq = activeTab === "general" ? "daily" : "monthly_anytime";
+    // Daily tab -> daily; Recurring tasks -> monthly; Assigned jobs -> one-off date
+    const freq = activeTab === "general" ? "daily" : activeTab === "recurring" ? "monthly_anytime" : "specific_date";
     setForm({ ...emptyForm, frequency: freq });
     setShowPanel(true);
   };
@@ -471,7 +487,8 @@ const handleAutoBalance = async (staffId, staffName) => {
       title: task.title || "",
       frequency: task.frequency || "daily",
       days_of_week: Array.isArray(task.days_of_week) ? task.days_of_week : [],
-      day_of_month: task.day_of_month || "",
+      // 0 = "Last day of month" (On the List monthly show-from day)
+      day_of_month: Number(task.day_of_month) === LAST_DAY && task.day_of_month !== null ? "last" : (task.day_of_month || ""),
       specific_date: task.specific_date?.slice(0, 10) || "",
       start_date: task.start_date?.slice(0, 10) || "",
       end_date: task.end_date?.slice(0, 10) || "",
@@ -505,7 +522,12 @@ const handleAutoBalance = async (staffId, staffName) => {
         title: form.title.trim(),
         frequency: form.frequency,
         days_of_week: form.frequency === "weekly" ? form.days_of_week : [],
-        day_of_month: form.frequency === "monthly" ? Number(form.day_of_month) || null : null,
+        day_of_month: form.frequency === "monthly"
+          ? Number(form.day_of_month) || null
+          // On the List monthly: optional "Show from day" — 1–31, or 0 = last day of the month (was never saved before)
+          : form.frequency === "monthly_anytime" && onListTab
+            ? (form.day_of_month === "last" ? LAST_DAY : Number(form.day_of_month) >= 1 && Number(form.day_of_month) <= 31 ? Number(form.day_of_month) : null)
+            : null,
         specific_date: form.frequency === "specific_date" ? form.specific_date || null : null,
         start_date: form.start_date || null,
         end_date: form.end_date || null,
@@ -519,7 +541,7 @@ const handleAutoBalance = async (staffId, staffName) => {
         assigned_staff_ids: form.assign_type === "multiple" ? form.assigned_staff_ids : [],
         show_next_shift: form.show_next_shift || false,
         created_by_staff_id: form.created_by_staff_id ? Number(form.created_by_staff_id) : null,
-        task_type: activeTab === "assigned" ? "on_the_list" : "daily",
+        task_type: onListTab ? "on_the_list" : "daily",
       };
 
       if (editingTask) {
@@ -627,7 +649,7 @@ const handleAutoBalance = async (staffId, staffName) => {
         <div className="font-medium text-sm text-gray-800">{task.title}</div>
         {task.info && <div className="text-xs text-gray-400 truncate max-w-[200px]">{task.info}</div>}
       </td>
-      {activeTab === "assigned" && (
+      {onListTab && (
         <td className="px-3 py-2 text-sm text-gray-600">
           {task.assigned_staff_id ? (
             <span className="font-medium text-blue-700">{staffById[task.assigned_staff_id]?.name || "—"}</span>
@@ -637,7 +659,7 @@ const handleAutoBalance = async (staffId, staffName) => {
       <td className="px-3 py-2 text-sm text-gray-600">{freqLabel(task)}</td>
       <td className="px-3 py-2 text-sm text-gray-600">{timePretty(task.due_time)}</td>
       <td className="px-3 py-2 text-sm text-gray-600">{task.points ?? 1}</td>
-      {activeTab === "assigned" && (
+      {onListTab && (
         <td className="px-3 py-2 text-xs text-gray-500">
           {task.created_by_staff_id ? staffById[task.created_by_staff_id]?.name || "—" : "—"}
         </td>
@@ -677,7 +699,8 @@ const handleAutoBalance = async (staffId, staffName) => {
           <div className="flex items-center gap-1">
             {[
               { key: "general", label: "Daily Tasks" },
-              { key: "assigned", label: "Assigned Tasks" },
+              { key: "assigned", label: "Assigned jobs" },
+              { key: "recurring", label: "Recurring tasks" },
               { key: "sections", label: "Section Cleans" },
             ].map((tab) => (
               <button
@@ -696,7 +719,12 @@ const handleAutoBalance = async (staffId, staffName) => {
             )}
             {activeTab === "assigned" && (
               <button onClick={openAdd} className="px-4 py-1.5 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600">
-                + Assigned Task
+                + Assigned Job
+              </button>
+            )}
+            {activeTab === "recurring" && (
+              <button onClick={openAdd} className="px-4 py-1.5 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600">
+                + Recurring Task
               </button>
             )}
 
@@ -1204,11 +1232,11 @@ const handleAutoBalance = async (staffId, staffName) => {
                 <thead className="bg-gray-50 border-b">
                   <tr>
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Task</th>
-                    {activeTab === "assigned" && <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Assigned To</th>}
+                    {onListTab && <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Assigned To</th>}
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Frequency</th>
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Due Time</th>
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Points</th>
-                    {activeTab === "assigned" && <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Added By</th>}
+                    {onListTab && <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Added By</th>}
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                     <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
                   </tr>
@@ -1220,9 +1248,14 @@ const handleAutoBalance = async (staffId, staffName) => {
                       : generalTasks.map((t) => <TaskRow key={t.id} task={t} />)
                   )}
                   {activeTab === "assigned" && (
-                    assignedTasks.length === 0
-                      ? <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400 text-sm">No assigned or monthly tasks yet.</td></tr>
-                      : assignedTasks.map((t) => <TaskRow key={t.id} task={t} />)
+                    assignedJobs.length === 0
+                      ? <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400 text-sm">No one-off assigned jobs yet.</td></tr>
+                      : assignedJobs.map((t) => <TaskRow key={t.id} task={t} />)
+                  )}
+                  {activeTab === "recurring" && (
+                    recurringTasks.length === 0
+                      ? <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400 text-sm">No recurring tasks yet.</td></tr>
+                      : recurringTasks.map((t) => <TaskRow key={t.id} task={t} />)
                   )}
                 </tbody>
               </table>
@@ -1259,7 +1292,7 @@ const handleAutoBalance = async (staffId, staffName) => {
               </div>
 
               {/* Assignment — On the List only */}
-              {activeTab === "assigned" && (
+              {onListTab && (
                 <div className="space-y-2">
                   <div>
                     <label className="block text-xs font-semibold text-gray-600 mb-1">Assign to</label>
@@ -1352,7 +1385,7 @@ const handleAutoBalance = async (staffId, staffName) => {
                   </select>
                 </div>
               )}
-              {activeTab === "assigned" && (
+              {onListTab && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Type</label>
                   <select
@@ -1400,7 +1433,7 @@ const handleAutoBalance = async (staffId, staffName) => {
               )}
 
               {/* On the List — Weekly days */}
-              {form.frequency === "weekly" && activeTab === "assigned" && (
+              {form.frequency === "weekly" && onListTab && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Days of week</label>
                   <div className="grid grid-cols-7 gap-1">
@@ -1441,19 +1474,34 @@ const handleAutoBalance = async (staffId, staffName) => {
               )}
 
               {/* On the List — Monthly */}
-              {form.frequency === "monthly_anytime" && activeTab === "assigned" && (
+              {form.frequency === "monthly_anytime" && onListTab && (
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">Day of month (optional)</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={form.day_of_month}
-                      onChange={(e) => setForm((f) => ({ ...f, day_of_month: e.target.value }))}
-                      placeholder="e.g. 1 for 1st of month"
-                      className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                    />
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Show from day (optional)</label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min={1}
+                        max={31}
+                        value={form.day_of_month === "last" ? "" : form.day_of_month}
+                        disabled={form.day_of_month === "last"}
+                        onChange={(e) => setForm((f) => ({ ...f, day_of_month: e.target.value }))}
+                        placeholder="e.g. 15"
+                        className="w-28 rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50"
+                      />
+                      <label className="flex items-center gap-1.5 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={form.day_of_month === "last"}
+                          onChange={(e) => setForm((f) => ({ ...f, day_of_month: e.target.checked ? "last" : "" }))}
+                        />
+                        Last day of month
+                      </label>
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Blank = shows from the 1st. With a day, the card appears that day and turns red once it's passed; if it's still
+                      not done at month end it carries into next month in red. Days 29–31 count as the last day in shorter months.
+                    </p>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -1469,7 +1517,7 @@ const handleAutoBalance = async (staffId, staffName) => {
               )}
 
               {/* On the List — One-off date */}
-              {form.frequency === "specific_date" && !form.show_next_shift && activeTab === "assigned" && (
+              {form.frequency === "specific_date" && !form.show_next_shift && onListTab && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Date</label>
                   <input
@@ -1482,7 +1530,7 @@ const handleAutoBalance = async (staffId, staffName) => {
               )}
 
               {/* On the List — Next shift — no date needed */}
-              {form.show_next_shift && activeTab === "assigned" && (
+              {form.show_next_shift && onListTab && (
                 <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
                   This task will appear on the home screen on the day this staff member is next rostered.
                 </div>
@@ -1560,7 +1608,7 @@ const handleAutoBalance = async (staffId, staffName) => {
                 />
               </div>
 {/* Added by — On the List only */}
-              {activeTab === "assigned" && (
+              {onListTab && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Added by</label>
                   <select

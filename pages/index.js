@@ -11,6 +11,7 @@ import { syncInductionAuto } from "../lib/inductionAuto";
 import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
 import { adminFetch } from "../lib/adminFetch";
 import { ensureSectionYear, perthYear, perthMonthStart } from "../lib/sectionCleans";
+import { hasShowFrom, showFromDate, prevMonthOf, monthShort, periodMonthOfCompletion } from "../lib/taskPeriods";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,9 @@ const isOverdue = (task, completedTaskIds, now = new Date()) => {
   const minsNow = now.getHours() * 60 + now.getMinutes();
   return timeToMinutes(task.due_time) < minsNow;
 };
+
+// Monthly On the List tasks can be marked "Nothing this month" (task_month_skips) instead of completed
+const isMonthlyFreq = (freq) => freq === "monthly_anytime" || freq === "monthly";
 
 const getTaskBadge = (task) => {
   const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -663,6 +667,9 @@ export default function HomePage() {
   const [policyJobs, setPolicyJobs] = useState([]);          // outstanding policy reads for staff rostered on today
   const [openPolicyJob, setOpenPolicyJob] = useState(null);  // policy card tapped (shows the "I have read and understood" panel)
   const [policyAckBusy, setPolicyAckBusy] = useState(false);
+  // Monthly On the List tasks with a show-from day: taskId -> open months [{ ym, start: "YYYY-MM-01", overdue, carry }]
+  // (this month once its day arrives, plus last month if it was missed — carried over in red)
+  const [monthCards, setMonthCards] = useState({});
   const [inductionJobs, setInductionJobs] = useState([]);     // in-progress inductions of staff rostered on today: { id, staffId, requests, items }
   const [openInductionId, setOpenInductionId] = useState(null); // induction card tapped (policies panel)
   const [inductionAckId, setInductionAckId] = useState(null);   // request being acknowledged in that panel
@@ -716,11 +723,13 @@ export default function HomePage() {
         { data: sectionCleanData },
         { data: upcomingShifts },
         { data: todaySickData },
+        { data: monthSkipData },
+        { data: recentComps },
       ] = await Promise.all([
         supabase.from("tasks").select("*").eq("pharmacy_id", currentPharmacyId).order("due_time", { ascending: true, nullsFirst: false }).order("title", { ascending: true }),
         supabase.from("staff").select("*").eq("pharmacy_id", currentPharmacyId).order("name", { ascending: true }),
         supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, staff_id, staff_name, staff:staff_id(id, name, photo_url)`).eq("shift_date", todayStr),
-        supabase.from("completions").select("task_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
+        supabase.from("completions").select("task_id, staff_id, completed_at, period_start").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
         (async () => {
           const months = [];
           for (let i = 2; i >= -1; i--) {
@@ -733,7 +742,36 @@ export default function HomePage() {
         })(),
         supabase.from("roster_shifts").select("staff_id, shift_date").gte("shift_date", todayStr).lte("shift_date", lookAheadEnd).order("shift_date", { ascending: true }),
         supabase.from("sick_days").select("roster_shift_id").eq("sick_date", todayStr),
+        // "Nothing this month" for this month and last month (last month = a carried-over show-from card)
+        supabase.from("task_month_skips").select("task_id, month").eq("pharmacy_id", currentPharmacyId)
+          .in("month", [`${prevMonthOf(todayStr.slice(0, 7))}-01`, perthMonthStart()]),
+        // Completions since the start of last month — which month each counts for (show-from tasks)
+        supabase.from("completions").select("task_id, completed_at, period_start").eq("pharmacy_id", currentPharmacyId)
+          .not("task_id", "is", null).gte("completed_at", new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()),
       ]);
+      const skippedThisMonth = new Set((monthSkipData || []).filter((x) => String(x.month).slice(0, 10) === perthMonthStart()).map((x) => Number(x.task_id)));
+
+      // Monthly On the List tasks with a show-from day: which months are open.
+      //   this month — from its show-from day, red once that day has passed
+      //   last month — if missed (not done, not "Nothing this month"), carried over in red
+      const curYm = todayStr.slice(0, 7);
+      const prevYm = prevMonthOf(curYm);
+      const monthDone = new Set((recentComps || []).map((c) => `${c.task_id}|${periodMonthOfCompletion(c)}`));
+      const monthSkipped = new Set((monthSkipData || []).map((x) => `${x.task_id}|${String(x.month).slice(0, 7)}`));
+      const openMonths = {};
+      for (const task of t || []) {
+        if (!hasShowFrom(task) || task.active === false) continue;
+        const cards = [];
+        const isOpen = (ym) => !monthDone.has(`${task.id}|${ym}`) && !monthSkipped.has(`${task.id}|${ym}`);
+        // Carry last month only if the task already existed (and had started) by last month's show-from day
+        const prevDue = showFromDate(task, prevYm);
+        const existed = String(perthDateOf(task.created_at) || "") <= prevDue && !(task.start_date && String(task.start_date).slice(0, 10) > prevDue);
+        if (existed && isOpen(prevYm)) cards.push({ ym: prevYm, start: `${prevYm}-01`, overdue: true, carry: true });
+        const curDue = showFromDate(task, curYm);
+        if (todayStr >= curDue && isOpen(curYm)) cards.push({ ym: curYm, start: `${curYm}-01`, overdue: todayStr > curDue, carry: false });
+        openMonths[task.id] = cards;
+      }
+      setMonthCards(openMonths);
 
       const activeStaff = (s || []).filter((x) => x.active !== false);
       setStaff(activeStaff);
@@ -812,9 +850,16 @@ export default function HomePage() {
           } else if (freq === "specific_date") {
             if (task.specific_date?.slice(0, 10) !== todayStr) return false;
           }
-          // monthly_anytime → no date gate, shows all month
-          // ...but hide it once it's been completed this month
-          if (freq === "monthly_anytime" && monthlyCompMap[task.id]) return false;
+          if (hasShowFrom(task)) {
+            // Monthly with a show-from day → shown while this month (from its day) or a missed last month is open
+            if (!(openMonths[task.id] || []).length) return false;
+          } else {
+            // monthly_anytime → no date gate, shows all month
+            // ...but hide it once it's been completed this month
+            if (freq === "monthly_anytime" && monthlyCompMap[task.id]) return false;
+            // ...or marked "Nothing this month" (resolved for the month, like a completion)
+            if ((freq === "monthly_anytime" || freq === "monthly") && skippedThisMonth.has(Number(task.id))) return false;
+          }
 
           // Assignment gate — who is rostered
           // Role-based — show if anyone in that role is rostered today
@@ -1392,6 +1437,53 @@ export default function HomePage() {
     }
   };
 
+  // "Nothing this month" on a monthly task: resolved for the month (drops off, not overdue). Not a completion —
+  // no points, no Activity feed, shown as "—" in Insights.
+  // Show-from tasks: period = the month card ({ ym, start, carry }) — a carried-over card is skipped for ITS month.
+  const handleNothingThisMonth = async (task, period = null) => {
+    const what = period?.carry ? `for ${monthShort(period.ym)}` : "this month";
+    if (!selectedStaffId) { alert("Tap your photo first, then tap Nothing this month."); return; }
+    if (!window.confirm(`Nothing to do for "${task.title}" ${what}?`)) return;
+    const { error } = await supabase.from("task_month_skips").insert([{
+      pharmacy_id: currentPharmacyId,
+      task_id: Number(task.id),
+      month: period ? period.start : perthMonthStart(),
+      staff_id: Number(selectedStaffId),
+    }]);
+    if (error && error.code !== "23505") { alert("Couldn't save: " + error.message); return; } // 23505 = already marked
+    if (period) closeMonthCard(task.id, period.start);
+    else setTasks((prev) => prev.filter((t) => t.id !== task.id));
+  };
+
+  // A month card is done or skipped: drop it (the task goes once no month is left open)
+  const closeMonthCard = (taskId, start) => {
+    setMonthCards((prev) => {
+      const left = (prev[taskId] || []).filter((p) => p.start !== start);
+      if (!left.length) setTasks((ts) => ts.filter((t) => t.id !== taskId));
+      return { ...prev, [taskId]: left };
+    });
+  };
+
+  // Completing a show-from card counts for THAT card's month (completions.period_start), so a red carried-over
+  // October card done in November still counts for October. Otherwise a normal completion (points, Activity feed).
+  // completions has no one-per-day rule (checked 26/10/2026), so both cards can be done on the same day.
+  const handleMonthCardTap = async (task, period) => {
+    if (infoOpenId) { setInfoOpenId(null); return; }
+    if (!selectedStaffId) { alert("Tap your photo first, then tap the task."); return; }
+    const { error } = await supabase.from("completions").insert([{
+      task_id: Number(task.id),
+      staff_id: Number(selectedStaff.id),
+      pharmacy_id: currentPharmacyId,
+      completed_at: new Date().toISOString(),
+      period_start: period.start,
+    }]);
+    if (error) { alert("Error: " + error.message); return; }
+    closeMonthCard(task.id, period.start);
+    setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: period.carry ? `${task.title} (${monthShort(period.ym)})` : task.title, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
+    setLeadersRefreshKey((k) => k + 1);
+    burstConfetti();
+  };
+
   const postNote = async () => {
     const body = noteText.trim();
     if (!body) return;
@@ -1692,7 +1784,7 @@ const handleDeliveryTap = async (d) => {
               const dailyPct = dailyTotal ? Math.round((dailyDone / dailyTotal) * 100) : 0;
 
               const monthlyDone = monthlyTasks.filter((t) =>
-                t.frequency === "weekly" ? completedTaskIds.has(t.id) : Boolean(monthlyCompletions[t.id])
+                t.frequency === "weekly" ? completedTaskIds.has(t.id) : hasShowFrom(t) ? false : Boolean(monthlyCompletions[t.id])
               ).length;
               const monthlyTotal = monthlyTasks.length;
               const monthlyPct = monthlyTotal ? Math.round((monthlyDone / monthlyTotal) * 100) : 0;
@@ -1923,9 +2015,11 @@ const handleDeliveryTap = async (d) => {
                             </button>
                           );
                         })}
-                        {monthlyTasks.map((task) => {
+                        {monthlyTasks.flatMap((task) => (hasShowFrom(task)
+                          ? (monthCards[task.id] || []).map((period) => ({ task, period }))
+                          : [{ task, period: null }])).map(({ task, period }) => {
                           const isWeekly = task.frequency === "weekly";
-                          const isDone = isWeekly
+                          const isDone = period ? false : isWeekly
                             ? completedTaskIds.has(task.id)
                             : Boolean(monthlyCompletions[task.id]);
                           const monthlyComp = monthlyCompletions[task.id];
@@ -1934,17 +2028,25 @@ const handleDeliveryTap = async (d) => {
                           const todayStr = todayPerth();
                           const isOnListOverdue = !isDone && (
                             (task.end_date && task.end_date.slice(0, 10) < todayStr) ||
-                            (task.specific_date && task.specific_date.slice(0, 10) < todayStr)
+                            (task.specific_date && task.specific_date.slice(0, 10) < todayStr) ||
+                            !!period?.overdue // show-from day passed, or a missed month carried over
                           );
                           const borderColour = isDone ? "border-l-green-500" : isOnListOverdue ? "border-l-red-500" : "border-l-orange-400";
                           return (
                             <button
-                              key={task.id}
-                              onClick={() => handleTaskTap(task)}
+                              key={period ? `${task.id}-${period.start}` : task.id}
+                              onClick={() => (period ? handleMonthCardTap(task, period) : handleTaskTap(task))}
                               className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${borderColour} text-left bg-white shadow-sm hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
                             >
                               <div className="flex items-start justify-between gap-2 mb-1">
-                                <div className={`font-semibold text-sm leading-tight flex-1 ${isOnListOverdue ? "text-red-700" : "text-gray-800"}`}>{task.title}</div>
+                                <div className={`font-semibold text-sm leading-tight flex-1 ${isOnListOverdue ? "text-red-700" : "text-gray-800"}`}>
+                                  {task.title}
+                                  {period?.carry && (
+                                    <span className="ml-1.5 align-middle text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-100 text-red-700">
+                                      {monthShort(period.ym)}, overdue
+                                    </span>
+                                  )}
+                                </div>
                                 {isDone && <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]">✓</span>}
                                 {isOnListOverdue && !isDone && <span className="shrink-0 text-red-500 text-sm">⚠️</span>}
                               </div>
@@ -1985,6 +2087,18 @@ const handleDeliveryTap = async (d) => {
                                   >i</button>
                                 )}
                               </div>
+                              {isMonthlyFreq(task.frequency) && !isDone && (
+                                <div className="mt-1.5">
+                                  <span
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={(e) => { e.stopPropagation(); handleNothingThisMonth(task, period); }}
+                                    className="inline-block px-1.5 py-0.5 rounded border border-gray-300 bg-white text-[10px] text-gray-500 hover:bg-gray-50"
+                                  >
+                                    {period?.carry ? `— Nothing for ${monthShort(period.ym)}` : "— Nothing this month"}
+                                  </span>
+                                </div>
+                              )}
                             </button>
                           );
                         })}

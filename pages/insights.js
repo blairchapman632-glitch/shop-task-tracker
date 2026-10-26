@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 import Sidebar from "../components/Sidebar";
+import { hasShowFrom, showFromDate, periodMonthOfCompletion } from "../lib/taskPeriods";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ export default function InsightsPage() {
   const [staff, setStaff] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [completions, setCompletions] = useState([]);
+  const [monthSkips, setMonthSkips] = useState([]); // task_month_skips — "Nothing this month" on monthly tasks
   const [rosterShifts, setRosterShifts] = useState([]);
   const [sections, setSections] = useState([]);
   const [sectionSchedule, setSectionSchedule] = useState([]);
@@ -123,16 +125,18 @@ export default function InsightsPage() {
         { data: noteData },
         { data: replyData },
         { data: reactionData },
+        { data: skipData },
       ] = await Promise.all([
         supabase.from("staff").select("id, name, active").eq("pharmacy_id", currentPharmacyId).order("name"),
         supabase.from("tasks").select("id, title, frequency, points, assigned_staff_id, assigned_role, assigned_staff_ids, task_type, specific_date, days_of_week, completed_at, completed_by_staff_id, active").eq("pharmacy_id", currentPharmacyId),
-        supabase.from("completions").select("id, task_id, section_clean_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", start.toISOString()).lte("completed_at", end.toISOString()),
+        supabase.from("completions").select("id, task_id, section_clean_id, staff_id, completed_at, period_start").eq("pharmacy_id", currentPharmacyId).gte("completed_at", start.toISOString()).lte("completed_at", end.toISOString()),
         supabase.from("roster_shifts").select("id, shift_date, staff_id").eq("pharmacy_id", currentPharmacyId).gte("shift_date", start.toISOString().slice(0, 10)).lte("shift_date", end.toISOString().slice(0, 10)),
         supabase.from("sections").select("id, name, assigned_staff_id").eq("pharmacy_id", currentPharmacyId),
         supabase.from("section_clean_schedule").select("id, month, completed_at, completed_by_staff_id, section_id").eq("pharmacy_id", currentPharmacyId),
         supabase.from("kiosk_notes").select("id, staff_id, created_at").eq("pharmacy_id", currentPharmacyId).or("deleted.is.null,deleted.eq.false"),
         supabase.from("kiosk_note_replies").select("id, note_id, staff_id, created_at").eq("pharmacy_id", currentPharmacyId),
         supabase.from("kiosk_note_reactions").select("note_id, staff_id, reaction").eq("pharmacy_id", currentPharmacyId),
+        supabase.from("task_month_skips").select("id, task_id, month, staff_id, created_at").eq("pharmacy_id", currentPharmacyId),
       ]);
 
       setStaff(staffData || []);
@@ -144,12 +148,22 @@ export default function InsightsPage() {
       setNotes(noteData || []);
       setNoteReplies(replyData || []);
       setNoteReactions(reactionData || []);
+      setMonthSkips(skipData || []);
       setLoading(false);
     };
     load();
   }, [authChecked, currentPharmacyId, dateRange]);
 
   if (!authChecked || !currentPharmacyId) return <div className="p-6 text-sm text-gray-500">Loading...</div>;
+
+  // Undo "Nothing this month" (manager side only): the monthly task comes back on the kiosk for that month
+  const removeSkip = async (r) => {
+    const label = new Date(`${String(r.month).slice(0, 10)}T00:00:00`).toLocaleDateString("en-AU", { month: "long", year: "numeric" });
+    if (!window.confirm(`Remove "Nothing this month" for "${r.title}" (${label})? It will show on the kiosk again for that month.`)) return;
+    const { error } = await supabase.from("task_month_skips").delete().eq("id", r.skipId);
+    if (error) { alert("Couldn't remove: " + error.message); return; }
+    setMonthSkips((prev) => prev.filter((k) => k.id !== r.skipId));
+  };
 
   // ── Derived data ──
   const staffById = Object.fromEntries(staff.map((s) => [s.id, s]));
@@ -297,13 +311,35 @@ export default function InsightsPage() {
       const collisionKey = `${c.task_id}-${c.staff_id}-${new Date(c.completed_at).toISOString().slice(0, 16)}`;
       if (taskRowKeys.has(collisionKey)) continue;
       const t = tasksById[c.task_id];
+      // A carried-over month done later counts for its own month (period_start) — show which
+      const forYm = c.period_start ? String(c.period_start).slice(0, 7) : null;
+      const doneYm = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Perth" }).format(new Date(c.completed_at)).slice(0, 7);
       rows.push({
         key: `comp-${c.id}`,
+        forMonth: forYm && forYm !== doneYm
+          ? new Date(`${forYm}-01T00:00:00`).toLocaleDateString("en-AU", { month: "short", year: "numeric" }) : null,
         title: t?.title || `Task #${c.task_id}`,
         by: staffById[c.staff_id]?.name || "Unknown",
         when: c.completed_at,
         assignment: t ? assignmentLabel(t) : "—",
         type: t ? typeLabel(t) : "—",
+      });
+    }
+
+    // Source 3: "Nothing this month" on monthly tasks — shown as "—", not a completion
+    for (const k of monthSkips) {
+      if (!inPeriod(k.created_at)) continue;
+      const t = tasksById[k.task_id];
+      rows.push({
+        key: `skip-${k.id}`,
+        title: t?.title || `Task #${k.task_id}`,
+        by: staffById[k.staff_id]?.name || "Unknown",
+        when: k.created_at,
+        assignment: t ? assignmentLabel(t) : "—",
+        type: t ? typeLabel(t) : "—",
+        nothing: true,
+        month: k.month,
+        skipId: k.id,
       });
     }
 
@@ -340,7 +376,8 @@ export default function InsightsPage() {
       x.setHours(0, 0, 0, 0);
       return x.toISOString().slice(0, 10);
     };
-    const monthKey = (d) => new Date(d).toISOString().slice(0, 7);
+    // Perth calendar month of a timestamp (toISOString is UTC — a completion early on the 1st landed in the previous month)
+    const monthKey = (d) => new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Perth" }).format(new Date(d)).slice(0, 7);
 
     // Build the set of expected week/month buckets across the period
     const expectedWeeks = [];
@@ -357,10 +394,13 @@ export default function InsightsPage() {
     {
       let cur = new Date(start.getFullYear(), start.getMonth(), 1);
       while (cur <= end) {
-        expectedMonths.push(cur.toISOString().slice(0, 7));
+        // From the local date parts — toISOString of local midnight on the 1st is the previous day in UTC
+        expectedMonths.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`);
         cur.setMonth(cur.getMonth() + 1);
       }
     }
+
+    const endDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Perth" }).format(end);
 
     const rows = [];
     const scheduled = tasks.filter(
@@ -369,27 +409,37 @@ export default function InsightsPage() {
 
     for (const t of scheduled) {
       const isWeekly = t.frequency === "weekly";
-      const buckets = isWeekly ? expectedWeeks : expectedMonths;
-      const keyFn = isWeekly ? weekKey : monthKey;
+      // Show-from monthly tasks: this month only counts once its show-from day has arrived
+      const buckets = isWeekly ? expectedWeeks
+        : hasShowFrom(t) ? expectedMonths.filter((ym) => showFromDate(t, ym) <= endDate)
+        : expectedMonths;
 
-      // Completions for this task in the period (from completions table)
+      // Completions for this task in the period (from completions table). Monthly: the month it counts for —
+      // period_start if set (a carried-over month done in the next month), else the Perth month it was done.
       const doneBuckets = new Set(
         completions
           .filter((c) => c.task_id === t.id)
-          .map((c) => keyFn(c.completed_at))
+          .map((c) => (isWeekly ? weekKey(c.completed_at) : periodMonthOfCompletion(c)))
+      );
+
+      // Months marked "Nothing this month" count as resolved (not missed), shown as "—"
+      const skipBuckets = isWeekly ? new Set() : new Set(
+        monthSkips.filter((k) => Number(k.task_id) === Number(t.id)).map((k) => String(k.month).slice(0, 7))
       );
 
       const expected = buckets.length;
       const done = buckets.filter((b) => doneBuckets.has(b)).length;
-      const missed = Math.max(0, expected - done);
+      const nothing = buckets.filter((b) => !doneBuckets.has(b) && skipBuckets.has(b)).length;
+      const missed = Math.max(0, expected - done - nothing);
       rows.push({
         task: t,
         assignedTo: assignmentLabel(t),
         cadence: isWeekly ? "Weekly" : "Monthly",
         expected,
         done,
+        nothing,
         missed,
-        rate: pct(done, expected),
+        rate: pct(done + nothing, expected),
       });
     }
     return rows.sort((a, b) => a.rate - b.rate);
@@ -632,8 +682,24 @@ export default function InsightsPage() {
                         <tbody>
                           {assignedLog.map((r) => (
                             <tr key={r.key} className="border-t hover:bg-gray-50">
-                              <td className="px-4 py-2 font-medium text-gray-800">{r.title}</td>
-                              <td className="px-4 py-2 text-blue-700 font-medium">{r.by}</td>
+                              <td className="px-4 py-2 font-medium text-gray-800">
+                                {r.title}
+                                {r.nothing && <span className="ml-2 text-xs font-normal text-gray-500">— Nothing this month ({new Date(`${String(r.month).slice(0, 10)}T00:00:00`).toLocaleDateString("en-AU", { month: "short", year: "numeric" })})</span>}
+                                {r.forMonth && <span className="ml-2 text-xs font-normal text-red-600">(for {r.forMonth}, carried over)</span>}
+                              </td>
+                              <td className={`px-4 py-2 font-medium ${r.nothing ? "text-gray-500" : "text-blue-700"}`}>
+                                {r.nothing ? `— ${r.by}` : r.by}
+                                {r.nothing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeSkip(r)}
+                                    className="ml-2 text-xs font-normal text-red-500 hover:text-red-700"
+                                    title="Undo — the task comes back on the kiosk for that month"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </td>
                               <td className="px-4 py-2 text-gray-600">{new Date(r.when).toLocaleString("en-AU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
                               <td className="px-4 py-2 text-gray-500">{r.assignment}</td>
                               <td className="px-4 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{r.type}</span></td>
@@ -700,7 +766,10 @@ export default function InsightsPage() {
                               <td className="px-4 py-2 text-gray-500">{r.assignedTo}</td>
                               <td className="px-4 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{r.cadence}</span></td>
                               <td className="px-4 py-2 text-gray-600">{r.expected}</td>
-                              <td className="px-4 py-2 text-green-700 font-medium">{r.done}</td>
+                              <td className="px-4 py-2 text-green-700 font-medium">
+                                {r.done}
+                                {r.nothing > 0 && <span className="ml-1.5 text-gray-500 font-normal" title="Months marked Nothing this month">+ {r.nothing} —</span>}
+                              </td>
                               <td className="px-4 py-2 text-red-600 font-medium">{r.missed}</td>
                               <td className="px-4 py-2 w-40">
                                 <PctBar value={r.rate} color={r.rate < 50 ? "bg-red-500" : r.rate < 80 ? "bg-orange-400" : "bg-green-500"} />
