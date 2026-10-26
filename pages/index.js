@@ -10,6 +10,7 @@ import { fmtDateShort, perthDateOf } from "../lib/performanceReview";
 import { syncInductionAuto } from "../lib/inductionAuto";
 import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
 import { adminFetch } from "../lib/adminFetch";
+import { ensureSectionYear, perthYear } from "../lib/sectionCleans";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -720,12 +721,14 @@ export default function HomePage() {
         supabase.from("staff").select("*").eq("pharmacy_id", currentPharmacyId).order("name", { ascending: true }),
         supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, staff_id, staff_name, staff:staff_id(id, name, photo_url)`).eq("shift_date", todayStr),
         supabase.from("completions").select("task_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
-        (() => {
+        (async () => {
           const months = [];
           for (let i = 2; i >= -1; i--) {
             const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
             months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`);
           }
+          // A new year with no schedule yet gets last year's months copied in before reading
+          try { await ensureSectionYear(supabase, currentPharmacyId, perthYear()); } catch (err) { console.error("[section year]", err); }
           return supabase.from("section_clean_schedule").select(`id, month, completed_at, completed_by_staff_id, section:section_id(id, name, assigned_staff_id, notes, staff:assigned_staff_id(id, name))`).in("month", months);
         })(),
         supabase.from("roster_shifts").select("staff_id, shift_date").gte("shift_date", todayStr).lte("shift_date", lookAheadEnd).order("shift_date", { ascending: true }),

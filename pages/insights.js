@@ -1,40 +1,7 @@
 import React, { useEffect, useState, useMemo } from "react";
-import Link from "next/link";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
-
-// ─── Sidebar ─────────────────────────────────────────────────────────────────
-
-function Sidebar() {
-  return (
-    <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
-      <div className="text-sm font-bold text-gray-800 px-2 mb-3">Byford Pharmacy</div>
-      <NavLink href="/" icon="🏠" label="Home" />
-      <NavLink href="/roster" icon="📅" label="Roster" />
-      <NavLink href="/insights" icon="📊" label="Insights" active />
-      <NavLink href="/tasks" icon="✅" label="Tasks" />
-      <NavLink href="#" icon="💰" label="Wages" disabled />
-      <NavLink href="#" icon="🏖️" label="Leave" disabled />
-      <NavLink href="#" icon="⚙️" label="Admin" disabled />
-    </aside>
-  );
-}
-
-function NavLink({ href, icon, label, disabled, active }) {
-  if (disabled) {
-    return (
-      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-400 cursor-not-allowed">
-        <span>{icon}</span> {label}
-        <span className="ml-auto text-[9px] text-gray-300">Soon</span>
-      </div>
-    );
-  }
-  return (
-    <Link href={href} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm ${active ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700 hover:bg-gray-100"}`}>
-      <span>{icon}</span> {label}
-    </Link>
-  );
-}
+import Sidebar from "../components/Sidebar";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -474,7 +441,7 @@ export default function InsightsPage() {
   // ── Render ──
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar />
+      <Sidebar active="insights" />
 
       <div className="flex-1 flex flex-col overflow-hidden">
 

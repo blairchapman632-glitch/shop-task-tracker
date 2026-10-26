@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import supabase from "../lib/supabaseClient";
+import Sidebar from "../components/Sidebar";
 import Avatar from "../components/Avatar";
 import ContractForm, { ContractHistory, ContractSignatureSettings } from "../components/ContractTab";
 import EmploymentContractsList from "../components/EmploymentContractsList";
@@ -73,25 +73,6 @@ const defaultWeekSchedule = () => ({
   b: defaultSchedule(),
   notes: "",
 });
-
-// ─── Sidebar ─────────────────────────────────────────────────────────────────
-
-function Sidebar() {
-  return (
-    <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
-      <div className="text-sm font-bold text-gray-800 px-2 mb-3 leading-tight">
-        Byford Pharmacy
-      </div>
-      <Link href="/" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>🏠</span> Home</Link>
-      <Link href="/roster" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>📅</span> Roster</Link>
-      <Link href="/insights" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>📊</span> Insights</Link>
-      <Link href="/tasks" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>✅</span> Tasks</Link>
-      <Link href="/wages" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>💰</span> Wages</Link>
-      <Link href="/availability" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>🗓️</span> Requests</Link>
-      <Link href="/admin" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm bg-gray-100 font-semibold text-gray-900"><span>⚙️</span> Admin</Link>
-    </aside>
-  );
-}
 
 // ─── PIN Screen ───────────────────────────────────────────────────────────────
 
@@ -3688,7 +3669,7 @@ export default function AdminPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar />
+      <Sidebar active="admin" />
 
       <div className="flex flex-1 overflow-hidden">
 

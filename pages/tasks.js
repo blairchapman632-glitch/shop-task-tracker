@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useMemo } from "react";
-import Link from "next/link";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
+import Sidebar from "../components/Sidebar";
+import { ensureSectionYear, monthsOf, perthYear, perthMonthStart } from "../lib/sectionCleans";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -40,39 +41,6 @@ const timePretty = (t) => {
   const parts = String(t).split(":");
   return `${parts[0]}:${parts[1]}`;
 };
-
-// ─── Sidebar ─────────────────────────────────────────────────────────────────
-
-function Sidebar() {
-  return (
-    <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
-      <div className="text-sm font-bold text-gray-800 px-2 mb-3">Byford Pharmacy</div>
-      <NavLink href="/" icon="🏠" label="Home" />
-      <NavLink href="/roster" icon="📅" label="Roster" />
-      <NavLink href="/insights" icon="📊" label="Insights" />
-      <NavLink href="/tasks" icon="✅" label="Tasks" active />
-      <NavLink href="#" icon="💰" label="Wages" disabled />
-      <NavLink href="#" icon="🏖️" label="Leave" disabled />
-      <NavLink href="#" icon="⚙️" label="Admin" disabled />
-    </aside>
-  );
-}
-
-function NavLink({ href, icon, label, disabled, active }) {
-  if (disabled) {
-    return (
-      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-400 cursor-not-allowed">
-        <span>{icon}</span> {label}
-        <span className="ml-auto text-[9px] text-gray-300">Soon</span>
-      </div>
-    );
-  }
-  return (
-    <Link href={href} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm ${active ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-700 hover:bg-gray-100"}`}>
-      <span>{icon}</span> {label}
-    </Link>
-  );
-}
 
 // ─── Empty state ─────────────────────────────────────────────────────────────
 
@@ -220,33 +188,67 @@ const handlePinSubmit = async () => {
   const [dragItem, setDragItem] = useState(null); // { scheduleId, sectionId, fromMonth, fromStaffId, sectionName }
   const [dragOverCell, setDragOverCell] = useState(null); // { month, staffId }
 
-  const MONTHS = [
-    { label: "Jan", value: "2026-01-01" },
-    { label: "Feb", value: "2026-02-01" },
-    { label: "Mar", value: "2026-03-01" },
-    { label: "Apr", value: "2026-04-01" },
-    { label: "May", value: "2026-05-01" },
-    { label: "Jun", value: "2026-06-01" },
-    { label: "Jul", value: "2026-07-01" },
-    { label: "Aug", value: "2026-08-01" },
-    { label: "Sep", value: "2026-09-01" },
-    { label: "Oct", value: "2026-10-01" },
-    { label: "Nov", value: "2026-11-01" },
-    { label: "Dec", value: "2026-12-01" },
-  ];
+  // Year shown in the Distribution + Schedule grids (‹ › arrows). Defaults to the current year in Perth.
+  const [sectionYear, setSectionYear] = useState(() => perthYear());
+  const MONTHS = monthsOf(sectionYear);
+  const [sectionStaff, setSectionStaff] = useState([]);       // active, non-Locum staff (Sections panel / + Add staff)
+  const [sectionsPanel, setSectionsPanel] = useState(null);   // { staffId, name } — the "Sections" panel is open for them
+  const [panelTicks, setPanelTicks] = useState(new Set());    // section ids ticked in that panel
+  const [savingPanel, setSavingPanel] = useState(false);
+  const [tempRows, setTempRows] = useState([]);               // staff added with "+ Add staff" who own nothing yet
+  const [showAddStaff, setShowAddStaff] = useState(false);
 
   const loadSections = async (pharmId) => {
     const pid = pharmId || currentPharmacyId;
     if (!pid) return;
     setSectionsLoading(true);
-    const [{ data: sectionData }, { data: scheduleData }] = await Promise.all([
-      supabase.from("sections").select("*, staff:assigned_staff_id(id, name)").eq("pharmacy_id", pid).order("name"),
+    // A new year with no schedule yet gets last year's months copied in first (current year only)
+    try { await ensureSectionYear(supabase, pid, perthYear()); } catch (err) { console.error("[section year]", err); }
+    const [{ data: sectionData }, { data: scheduleData }, { data: staffData }] = await Promise.all([
+      supabase.from("sections").select("*, staff:assigned_staff_id(id, name, active)").eq("pharmacy_id", pid).order("name"),
       supabase.from("section_clean_schedule").select("*").eq("pharmacy_id", pid),
+      supabase.from("staff").select("id, name, role").eq("pharmacy_id", pid).eq("active", true)
+        .or("role.is.null,role.neq.Locum").order("name"),
     ]);
-    
+
     setSections(sectionData || []);
     setSchedule(scheduleData || []);
+    setSectionStaff(staffData || []);
     setSectionsLoading(false);
+  };
+
+  // Schedule rows in the year being shown (Distribution grid + Balance)
+  const yearSchedule = schedule.filter((s) => String(s.month).startsWith(`${sectionYear}-`));
+
+  // Sections panel: tick = assigned to this person; ticking another person's section moves it here; unticking -> All staff.
+  // Schedule months stay with the section (section_clean_schedule isn't touched).
+  const openSectionsPanel = (staffId, name) => {
+    setSectionsPanel({ staffId, name });
+    setPanelTicks(new Set(sections.filter((s) => Number(s.assigned_staff_id) === Number(staffId)).map((s) => s.id)));
+  };
+  const saveSectionsPanel = async () => {
+    if (!sectionsPanel) return;
+    const sid = Number(sectionsPanel.staffId);
+    const toAssign = sections.filter((s) => panelTicks.has(s.id) && Number(s.assigned_staff_id) !== sid).map((s) => s.id);
+    const toClear = sections.filter((s) => !panelTicks.has(s.id) && Number(s.assigned_staff_id) === sid).map((s) => s.id);
+    setSavingPanel(true);
+    try {
+      if (toAssign.length) {
+        const { error } = await supabase.from("sections").update({ assigned_staff_id: sid }).in("id", toAssign);
+        if (error) throw error;
+      }
+      if (toClear.length) {
+        const { error } = await supabase.from("sections").update({ assigned_staff_id: null }).in("id", toClear);
+        if (error) throw error;
+      }
+      setTempRows((rows) => rows.filter((r) => Number(r.staffId) !== sid)); // a real row from now on (or gone if nothing ticked)
+      setSectionsPanel(null);
+      await loadSections(currentPharmacyId);
+    } catch (err) {
+      alert("Couldn't save sections: " + (err?.message || String(err)));
+    } finally {
+      setSavingPanel(false);
+    }
   };
 
   useEffect(() => {
@@ -279,12 +281,14 @@ const handlePinSubmit = async () => {
     }
 
     try {
-      // Update the schedule row's month
-      await supabase.from("section_clean_schedule").update({ month: toMonth }).eq("id", scheduleId);
+      // Update the schedule row's month (one row per section per month — the unique index refuses a duplicate)
+      const { error: mErr } = await supabase.from("section_clean_schedule").update({ month: toMonth }).eq("id", scheduleId);
+      if (mErr) throw mErr.code === "23505" ? new Error(`"${sectionName}" is already booked in that month.`) : mErr;
 
       // If changing staff, update the section's assigned_staff_id too
       if (changingStaff) {
-        await supabase.from("sections").update({ assigned_staff_id: toStaffId }).eq("id", sectionId);
+        const { error: sErr } = await supabase.from("sections").update({ assigned_staff_id: toStaffId }).eq("id", sectionId);
+        if (sErr) throw sErr;
       }
 
       await loadSections(currentPharmacyId);
@@ -293,7 +297,7 @@ const handlePinSubmit = async () => {
     }
   };
 const handleAutoBalance = async (staffId, staffName) => {
-    const staffSchedule = schedule.filter((sch) => {
+    const staffSchedule = yearSchedule.filter((sch) => {
       const section = sections.find((sec) => sec.id === sch.section_id);
       return section && section.assigned_staff_id === staffId;
     });
@@ -301,7 +305,7 @@ const handleAutoBalance = async (staffId, staffName) => {
       alert(`${staffName} has no scheduled sections to balance.`);
       return;
     }
-    if (!window.confirm(`Spread ${staffName}'s ${staffSchedule.length} section(s) evenly across the year?\n\nThis will reschedule their existing section cleans. Completed ones won't move.`)) return;
+    if (!window.confirm(`Spread ${staffName}'s ${staffSchedule.length} section(s) evenly across ${sectionYear}?\n\nThis will reschedule their existing section cleans. Completed ones won't move.`)) return;
 
     const movable = staffSchedule.filter((sch) => !sch.completed_at);
     if (movable.length === 0) {
@@ -347,9 +351,20 @@ const handleAutoBalance = async (staffId, staffName) => {
     }));
 
     try {
-      for (const a of assignments) {
-        await supabase.from("section_clean_schedule").update({ month: a.month }).eq("id", a.id);
+      // One row per section per month (unique index): a move can be blocked by another of the same section's cleans
+      // that hasn't moved yet, so blocked ones are retried after the rest — until nothing more can move.
+      let pending = assignments;
+      while (pending.length) {
+        const blocked = [];
+        for (const a of pending) {
+          const { error } = await supabase.from("section_clean_schedule").update({ month: a.month }).eq("id", a.id);
+          if (error && error.code === "23505") blocked.push(a);
+          else if (error) throw error;
+        }
+        if (blocked.length === pending.length) break;
+        pending = blocked;
       }
+      if (pending.length) alert(`${pending.length} clean(s) couldn't move because that section is already booked in the target month.`);
       await loadSections(currentPharmacyId);
     } catch (err) {
       alert("Couldn't balance: " + (err?.message || String(err)));
@@ -439,7 +454,7 @@ const handleAutoBalance = async (staffId, staffName) => {
     }
   };
 
-  const thisMonth = new Date().toISOString().slice(0, 7) + "-01";
+  const thisMonth = perthMonthStart(); // "YYYY-MM-01" in Perth (not toISOString — UTC+8)
   const thisMonthSections = schedule.filter((s) => s.month === thisMonth);
 
   // ── Open panel ──
@@ -650,7 +665,7 @@ const handleAutoBalance = async (staffId, staffName) => {
   // ── Render ──
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar />
+      <Sidebar active="tasks" />
 
       <div className="flex-1 flex flex-col overflow-hidden">
 
@@ -732,17 +747,58 @@ const handleAutoBalance = async (staffId, staffName) => {
 
               {/* Staff-first distribution grid */}
               <div className="bg-white rounded-xl border overflow-hidden">
-                <div className="px-4 py-3 border-b flex items-center justify-between">
+                <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-gray-700">Distribution by staff — 2026</div>
+                    <div className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                      Distribution by staff —
+                      <button type="button" onClick={() => setSectionYear((y) => y - 1)} className="px-1.5 rounded border text-gray-500 hover:bg-gray-50" title="Previous year">‹</button>
+                      <span className="tabular-nums">{sectionYear}</span>
+                      <button type="button" onClick={() => setSectionYear((y) => y + 1)} className="px-1.5 rounded border text-gray-500 hover:bg-gray-50" title="Next year">›</button>
+                      {sectionYear !== perthYear() && (
+                        <button type="button" onClick={() => setSectionYear(perthYear())} className="text-[11px] font-normal text-blue-600 hover:underline">This year</button>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-400 mt-0.5">Shows which sections each person is cleaning each month. Bottom row = total sections due that month.</div>
                   </div>
-                  <button
-                    onClick={() => { setShowAddSection((v) => !v); setNewSectionName(""); setNewSectionStaffId(""); setNewSectionNotes(""); }}
-                    className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700"
-                  >
-                    + Add Section
-                  </button>
+                  <div className="flex items-center gap-2 relative">
+                    <button
+                      onClick={() => setShowAddStaff((v) => !v)}
+                      className="px-3 py-1.5 border border-blue-300 text-blue-700 text-xs font-medium rounded-lg hover:bg-blue-50"
+                    >
+                      + Add staff
+                    </button>
+                    {showAddStaff && (() => {
+                      const owners = new Set(sections.map((s) => Number(s.assigned_staff_id)).filter(Boolean));
+                      const shown = new Set(tempRows.map((r) => Number(r.staffId)));
+                      const free = sectionStaff.filter((s) => !owners.has(Number(s.id)) && !shown.has(Number(s.id)));
+                      return (
+                        <div className="absolute right-0 top-full mt-1 z-20 w-56 max-h-72 overflow-y-auto bg-white border rounded-lg shadow-lg py-1">
+                          {free.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-gray-400">Everyone already has sections.</div>
+                          ) : free.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => {
+                                setTempRows((rows) => [...rows, { staffId: s.id, name: s.name }]);
+                                setShowAddStaff(false);
+                                openSectionsPanel(s.id, s.name);
+                              }}
+                              className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                            >
+                              {s.name}{s.role ? <span className="text-gray-400"> · {s.role}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                    <button
+                      onClick={() => { setShowAddSection((v) => !v); setNewSectionName(""); setNewSectionStaffId(""); setNewSectionNotes(""); }}
+                      className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700"
+                    >
+                      + Add Section
+                    </button>
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -762,15 +818,30 @@ const handleAutoBalance = async (staffId, staffName) => {
                         // Build: staffId -> { name, perMonth: {monthValue: [sectionName,...]}, total }
                         const rows = {};
                         const ALL_STAFF_KEY = "__all__";
-                        for (const sch of schedule) {
-                          const section = sections.find((sec) => sec.id === sch.section_id);
-                          if (!section) continue;
+                        const rowFor = (section) => {
                           const sid = section.assigned_staff_id || ALL_STAFF_KEY;
                           const sname = section.assigned_staff_id ? (section.staff?.name || `#${sid}`) : "All staff";
-                          if (!rows[sid]) rows[sid] = { staffId: section.assigned_staff_id || null, name: sname, perMonth: {}, total: 0 };
-                          if (!rows[sid].perMonth[sch.month]) rows[sid].perMonth[sch.month] = [];
-                          rows[sid].perMonth[sch.month].push({ name: section.name, completed: !!sch.completed_at, scheduleId: sch.id, sectionId: section.id });
-                          rows[sid].total += 1;
+                          if (!rows[sid]) {
+                            rows[sid] = {
+                              staffId: section.assigned_staff_id || null, name: sname, perMonth: {}, total: 0,
+                              inactive: !!section.assigned_staff_id && section.staff?.active === false,
+                            };
+                          }
+                          return rows[sid];
+                        };
+                        // Everyone who owns a section gets a row (even with nothing scheduled this year)
+                        for (const section of sections) if (section.assigned_staff_id) rowFor(section);
+                        for (const sch of yearSchedule) {
+                          const section = sections.find((sec) => sec.id === sch.section_id);
+                          if (!section) continue;
+                          const row = rowFor(section);
+                          if (!row.perMonth[sch.month]) row.perMonth[sch.month] = [];
+                          row.perMonth[sch.month].push({ name: section.name, completed: !!sch.completed_at, scheduleId: sch.id, sectionId: section.id });
+                          row.total += 1;
+                        }
+                        // "+ Add staff" people who don't own anything yet (until their Sections panel is saved)
+                        for (const t of tempRows) {
+                          if (!rows[t.staffId]) rows[t.staffId] = { staffId: t.staffId, name: t.name, perMonth: {}, total: 0, inactive: false, temp: true };
                         }
                         const ordered = Object.values(rows).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -791,14 +862,27 @@ const handleAutoBalance = async (staffId, staffName) => {
                               <tr key={r.name} className="border-t hover:bg-gray-50">
                                 <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">
                                   <div className="flex items-center gap-2">
-                                    <span>{r.name} <span className="text-gray-400 font-normal">({new Set(Object.values(r.perMonth).flat().map((it) => it.sectionId)).size})</span></span>
-                                    <button
-                                      onClick={() => handleAutoBalance(r.staffId, r.name)}
-                                      title="Spread evenly across the year"
-                                      className="text-[10px] px-1.5 py-0.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50"
-                                    >
-                                      Balance
-                                    </button>
+                                    <span>{r.name} <span className="text-gray-400 font-normal">({r.staffId ? sections.filter((s) => Number(s.assigned_staff_id) === Number(r.staffId)).length : new Set(Object.values(r.perMonth).flat().map((it) => it.sectionId)).size})</span></span>
+                                    {r.inactive && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 font-medium">Inactive — reassign</span>}
+                                    {r.temp && <span className="text-[10px] text-gray-400 font-normal">new — tick sections to keep</span>}
+                                    {r.staffId && (
+                                      <button
+                                        onClick={() => openSectionsPanel(r.staffId, r.name)}
+                                        title="Choose which sections this person cleans"
+                                        className="text-[10px] px-1.5 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+                                      >
+                                        Sections
+                                      </button>
+                                    )}
+                                    {!r.temp && (
+                                      <button
+                                        onClick={() => handleAutoBalance(r.staffId, r.name)}
+                                        title="Spread evenly across the year"
+                                        className="text-[10px] px-1.5 py-0.5 rounded border border-blue-200 text-blue-600 hover:bg-blue-50"
+                                      >
+                                        Balance
+                                      </button>
+                                    )}
                                   </div>
                                 </td>
                                 {MONTHS.map((m) => {
@@ -867,11 +951,58 @@ const handleAutoBalance = async (staffId, staffName) => {
                 </div>
               </div>
 
+              {/* Sections panel — which sections one person cleans (applies on Save) */}
+              {sectionsPanel && (
+                <div className="fixed inset-0 z-40 bg-black/30 flex items-center justify-center p-4" onClick={() => !savingPanel && setSectionsPanel(null)}>
+                  <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                    <div className="px-4 py-3 border-b">
+                      <div className="text-sm font-semibold text-gray-800">Sections — {sectionsPanel.name}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">Ticked = cleaned by {sectionsPanel.name}. Ticking someone else's section moves it here; unticking makes it All staff. Scheduled months stay with the section.</div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto divide-y">
+                      {sections.length === 0 ? (
+                        <div className="px-4 py-6 text-sm text-gray-400 text-center">No sections yet.</div>
+                      ) : sections.map((s) => {
+                        const ticked = panelTicks.has(s.id);
+                        const mine = Number(s.assigned_staff_id) === Number(sectionsPanel.staffId);
+                        const owner = s.assigned_staff_id ? (s.staff?.name || `#${s.assigned_staff_id}`) : "All staff";
+                        return (
+                          <label key={s.id} className="flex items-center gap-3 px-4 py-2 text-sm cursor-pointer hover:bg-gray-50">
+                            <input
+                              type="checkbox"
+                              checked={ticked}
+                              onChange={() => setPanelTicks((cur) => {
+                                const n = new Set(cur);
+                                if (n.has(s.id)) n.delete(s.id); else n.add(s.id);
+                                return n;
+                              })}
+                            />
+                            <span className="flex-1 text-gray-800">{s.name}</span>
+                            <span className={`text-xs ${mine ? "text-blue-600" : "text-gray-400"}`}>
+                              {owner}
+                              {s.assigned_staff_id && s.staff?.active === false && <span className="ml-1 text-red-500">(inactive)</span>}
+                              {ticked && !mine && <span className="ml-1 text-amber-600">→ moves here</span>}
+                              {!ticked && mine && <span className="ml-1 text-amber-600">→ All staff</span>}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="px-4 py-3 border-t flex justify-end gap-2">
+                      <button type="button" onClick={() => setSectionsPanel(null)} disabled={savingPanel} className="px-3 py-1.5 text-xs border rounded hover:bg-gray-50">Cancel</button>
+                      <button type="button" onClick={saveSectionsPanel} disabled={savingPanel} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                        {savingPanel ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Year schedule grid */}
               <div className="bg-white rounded-xl border overflow-hidden">
                 <div className="px-4 py-3 border-b flex items-center justify-between">
                   <div>
-                    <div className="text-sm font-semibold text-gray-700">2026 Schedule</div>
+                    <div className="text-sm font-semibold text-gray-700">{sectionYear} Schedule</div>
                     <div className="text-xs text-gray-400 mt-0.5">Click a cell to add/remove a section from that month</div>
                   </div>
                   <button
@@ -951,7 +1082,12 @@ const handleAutoBalance = async (staffId, staffName) => {
                             <React.Fragment key={section.id}>
                               <tr className={`border-t ${isEditingThis ? "bg-blue-50" : "hover:bg-gray-50"}`}>
                                 <td className="px-3 py-1.5 font-medium text-gray-800">{section.name}</td>
-                                <td className="px-2 py-1.5 text-gray-500">{section.staff?.name || <span className="text-gray-300">All staff</span>}</td>
+                                <td className="px-2 py-1.5 text-gray-500">
+                                  {section.staff?.name || <span className="text-gray-300">All staff</span>}
+                                  {section.assigned_staff_id && section.staff?.active === false && (
+                                    <span className="block mt-0.5 text-[10px] px-1 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 font-medium w-fit">Inactive — reassign</span>
+                                  )}
+                                </td>
                                 {MONTHS.map((m) => {
                                   const scheduled = isScheduled(section.id, m.value);
                                   const completed = isCompleted(section.id, m.value);

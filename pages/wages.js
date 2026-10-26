@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
+import Sidebar from "../components/Sidebar";
 import {
   FORTNIGHT_THRESHOLD,
   toISO,
@@ -15,22 +15,6 @@ import {
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
 
-
-// ─── Sidebar ─────────────────────────────────────────────────────────────────
-
-function Sidebar() {
-  return (
-    <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
-      <div className="text-sm font-bold text-gray-800 px-2 mb-3 leading-tight">Byford Pharmacy</div>
-      <Link href="/" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>🏠</span> Home</Link>
-      <Link href="/roster" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>📅</span> Roster</Link>
-      <Link href="/insights" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>📊</span> Insights</Link>
-      <Link href="/tasks" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>✅</span> Tasks</Link>
-      <Link href="/wages" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm bg-gray-100 font-semibold text-gray-900"><span>💰</span> Wages</Link>
-      <Link href="/admin" className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100"><span>⚙️</span> Admin</Link>
-    </aside>
-  );
-}
 
 // ─── PIN Screen ───────────────────────────────────────────────────────────────
 
@@ -631,7 +615,7 @@ export default function WagesPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar />
+      <Sidebar active="wages" />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
