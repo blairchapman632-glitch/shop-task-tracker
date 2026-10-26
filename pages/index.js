@@ -6,11 +6,11 @@ import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
-import { fmtDateShort, perthDateOf } from "../lib/performanceReview";
+import { fmtDateShort, perthDateOf, todayPerth, addMonthsStr } from "../lib/performanceReview";
 import { syncInductionAuto } from "../lib/inductionAuto";
 import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
 import { adminFetch } from "../lib/adminFetch";
-import { ensureSectionYear, perthYear } from "../lib/sectionCleans";
+import { ensureSectionYear, perthYear, perthMonthStart } from "../lib/sectionCleans";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ const timeToMinutes = (t) => {
 
 const isTaskForToday = (task, now = new Date()) => {
   const dow = now.getDay();
-  const todayISO = now.toISOString().slice(0, 10);
+  const todayISO = todayPerth(); // Perth date, not UTC
   const freq = task.frequency || "daily";
   switch (freq) {
     case "daily": return true;
@@ -425,7 +425,7 @@ function RosterModal({ onClose }) {
       const all = months || [];
       setHolidays(holidayData || []);
 
-      const todayMonth = new Date().toISOString().slice(0, 7) + "-01";
+      const todayMonth = perthMonthStart(); // Perth, not UTC (1st of the month before 8am)
       const currentIdx = all.findIndex((x) => x.month === todayMonth);
 
       // Filter to current + 1 previous + 1 next only
@@ -500,7 +500,7 @@ function RosterModal({ onClose }) {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7 !== 0) cells.push(null);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayPerth();
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -700,13 +700,13 @@ export default function HomePage() {
       setLoading(true);
 
       const now = new Date();
-      const todayStr = now.toISOString().slice(0, 10);
+      const todayStr = todayPerth(); // Perth date — toISOString is UTC and gave yesterday before 8am
       const dow = now.getDay();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
 
       // Look ahead 60 days for next shift lookup
-      const lookAheadEnd = new Date(now.getFullYear(), now.getMonth() + 2, 1).toISOString().slice(0, 10);
+      const lookAheadEnd = addMonthsStr(perthMonthStart(), 2);
 
       const [
         { data: t },
@@ -1931,7 +1931,7 @@ const handleDeliveryTap = async (d) => {
                           const monthlyComp = monthlyCompletions[task.id];
                           const assignedStaff = task.assigned_staff_id ? staffById[task.assigned_staff_id] : null;
                           // Overdue only once the due DAY has fully passed — a task due today isn't overdue.
-                          const todayStr = new Date().toISOString().slice(0, 10);
+                          const todayStr = todayPerth();
                           const isOnListOverdue = !isDone && (
                             (task.end_date && task.end_date.slice(0, 10) < todayStr) ||
                             (task.specific_date && task.specific_date.slice(0, 10) < todayStr)
