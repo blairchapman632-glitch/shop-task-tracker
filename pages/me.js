@@ -3456,6 +3456,31 @@ export default function MePage() {
     resolve();
   }, []);
 
+  // Re-check `active` whenever the app comes back to the foreground (at most every 30 seconds). Someone set inactive
+  // is signed out and sees the inactive screen, so an open /me can't keep showing new wall posts or messages.
+  const lastActiveCheck = useRef(0);
+  useEffect(() => {
+    if (!unlocked || !staff?.id) return;
+    const check = async () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastActiveCheck.current < 30000) return;
+      lastActiveCheck.current = now;
+      const { data, error: err } = await supabase.from("staff").select("active").eq("id", staff.id).maybeSingle();
+      if (err || !data) return; // offline / network blip — don't lock anyone out over that
+      if (data.active === false) {
+        try { await supabase.auth.signOut(); } catch (e) { console.error("[me] sign out", e); }
+        setError("inactive");
+      }
+    };
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+    };
+  }, [unlocked, staff?.id]);
+
   const handlePinSubmit = () => {
     if (pin.length !== 4) return;
     setChecking(true);

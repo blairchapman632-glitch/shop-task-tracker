@@ -23,11 +23,22 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "staff_ids required" });
   }
 
+  // Never send to inactive staff: keep only staff rows that are active.
+  const { data: activeStaff, error: staffError } = await supabase
+    .from("staff")
+    .select("id")
+    .in("id", staff_ids)
+    .eq("active", true);
+
+  if (staffError) return res.status(500).json({ error: staffError.message });
+  const activeIds = (activeStaff || []).map((s) => s.id);
+  if (activeIds.length === 0) return res.status(200).json({ sent: 0 });
+
   // Look up all subscriptions for these staff members.
   const { data: subs, error } = await supabase
     .from("push_subscriptions")
     .select("*")
-    .in("staff_id", staff_ids);
+    .in("staff_id", activeIds);
 
   if (error) return res.status(500).json({ error: error.message });
   if (!subs || subs.length === 0) return res.status(200).json({ sent: 0 });
