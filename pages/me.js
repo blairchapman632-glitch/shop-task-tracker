@@ -2249,6 +2249,27 @@ function ProfilePanel({ staff, onClose }) {
   );
 }
 
+// To do → Training items saved on this device (per staff member) so the section shows instantly on the next open.
+// Convenience only — the live fetch always replaces it. Every access is wrapped: storage can be blocked or full.
+const TRAINING_CACHE_PREFIX = "cb_todo_training_";
+function readTrainingCache(staffId) {
+  try {
+    const v = JSON.parse(localStorage.getItem(TRAINING_CACHE_PREFIX + staffId) || "null");
+    return Array.isArray(v) ? v : null;
+  } catch (e) { return null; }
+}
+function saveTrainingCache(staffId, items) {
+  try { localStorage.setItem(TRAINING_CACHE_PREFIX + staffId, JSON.stringify(items || [])); } catch (e) {}
+}
+function clearTrainingCache() {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(TRAINING_CACHE_PREFIX)) localStorage.removeItem(k);
+    }
+  } catch (e) {}
+}
+
 function ProfileDetails({ staff }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -2258,6 +2279,7 @@ function ProfileDetails({ staff }) {
     try {
       await supabase.auth.signOut();
       try { localStorage.removeItem("cb_pharmacy_id"); } catch (e) {}
+      clearTrainingCache();
       window.location.href = "/me?p=byford";
     } catch (err) {
       setLoggingOut(false);
@@ -3335,10 +3357,24 @@ export default function MePage() {
     let cancelled = false;
     fetchMyReview().then((r) => { if (!cancelled) setMyReview(r || { mode: null, review: null }); });
     fetchMyPolicies().then((r) => { if (!cancelled) setMyPolicies(r || { outstanding: [], read: [] }); });
-    fetchMyTrainingNudges().then((r) => { if (!cancelled) setMyNudges(r || []); });
+    fetchMyTrainingNudges().then((r) => {
+      if (cancelled) return;
+      setMyNudges(r || []);
+      saveTrainingCache(staff.id, r || []); // shown instantly next time /me opens
+    });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staff?.id, todoOpen]);
+
+  // Last known To do → Training items, shown straight away until the live ones arrive (this device only)
+  useEffect(() => {
+    if (!staff?.id) return;
+    const cached = readTrainingCache(staff.id);
+    if (cached) setMyNudges((cur) => cur ?? cached);
+  }, [staff?.id]);
+
+  // Inactive screen: forget the saved Training items
+  useEffect(() => { if (error === "inactive") clearTrainingCache(); }, [error]);
 
   // Unread message count + new board posts for the tab badge
   useEffect(() => {

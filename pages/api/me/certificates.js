@@ -37,27 +37,34 @@ const toStaffSection = (s) => ({
 });
 const hrs = (n) => String(Math.round(n * 100) / 100);
 
-async function loadContext(req) {
+// Everything after the login check runs in ONE round of parallel queries (they only need the staff id and
+// pharmacy id, which staffFromRequest already returns). withTraining: also load what the nudges need (GET only).
+async function loadContext(req, withTraining) {
   const me = await staffFromRequest(req);
   const db = supabaseAdmin();
-  const { data: staff, error } = await db.from("staff")
-    .select("id, name, role, active, start_date, pharmacy_id").eq("id", Number(me.id)).single();
-  if (error) throw error;
-  const [config, docs] = await Promise.all([
-    loadServiceConfig(db, String(staff.pharmacy_id), [staff.id]),
-    fetchAllRows(() => db.from("locum_documents").select(DOC_COLUMNS).eq("staff_id", staff.id)),
+  const sid = Number(me.id);
+  const pid = String(me.pharmacy_id);
+  const [st, config, docs, training] = await Promise.all([
+    db.from("staff").select("id, name, role, active, start_date, pharmacy_id").eq("id", sid).single(),
+    loadServiceConfig(db, pid, [sid]),
+    fetchAllRows(() => db.from("locum_documents").select(DOC_COLUMNS).eq("staff_id", sid)),
+    withTraining
+      ? Promise.all([
+        db.from("pharmacy_settings").select("qspp_cycle_start_date").eq("pharmacy_id", pid).maybeSingle(),
+        fetchAllRows(() => db.from("training_records").select("id, staff_id, training_date, hours").eq("staff_id", sid)),
+        db.from("staff_training_exemptions").select("staff_id, training_year_start, reason").eq("staff_id", sid),
+      ])
+      : null,
   ]);
-  return { db, staff, config, docs, sections: certSections(staff, config) };
+  if (st.error) throw st.error;
+  const staff = st.data;
+  return { db, staff, config, docs, training, sections: certSections(staff, config) };
 }
 
 // Admin's Needs attention items for this one person, with staff wording and where each one opens
-async function myAttention({ db, staff, config, docs, sections }) {
+async function myAttention({ staff, config, docs, sections, training }) {
   if (staff.role === "Locum" || staff.active === false) return [];
-  const [settings, records, ex] = await Promise.all([
-    db.from("pharmacy_settings").select("qspp_cycle_start_date").eq("pharmacy_id", String(staff.pharmacy_id)).maybeSingle(),
-    fetchAllRows(() => db.from("training_records").select("id, staff_id, training_date, hours").eq("staff_id", staff.id)),
-    db.from("staff_training_exemptions").select("staff_id, training_year_start, reason").eq("staff_id", staff.id),
-  ]);
+  const [settings, records, ex] = training;
   if (settings.error || ex.error) throw settings.error || ex.error;
   const person = { id: staff.id, name: staff.name, role: staff.role, active: staff.active, start_date: staff.start_date };
   const { planRows, items } = trainingAttention({
@@ -91,7 +98,7 @@ function ownCertDoc(ctx, id) {
 
 export default async function handler(req, res) {
   try {
-    const ctx = await loadContext(req);
+    const ctx = await loadContext(req, req.method === "GET");
     res.setHeader("Cache-Control", "no-store");
 
     if (req.method === "GET") {
