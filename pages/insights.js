@@ -46,6 +46,7 @@ export default function InsightsPage() {
   const [tasks, setTasks] = useState([]);
   const [completions, setCompletions] = useState([]);
   const [monthSkips, setMonthSkips] = useState([]); // task_month_skips — "Nothing this month" on monthly tasks
+  const [checklistDone, setChecklistDone] = useState({ sheets: [], openSheetIds: [] }); // counted checklist sheets + those with orders still open
   const [rosterShifts, setRosterShifts] = useState([]);
   const [sections, setSections] = useState([]);
   const [sectionSchedule, setSectionSchedule] = useState([]);
@@ -126,9 +127,10 @@ export default function InsightsPage() {
         { data: replyData },
         { data: reactionData },
         { data: skipData },
+        checklistData,
       ] = await Promise.all([
         supabase.from("staff").select("id, name, active").eq("pharmacy_id", currentPharmacyId).order("name"),
-        supabase.from("tasks").select("id, title, frequency, points, assigned_staff_id, assigned_role, assigned_staff_ids, task_type, specific_date, days_of_week, completed_at, completed_by_staff_id, active").eq("pharmacy_id", currentPharmacyId),
+        supabase.from("tasks").select("id, title, frequency, points, assigned_staff_id, assigned_role, assigned_staff_ids, task_type, specific_date, days_of_week, day_of_month, checklist_type, completed_at, completed_by_staff_id, created_at, active").eq("pharmacy_id", currentPharmacyId),
         supabase.from("completions").select("id, task_id, section_clean_id, staff_id, completed_at, period_start").eq("pharmacy_id", currentPharmacyId).gte("completed_at", start.toISOString()).lte("completed_at", end.toISOString()),
         supabase.from("roster_shifts").select("id, shift_date, staff_id").eq("pharmacy_id", currentPharmacyId).gte("shift_date", start.toISOString().slice(0, 10)).lte("shift_date", end.toISOString().slice(0, 10)),
         supabase.from("sections").select("id, name, assigned_staff_id").eq("pharmacy_id", currentPharmacyId),
@@ -137,6 +139,16 @@ export default function InsightsPage() {
         supabase.from("kiosk_note_replies").select("id, note_id, staff_id, created_at").eq("pharmacy_id", currentPharmacyId),
         supabase.from("kiosk_note_reactions").select("note_id, staff_id, reaction").eq("pharmacy_id", currentPharmacyId),
         supabase.from("task_month_skips").select("id, task_id, month, staff_id, created_at").eq("pharmacy_id", currentPharmacyId),
+        // Consumables checklist months: done only when counted AND every Order / Owner line is closed
+        (async () => {
+          const { data: sh } = await supabase.from("checklist_sheets").select("id, task_id, period_month, status")
+            .eq("pharmacy_id", currentPharmacyId).eq("status", "completed");
+          const ids = (sh || []).map((x) => x.id);
+          if (!ids.length) return { sheets: [], openSheetIds: [] };
+          const { data: open } = await supabase.from("checklist_lines").select("sheet_id").in("sheet_id", ids)
+            .in("result", ["order", "owner"]).eq("ordered", false).eq("not_ordering", false);
+          return { sheets: sh || [], openSheetIds: [...new Set((open || []).map((x) => x.sheet_id))] };
+        })(),
       ]);
 
       setStaff(staffData || []);
@@ -149,6 +161,7 @@ export default function InsightsPage() {
       setNoteReplies(replyData || []);
       setNoteReactions(reactionData || []);
       setMonthSkips(skipData || []);
+      setChecklistDone(checklistData || { sheets: [], openSheetIds: [] });
       setLoading(false);
     };
     load();
@@ -416,11 +429,17 @@ export default function InsightsPage() {
 
       // Completions for this task in the period (from completions table). Monthly: the month it counts for —
       // period_start if set (a carried-over month done in the next month), else the Perth month it was done.
-      const doneBuckets = new Set(
-        completions
-          .filter((c) => c.task_id === t.id)
-          .map((c) => (isWeekly ? weekKey(c.completed_at) : periodMonthOfCompletion(c)))
-      );
+      // Checklist tasks (Consumables): a month is done only when its sheet is counted AND every Order / Owner line is
+      // closed (Ordered or Not ordering) — the completion row alone isn't enough. (Points still come with the count.)
+      const doneBuckets = t.checklist_type
+        ? new Set(checklistDone.sheets
+          .filter((sh) => Number(sh.task_id) === Number(t.id) && !checklistDone.openSheetIds.includes(sh.id))
+          .map((sh) => String(sh.period_month).slice(0, 7)))
+        : new Set(
+          completions
+            .filter((c) => c.task_id === t.id)
+            .map((c) => (isWeekly ? weekKey(c.completed_at) : periodMonthOfCompletion(c)))
+        );
 
       // Months marked "Nothing this month" count as resolved (not missed), shown as "—"
       const skipBuckets = isWeekly ? new Set() : new Set(

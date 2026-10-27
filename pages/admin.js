@@ -17,6 +17,7 @@ import { uploadStaffDoc, openStaffDoc, removeStaffDoc, attachTrainingCert, openT
 import StaffTrainingPlan from "../components/TrainingPlan";
 import TrainingAdminTab from "../components/TrainingAdmin";
 import { getLeaveCover } from "../lib/leaveCover";
+import { todayPerth, addMonthsStr } from "../lib/performanceReview";
 import { nextDayStr } from "../lib/leaveCalendar";
 
 
@@ -2299,8 +2300,13 @@ function LocumsTab() {
   const [editingBookingId, setEditingBookingId] = useState(null);
   const [editBookingStart, setEditBookingStart] = useState("");
   const [editBookingEnd, setEditBookingEnd] = useState("");
-  const [editBookingLocumId, setEditBookingLocumId] = useState("");
+  const [editBookingLocumId, setEditBookingLocumId] = useState(""); // "l:<id>" locum | "p:<id>" pharmacist
   const [savingBookingEdit, setSavingBookingEdit] = useState(false);
+  const [pharmacists, setPharmacists] = useState([]); // active Pharmacist / Intern Pharmacist — can be assigned as cover
+  const [editingSlotKey, setEditingSlotKey] = useState(null); // red (unfilled) row whose times are being edited
+  const [editSlotStart, setEditSlotStart] = useState("");
+  const [editSlotEnd, setEditSlotEnd] = useState("");
+  const [savingSlot, setSavingSlot] = useState(false);
 
   const loadAllBookings = async () => {
     setLoadingBookings(true);
@@ -2316,10 +2322,9 @@ function LocumsTab() {
 
   const loadCover = async (months = coverMonths) => {
     setLoadingCover(true);
-    const from = new Date().toISOString().slice(0, 10);
-    const toD = new Date();
-    toD.setMonth(toD.getMonth() + months);
-    const to = toD.toISOString().slice(0, 10);
+    // Local (Perth) date strings — toISOString is UTC and is a day behind before 8am
+    const from = todayPerth();
+    const to = addMonthsStr(from, months);
     const entries = await getLeaveCover({ fromDate: from, toDate: to });
     setCoverEntries(entries);
 
@@ -2356,6 +2361,9 @@ function LocumsTab() {
         .order("name");
       setLocums(data || []);
       setLoading(false);
+      const { data: ph } = await supabase.from("staff").select("id, name, role, active")
+        .eq("pharmacy_id", PHARMACY_ID).in("role", ["Pharmacist", "Intern Pharmacist"]).eq("active", true).order("name");
+      setPharmacists(ph || []);
     };
     load();
     loadAllBookings();
@@ -2411,17 +2419,28 @@ function LocumsTab() {
     setEditingBookingId(entry.bookingId);
     setEditBookingStart(entry.bookingStart || entry.start);
     setEditBookingEnd(entry.bookingEnd || entry.end);
-    // Look up the current locum on this booking so the dropdown pre-selects them
-    const { data } = await supabase.from("roster_shifts").select("staff_id").eq("id", entry.bookingId).maybeSingle();
-    setEditBookingLocumId(data?.staff_id ? String(data.staff_id) : "");
+    // Look up who's on this booking so the dropdown pre-selects them (locum or pharmacist cover)
+    const { data } = await supabase.from("roster_shifts").select("staff_id, role").eq("id", entry.bookingId).maybeSingle();
+    setEditBookingLocumId(data?.staff_id ? `${data.role === "Locum" ? "l" : "p"}:${data.staff_id}` : "");
+  };
+
+  // "l:<id>" / "p:<id>" -> what the shift row needs: a locum booking, or a pharmacist rostered as cover
+  const coverPatchFor = (value) => {
+    const [kind, id] = String(value).split(":");
+    if (kind === "p") {
+      const ph = pharmacists.find((p) => String(p.id) === id);
+      return ph ? { staff_id: Number(id), role: ph.role, covers_leave: true } : null; // their real role
+    }
+    return id ? { staff_id: Number(id), role: "Locum", covers_leave: false } : null;
   };
 
   const handleSaveBookingEdit = async () => {
     if (!editingBookingId) return;
+    if (editBookingStart && editBookingEnd && editBookingEnd <= editBookingStart) { alert("End time must be after the start time."); return; }
     setSavingBookingEdit(true);
     try {
       const patch = { start_time: editBookingStart, end_time: editBookingEnd };
-      if (editBookingLocumId) patch.staff_id = Number(editBookingLocumId);
+      if (editBookingLocumId) Object.assign(patch, coverPatchFor(editBookingLocumId) || {});
       const { error } = await supabase.from("roster_shifts").update(patch).eq("id", editingBookingId);
       if (error) throw error;
       setEditingBookingId(null);
@@ -2436,7 +2455,7 @@ function LocumsTab() {
 
   const handleUnassignBooking = async () => {
     if (!editingBookingId) return;
-    if (!window.confirm("Unassign this locum? The shift is removed and goes back to needing a locum.")) return;
+    if (!window.confirm("Unassign this cover? The shift is removed and goes back to needing cover.")) return;
     setSavingBookingEdit(true);
     try {
       const { error } = await supabase.from("roster_shifts").delete().eq("id", editingBookingId);
@@ -2451,12 +2470,20 @@ function LocumsTab() {
     }
   };
 
-  const handleAssignLocum = async (entry, locumId) => {
-    if (!locumId) return;
-    const key = entry.gapId ? `m${entry.gapId}` : `${entry.date}-${entry.start}`;
-    setAssigningKey(key);
+  // Assign cover: a locum (role Locum) or a pharmacist (their real role + covers_leave). Uses the slot's (edited) times.
+  const handleAssignLocum = async (entry, value, rowKey) => {
+    if (!value) return;
+    const cover = coverPatchFor(value);
+    if (!cover) return;
+    setAssigningKey(rowKey);
     try {
-      // Both types create a real Locum booking (this is what puts it on the roster)
+      if (cover.covers_leave) {
+        const { data: already } = await supabase.from("roster_shifts").select("id")
+          .eq("staff_id", cover.staff_id).eq("shift_date", entry.date).limit(1);
+        const name = pharmacists.find((p) => Number(p.id) === cover.staff_id)?.name || "This pharmacist";
+        if (already?.length && !window.confirm(`${name} is already rostered that day — add cover shift anyway?`)) return;
+      }
+      // Both create a real roster shift (this is what puts it on the roster)
       const monthDate = entry.date.slice(0, 7) + "-01";
       const { data: monthData } = await supabase.from("roster_months").select("id").eq("month", monthDate).maybeSingle();
       let rosterMonthId = monthData?.id;
@@ -2465,11 +2492,10 @@ function LocumsTab() {
         rosterMonthId = created?.id;
       }
       const { error } = await supabase.from("roster_shifts").insert([{
-        staff_id: Number(locumId),
+        ...cover,
         shift_date: entry.date,
         start_time: entry.start,
         end_time: entry.end,
-        role: "Locum",
         roster_month_id: rosterMonthId,
         pharmacy_id: PHARMACY_ID,
       }]);
@@ -2483,11 +2509,67 @@ function LocumsTab() {
       await loadCover();
       await loadAllBookings();
     } catch (err) {
-      alert("Couldn't assign locum: " + (err?.message || String(err)));
+      alert("Couldn't assign cover: " + (err?.message || String(err)));
     } finally {
       setAssigningKey(null);
     }
   };
+
+  // ── Edit times on a red (unfilled) row ──
+  // Leave-based slot -> locum_slot_overrides (one per staff member + date); manual slot -> its locum_gaps row
+  const startEditSlot = (entry, rowKey) => {
+    setEditingSlotKey(rowKey);
+    setEditSlotStart(entry.start);
+    setEditSlotEnd(entry.end);
+  };
+  const handleSaveSlot = async (entry) => {
+    if (!editSlotStart || !editSlotEnd || editSlotEnd <= editSlotStart) { alert("End time must be after the start time."); return; }
+    setSavingSlot(true);
+    try {
+      const { error } = entry.manual
+        ? await supabase.from("locum_gaps").update({ start_time: editSlotStart, end_time: editSlotEnd }).eq("id", entry.gapId)
+        : await supabase.from("locum_slot_overrides").upsert({
+          pharmacy_id: PHARMACY_ID, staff_id: Number(entry.staffId), slot_date: entry.date,
+          start_time: editSlotStart, end_time: editSlotEnd,
+        }, { onConflict: "staff_id,slot_date" });
+      if (error) throw error;
+      setEditingSlotKey(null);
+      await loadCover();
+    } catch (err) {
+      alert("Couldn't save times: " + (err?.message || String(err)));
+    } finally {
+      setSavingSlot(false);
+    }
+  };
+  // Back to their normal shift times (leave-based slots only)
+  const handleResetSlot = async (entry) => {
+    setSavingSlot(true);
+    try {
+      const { error } = await supabase.from("locum_slot_overrides").delete()
+        .eq("staff_id", Number(entry.staffId)).eq("slot_date", entry.date);
+      if (error) throw error;
+      setEditingSlotKey(null);
+      await loadCover();
+    } catch (err) {
+      alert("Couldn't reset: " + (err?.message || String(err)));
+    } finally {
+      setSavingSlot(false);
+    }
+  };
+  // "Assign cover…" options: active locums, then active pharmacists / interns (not the person on leave for that row)
+  const coverOptions = (entry) => (
+    <>
+      <optgroup label="Locums">
+        {locums.filter((l) => l.active !== false).map((l) => <option key={`l${l.id}`} value={`l:${l.id}`}>{l.name}</option>)}
+      </optgroup>
+      <optgroup label="Pharmacists">
+        {pharmacists.filter((p) => Number(p.id) !== Number(entry.staffId)).map((p) => (
+          <option key={`p${p.id}`} value={`p:${p.id}`}>{p.name}{p.role === "Intern Pharmacist" ? " (intern)" : ""}</option>
+        ))}
+      </optgroup>
+    </>
+  );
+
   const handleCopyCover = () => {
     const lines = coverGaps.map((e) => `${fmtAllDate(e.date)} · ${formatTime(e.start)} – ${formatTime(e.end)}`);
     const text = `Shifts needing a locum\n\n${lines.join("\n")}\n\n${coverGaps.length} shift${coverGaps.length !== 1 ? "s" : ""}`;
@@ -2626,6 +2708,7 @@ function LocumsTab() {
                       <option value={2}>Next 2 months</option>
                       <option value={3}>Next 3 months</option>
                       <option value={6}>Next 6 months</option>
+                      <option value={12}>Next 12 months</option>
                     </select>
                     {coverGaps.length > 0 && (
                       <button
@@ -2680,15 +2763,26 @@ function LocumsTab() {
                             <span className="text-gray-400 text-xs">–</span>
                             <input type="time" value={editBookingEnd} onChange={(ev) => setEditBookingEnd(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0" />
                             <select value={editBookingLocumId} onChange={(ev) => setEditBookingLocumId(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0">
-                              <option value="">— locum —</option>
-                              {locums.filter((l) => l.active !== false).map((l) => (
-                                <option key={l.id} value={l.id}>{l.name}</option>
-                              ))}
+                              <option value="">— cover —</option>
+                              {coverOptions(e)}
                             </select>
                             <div className="flex items-center gap-1 shrink-0 ml-auto">
                               <button onClick={handleSaveBookingEdit} disabled={savingBookingEdit} className="text-xs px-2 py-1 bg-blue-600 text-white rounded disabled:opacity-40">{savingBookingEdit ? "…" : "Save"}</button>
                               <button onClick={() => setEditingBookingId(null)} className="text-xs px-2 py-1 border rounded">Cancel</button>
                               <button onClick={handleUnassignBooking} disabled={savingBookingEdit} className="text-xs px-2 py-1 border border-red-200 text-red-600 rounded hover:bg-red-50 disabled:opacity-40">Unassign</button>
+                            </div>
+                          </div>
+                        ) : !e.filled && editingSlotKey === rowKey ? (
+                          <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
+                            <input type="time" value={editSlotStart} onChange={(ev) => setEditSlotStart(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0" />
+                            <span className="text-gray-400 text-xs">–</span>
+                            <input type="time" value={editSlotEnd} onChange={(ev) => setEditSlotEnd(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0" />
+                            <div className="flex items-center gap-1 shrink-0 ml-auto">
+                              <button onClick={() => handleSaveSlot(e)} disabled={savingSlot} className="text-xs px-2 py-1 bg-blue-600 text-white rounded disabled:opacity-40">{savingSlot ? "…" : "Save"}</button>
+                              <button onClick={() => setEditingSlotKey(null)} className="text-xs px-2 py-1 border rounded">Cancel</button>
+                              {!e.manual && e.edited && (
+                                <button onClick={() => handleResetSlot(e)} disabled={savingSlot} className="text-xs px-2 py-1 border rounded text-gray-600 disabled:opacity-40" title="Back to their normal shift times">Reset</button>
+                              )}
                             </div>
                           </div>
                         ) : (
@@ -2697,6 +2791,7 @@ function LocumsTab() {
                               {e.filled
                                 ? `${formatTime(e.bookingStart || e.start)} – ${formatTime(e.bookingEnd || e.end)}`
                                 : `${formatTime(e.start)} – ${formatTime(e.end)}`}
+                              {!e.filled && e.edited && <span className="block text-[10px] text-amber-700">edited</span>}
                             </div>
                             <div className="text-xs text-gray-500 flex-1 min-w-0 truncate">
                               {e.manual ? "Manual slot" : `${e.staffName} off${e.status === "pending" ? " (pending)" : ""}`}
@@ -2707,23 +2802,27 @@ function LocumsTab() {
                           editingBookingId === e.bookingId ? null : (
                             <div className="flex items-center gap-2 shrink-0">
                               <span className="text-xs text-green-700 font-medium">{e.locumName}</span>
+                              {e.fillerType === "pharmacist" && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">pharmacist</span>
+                              )}
                               {e.bookingId && (
                                 <button onClick={() => startEditBooking(e)} className="text-xs text-blue-600 hover:underline">Edit</button>
                               )}
                             </div>
                           )
-                        ) : (
-                          <select
-                            defaultValue=""
-                            disabled={assigningKey === rowKey}
-                            onChange={(ev) => handleAssignLocum(e, ev.target.value)}
-                            className="text-xs border rounded-lg px-2 py-1 shrink-0 disabled:opacity-40"
-                          >
-                            <option value="">{assigningKey === rowKey ? "Assigning…" : "Assign locum…"}</option>
-                            {locums.filter((l) => l.active !== false).map((l) => (
-                              <option key={l.id} value={l.id}>{l.name}</option>
-                            ))}
-                          </select>
+                        ) : editingSlotKey === rowKey ? null : (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button onClick={() => startEditSlot(e, rowKey)} className="text-xs text-blue-600 hover:underline">Edit</button>
+                            <select
+                              value=""
+                              disabled={assigningKey === rowKey}
+                              onChange={(ev) => handleAssignLocum(e, ev.target.value, rowKey)}
+                              className="text-xs border rounded-lg px-2 py-1 disabled:opacity-40"
+                            >
+                              <option value="">{assigningKey === rowKey ? "Assigning…" : "Assign cover…"}</option>
+                              {coverOptions(e)}
+                            </select>
+                          </div>
                         )}
                         {e.manual && e.gapId && (
                           <button

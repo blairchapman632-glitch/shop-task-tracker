@@ -5,8 +5,11 @@ import { createPortal } from "react-dom";
 import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
+import ConsumablesSheet from "../components/ConsumablesSheet";
+import { loadConsumablesSettings, isConsumablesChecklist, ORDER_LINE_COLUMNS } from "../lib/consumables";
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
-import { fmtDateShort, perthDateOf, todayPerth, addMonthsStr } from "../lib/performanceReview";
+import { fmtDateShort, perthDateOf, todayPerth, addMonthsStr, addDaysStr } from "../lib/performanceReview";
+import OrderLines from "../components/OrderLines";
 import { syncInductionAuto } from "../lib/inductionAuto";
 import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
 import { adminFetch } from "../lib/adminFetch";
@@ -670,6 +673,13 @@ export default function HomePage() {
   // Monthly On the List tasks with a show-from day: taskId -> open months [{ ym, start: "YYYY-MM-01", overdue, carry }]
   // (this month once its day arrives, plus last month if it was missed — carried over in red)
   const [monthCards, setMonthCards] = useState({});
+  const [consumablesSettings, setConsumablesSettings] = useState({ ownerStaffId: null });
+  const [checklistOpen, setChecklistOpen] = useState(null); // { task, period, periodMonth } — Consumables sheet open
+
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    loadConsumablesSettings(supabase, currentPharmacyId).then(setConsumablesSettings).catch((err) => console.error("[consumables settings]", err));
+  }, [currentPharmacyId]);
   const [inductionJobs, setInductionJobs] = useState([]);     // in-progress inductions of staff rostered on today: { id, staffId, requests, items }
   const [openInductionId, setOpenInductionId] = useState(null); // induction card tapped (policies panel)
   const [inductionAckId, setInductionAckId] = useState(null);   // request being acknowledged in that panel
@@ -1323,6 +1333,73 @@ export default function HomePage() {
   }, [todayRosteredIds, currentPharmacyId, staff]);
 
   const inductionCards = inductionJobs.filter((j) => j.confirm || j.requests.some((r) => r.status === "outstanding"));
+
+  // ── Consumables follow-up orders: completed counts with Order / Owner lines not yet ticked ──
+  // Staff card: shown when the checklist task's assignee is rostered on. Owner card: when the owner is rostered on.
+  // Both stay until every line is Ordered or Not ordering; red 2 days after the count was completed.
+  const [orderFollowUps, setOrderFollowUps] = useState({ staff: [], owner: [], staffVisible: false, ownerVisible: false });
+  const [followUpOpen, setFollowUpOpen] = useState(null); // "staff" | "owner"
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [{ data: ctasks, error: tErr }, { data: sheets, error: sErr }] = await Promise.all([
+          supabase.from("tasks").select("id, assigned_staff_id, assigned_role, assigned_staff_ids, active")
+            .eq("pharmacy_id", currentPharmacyId).eq("checklist_type", "consumables"),
+          supabase.from("checklist_sheets").select("id, task_id, period_month, completed_at")
+            .eq("pharmacy_id", currentPharmacyId).eq("kind", "consumables").eq("status", "completed"),
+        ]);
+        if (tErr || sErr) throw tErr || sErr;
+        const sheetIds = (sheets || []).map((x) => x.id);
+        let open = [];
+        if (sheetIds.length) {
+          const { data, error } = await supabase.from("checklist_lines").select(ORDER_LINE_COLUMNS)
+            .in("sheet_id", sheetIds).in("result", ["order", "owner"]).eq("ordered", false).eq("not_ordering", false);
+          if (error) throw error;
+          const sheetById = Object.fromEntries((sheets || []).map((x) => [x.id, x]));
+          open = (data || []).map((l) => ({ ...l, period_month: sheetById[l.sheet_id]?.period_month, completed_at: sheetById[l.sheet_id]?.completed_at, task_id: sheetById[l.sheet_id]?.task_id }));
+        }
+        const rostered = new Set([...todayRosteredIds].map(Number));
+        const roleOf = Object.fromEntries(staff.map((s) => [Number(s.id), s.role]));
+        const assigneeOn = (task) => {
+          if (!task) return true;
+          if (task.assigned_role) return [...rostered].some((id) => roleOf[id] === task.assigned_role);
+          if (task.assigned_staff_ids?.length) return task.assigned_staff_ids.some((id) => rostered.has(Number(id)));
+          if (task.assigned_staff_id) return rostered.has(Number(task.assigned_staff_id));
+          return true; // "Anyone"
+        };
+        const taskById = Object.fromEntries((ctasks || []).map((x) => [x.id, x]));
+        const staffLines = open.filter((l) => l.result === "order");
+        const ownerLines = open.filter((l) => l.result === "owner");
+        if (cancelled) return;
+        setOrderFollowUps({
+          staff: staffLines,
+          owner: ownerLines,
+          staffVisible: staffLines.some((l) => assigneeOn(taskById[l.task_id])),
+          ownerVisible: !!consumablesSettings.ownerStaffId && rostered.has(Number(consumablesSettings.ownerStaffId)),
+        });
+      } catch (err) {
+        console.error("[consumables follow-ups]", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentPharmacyId, todayRosteredIds, staff, consumablesSettings.ownerStaffId, leadersRefreshKey]);
+
+  const followUpOverdue = (lines) => {
+    const cutoff = addDaysStr(todayPerth(), -2);
+    return lines.some((l) => l.completed_at && String(perthDateOf(l.completed_at)) <= cutoff);
+  };
+  const showStaffFollowUp = orderFollowUps.staffVisible && orderFollowUps.staff.length > 0;
+  const showOwnerFollowUp = orderFollowUps.ownerVisible && orderFollowUps.owner.length > 0;
+  // A line ticked in the follow-up panel drops off (closed = Ordered or Not ordering)
+  const onFollowUpChanged = (saved) => {
+    setOrderFollowUps((f) => {
+      const closed = saved.ordered || saved.not_ordering;
+      const fix = (ls) => (closed ? ls.filter((l) => l.id !== saved.id) : ls.map((l) => (l.id === saved.id ? { ...l, ...saved } : l)));
+      return { ...f, staff: fix(f.staff), owner: fix(f.owner) };
+    });
+  };
   const openInduction = inductionJobs.find((j) => j.id === openInductionId) || null;
 
   // "These were explained to me and I understand them" (kiosk; server checks ready + rostered on today)
@@ -1391,6 +1468,8 @@ export default function HomePage() {
   const handleTaskTap = async (task) => {
     try {
       if (infoOpenId) { setInfoOpenId(null); return; }
+      // The Consumables Checklist task opens its sheet — it's completed from the sheet, not by tapping the card
+      if (isConsumablesTask(task)) { openChecklist(task, null); return; }
       if (completedTaskIds.has(task.id)) {
         const ok = window.confirm(`Undo completion for "${task.title}" today?`);
         if (!ok) return;
@@ -1455,6 +1534,22 @@ export default function HomePage() {
     else setTasks((prev) => prev.filter((t) => t.id !== task.id));
   };
 
+  // ── Consumables Checklist (tasks with checklist_type 'consumables'; sheet in components/ConsumablesSheet.js) ──
+  const isConsumablesTask = (task) => isConsumablesChecklist(task);
+  const openChecklist = (task, period) => {
+    if (!selectedStaffId) { alert("Tap your photo first, then tap the checklist."); return; }
+    setChecklistOpen({ task, period, periodMonth: period ? period.start : perthMonthStart() });
+  };
+  const onChecklistCompleted = () => {
+    const { task, period } = checklistOpen;
+    setChecklistOpen(null);
+    if (period) closeMonthCard(task.id, period.start);
+    else setTasks((prev) => prev.filter((t) => t.id !== task.id));
+    setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: period?.carry ? `${task.title} (${monthShort(period.ym)})` : task.title, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
+    setLeadersRefreshKey((k) => k + 1);
+    burstConfetti();
+  };
+
   // A month card is done or skipped: drop it (the task goes once no month is left open)
   const closeMonthCard = (taskId, start) => {
     setMonthCards((prev) => {
@@ -1469,6 +1564,7 @@ export default function HomePage() {
   // completions has no one-per-day rule (checked 26/10/2026), so both cards can be done on the same day.
   const handleMonthCardTap = async (task, period) => {
     if (infoOpenId) { setInfoOpenId(null); return; }
+    if (isConsumablesTask(task)) { openChecklist(task, period); return; } // a carried-over month opens that month's sheet
     if (!selectedStaffId) { alert("Tap your photo first, then tap the task."); return; }
     const { error } = await supabase.from("completions").insert([{
       task_id: Number(task.id),
@@ -1931,7 +2027,7 @@ const handleDeliveryTap = async (d) => {
                   </div>
 
                   {/* On the List section */}
-                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped") || hireDueBack.length > 0 || policyJobs.length > 0 || inductionCards.length > 0) && (
+                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped") || hireDueBack.length > 0 || policyJobs.length > 0 || inductionCards.length > 0 || showStaffFollowUp || showOwnerFollowUp) && (
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">Today's Jobs</div>
@@ -1988,6 +2084,27 @@ const handleDeliveryTap = async (d) => {
                             <div className="text-[10px] text-gray-400">Tap to open, then tick when read</div>
                           </button>
                         ))}
+                        {[
+                          showStaffFollowUp && { key: "staff", lines: orderFollowUps.staff, title: `🧾 Consumables — ${orderFollowUps.staff.length} still to order`, tone: "border-l-amber-500", sub: "text-amber-700" },
+                          showOwnerFollowUp && { key: "owner", lines: orderFollowUps.owner, title: `🧾 Consumables — ${orderFollowUps.owner.length} for ${staffById[consumablesSettings.ownerStaffId]?.name?.split(" ")[0] || "owner"} to order`, tone: "border-l-purple-500", sub: "text-purple-700" },
+                        ].filter(Boolean).map((c) => {
+                          const late = followUpOverdue(c.lines);
+                          return (
+                            <button
+                              key={`followup-${c.key}`}
+                              onClick={() => setFollowUpOpen(c.key)}
+                              className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${late ? "border-l-red-500" : c.tone} text-left bg-white shadow-sm hover:shadow-md transition-shadow`}
+                            >
+                              <div className={`font-semibold text-sm leading-tight mb-1 break-words ${late ? "text-red-700" : "text-gray-800"}`}>
+                                {c.title}{late && <span className="ml-1 text-red-500">⚠️</span>}
+                              </div>
+                              <div className={`text-xs font-medium mb-1 ${late ? "text-red-600" : c.sub}`}>
+                                {[...new Set(c.lines.map((l) => l.supplier_name).filter(Boolean))].join(", ") || "Order"}
+                              </div>
+                              <div className="text-[10px] text-gray-400">Tap to tick what's been ordered</div>
+                            </button>
+                          );
+                        })}
                         {inductionCards.map((j) => {
                           const read = j.requests.filter((r) => r.status === "read").length;
                           if (j.confirm) {
@@ -2062,6 +2179,9 @@ const handleDeliveryTap = async (d) => {
                               )}
                               {assignedStaff && !task.assigned_role && !(task.assigned_staff_ids?.length > 0) && (
                                 <div className="text-xs text-blue-600 font-medium mb-1">👤 {assignedStaff.name}</div>
+                              )}
+                              {isConsumablesTask(task) && (
+                                <div className="text-[11px] text-blue-700 mb-1">🧾 Tap to open the checklist</div>
                               )}
                               {task.info && (
                                 <div className="text-xs text-gray-500 leading-snug mb-1 truncate">{task.info}</div>
@@ -2894,6 +3014,61 @@ const handleDeliveryTap = async (d) => {
         </>,
         document.body
       )}
+      {/* Consumables follow-up orders panel */}
+      {followUpOpen && createPortal(
+        (() => {
+          const lines = followUpOpen === "owner" ? orderFollowUps.owner : orderFollowUps.staff;
+          const ownerFirst = staffById[consumablesSettings.ownerStaffId]?.name?.split(" ")[0] || "Owner";
+          return (
+            <>
+              <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setFollowUpOpen(null)} />
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+                    <h2 className="font-semibold text-gray-800">🧾 {followUpOpen === "owner" ? `For ${ownerFirst} to order` : "Consumables still to order"}</h2>
+                    <button onClick={() => setFollowUpOpen(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+                  </div>
+                  <div className="px-5 py-4 overflow-y-auto space-y-3">
+                    {!selectedStaffId && (
+                      <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Tap your photo on the home screen first, then tick what's been ordered.</div>
+                    )}
+                    {lines.length === 0 ? (
+                      <p className="text-sm text-green-700">✓ All ordered.</p>
+                    ) : (
+                      <OrderLines
+                        lines={lines}
+                        staffId={selectedStaffId}
+                        canEdit={!!selectedStaffId}
+                        nameOf={(id) => (id ? staffById[id]?.name || "" : "")}
+                        onChanged={onFollowUpChanged}
+                        showMonth
+                        tone={followUpOpen === "owner" ? "purple" : "amber"}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          );
+        })(),
+        document.body,
+      )}
+
+      {/* Consumables Checklist sheet */}
+      {checklistOpen && (
+        <ConsumablesSheet
+          task={checklistOpen.task}
+          periodMonth={checklistOpen.periodMonth}
+          staffId={selectedStaffId}
+          staffName={selectedStaffName}
+          nameOf={(id) => (id ? staffById[id]?.name || "" : "")}
+          pharmacyId={currentPharmacyId}
+          ownerStaffId={consumablesSettings.ownerStaffId}
+          onClose={() => setChecklistOpen(null)}
+          onCompleted={onChecklistCompleted}
+        />
+      )}
+
       {/* Induction policies panel */}
       {openInduction?.confirm && createPortal(
         (() => {

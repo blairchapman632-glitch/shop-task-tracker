@@ -2,6 +2,8 @@ import React, { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 import Sidebar from "../components/Sidebar";
+import ConsumablesAdmin from "../components/ConsumablesAdmin";
+import { CHECKLIST_TYPES } from "../lib/consumables";
 import { ensureSectionYear, monthsOf, perthYear, perthMonthStart } from "../lib/sectionCleans";
 import { hasShowFrom, showFromLabel, LAST_DAY } from "../lib/taskPeriods";
 
@@ -61,6 +63,15 @@ export default function TasksPage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [currentPharmacyId, setCurrentPharmacyId] = useState(null);
   const [pinEntered, setPinEntered] = useState(false);
+  const [pinStaffId, setPinStaffId] = useState(null);
+  // ?tab=consumables&sheet=<id> (link in the owner's push notification) opens that month's checklist
+  const [initialSheetId, setInitialSheetId] = useState(null);
+  useEffect(() => {
+    if (!router.isReady) return;
+    if (router.query.tab === "checklists" || router.query.tab === "consumables") setActiveTab("checklists");
+    if (router.query.sheet) setInitialSheetId(String(router.query.sheet));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady]);
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
 
@@ -97,6 +108,7 @@ export default function TasksPage() {
     assign_type: "anyone",
     show_next_shift: false,
     created_by_staff_id: "",
+    checklist_type: "",
   };
   const [form, setForm] = useState(emptyForm);
 
@@ -126,6 +138,7 @@ const handlePinSubmit = async () => {
       .single();
     if (data && !error) {
       setPinEntered(true);
+      setPinStaffId(data.id); // who's using the page (Consumables: the owner's "Ordered" ticks)
       setPinError(false);
     } else {
       setPinError(true);
@@ -500,6 +513,7 @@ const handleAutoBalance = async (staffId, staffName) => {
       assigned_staff_id: task.assigned_staff_id ? String(task.assigned_staff_id) : "",
       show_next_shift: task.show_next_shift || false,
       created_by_staff_id: task.created_by_staff_id ? String(task.created_by_staff_id) : "",
+      checklist_type: task.checklist_type || "",
       assigned_role: task.assigned_role || "",
       assigned_staff_ids: task.assigned_staff_ids || [],
       assign_type: task.assigned_role ? "role" : (task.assigned_staff_ids?.length > 0 ? "multiple" : task.assigned_staff_id ? "person" : "anyone"),
@@ -541,6 +555,8 @@ const handleAutoBalance = async (staffId, staffName) => {
         assigned_staff_ids: form.assign_type === "multiple" ? form.assigned_staff_ids : [],
         show_next_shift: form.show_next_shift || false,
         created_by_staff_id: form.created_by_staff_id ? Number(form.created_by_staff_id) : null,
+        // Checklist (Recurring tasks only — e.g. the Consumables stock count opens from the kiosk card)
+        checklist_type: onListTab && ["monthly_anytime", "monthly", "weekly"].includes(form.frequency) && !form.show_next_shift ? (form.checklist_type || null) : null,
         task_type: onListTab ? "on_the_list" : "daily",
       };
 
@@ -646,7 +662,10 @@ const handleAutoBalance = async (staffId, staffName) => {
   const TaskRow = ({ task }) => (
     <tr className="border-t border-gray-100 hover:bg-gray-50">
       <td className="px-3 py-2">
-        <div className="font-medium text-sm text-gray-800">{task.title}</div>
+        <div className="font-medium text-sm text-gray-800">
+          {task.title}
+          {task.checklist_type && <span className="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">🧾 Checklist</span>}
+        </div>
         {task.info && <div className="text-xs text-gray-400 truncate max-w-[200px]">{task.info}</div>}
       </td>
       {onListTab && (
@@ -701,6 +720,7 @@ const handleAutoBalance = async (staffId, staffName) => {
               { key: "general", label: "Daily Tasks" },
               { key: "assigned", label: "Assigned jobs" },
               { key: "recurring", label: "Recurring tasks" },
+              { key: "checklists", label: "Checklists" },
               { key: "sections", label: "Section Cleans" },
             ].map((tab) => (
               <button
@@ -744,6 +764,14 @@ const handleAutoBalance = async (staffId, staffName) => {
         <div className="flex-1 overflow-auto px-6 py-4">
           {loading && activeTab !== "sections" ? (
             <div className="text-sm text-gray-400 py-8 text-center">Loading tasks...</div>
+          ) : activeTab === "checklists" ? (
+            <ConsumablesAdmin
+              pharmacyId={currentPharmacyId}
+              staffOptions={staffOptions}
+              tasks={tasks}
+              pinStaffId={pinStaffId}
+              initialSheetId={initialSheetId}
+            />
           ) : activeTab === "sections" ? (
             <div className="space-y-4">
 
@@ -1290,6 +1318,33 @@ const handleAutoBalance = async (staffId, staffName) => {
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
               </div>
+
+              {/* Checklist — recurring On the List tasks only (the kiosk card opens the checklist; set up in Checklists) */}
+              {onListTab && ["monthly_anytime", "monthly", "weekly"].includes(form.frequency) && !form.show_next_shift && (
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={!!form.checklist_type}
+                      onChange={(e) => setForm((f) => ({ ...f, checklist_type: e.target.checked ? CHECKLIST_TYPES[0].key : "" }))}
+                    />
+                    Checklist
+                  </label>
+                  {form.checklist_type && (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Checklist type</label>
+                      <select
+                        value={form.checklist_type}
+                        onChange={(e) => setForm((f) => ({ ...f, checklist_type: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                      >
+                        {CHECKLIST_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                      </select>
+                      <p className="text-[11px] text-gray-400 mt-1">Tapping the card on the kiosk opens the checklist. Set up its items in the Checklists tab.</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Assignment — On the List only */}
               {onListTab && (

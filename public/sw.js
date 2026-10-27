@@ -66,9 +66,12 @@ self.addEventListener("notificationclick", (event) => {
   const url = event.notification.data?.url || "/me?p=byford";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      // If the app's already open, focus it; otherwise open a new window.
-      for (const c of clients) {
-        if (c.url.includes("/me") && "focus" in c) return c.focus();
+      // A /me notification: if the app's already open, focus it; otherwise open a new window.
+      // Any other page (e.g. the owner's Consumables link to /tasks) always opens that page.
+      if (url.startsWith("/me")) {
+        for (const c of clients) {
+          if (c.url.includes("/me") && "focus" in c) return c.focus();
+        }
       }
       if (self.clients.openWindow) return self.clients.openWindow(url);
     })

@@ -810,10 +810,11 @@ const refreshLeave = useCallback(async () => {
       const prevMonthDate = monthStartStr(currentYear, currentMonth - 1);
       const prevEnd = targetMonthDate;
 
-      // Snapshot the non-locum shifts we're about to delete, so the copy can be undone this session
+      // Snapshot the non-locum shifts we're about to delete, so the copy can be undone this session.
+      // Pharmacist cover shifts (covers_leave) are kept like locum bookings — never snapshotted or deleted.
       const { data: snapshot, error: snapError } = await supabase.from("roster_shifts")
         .select("staff_id, staff_name, shift_date, start_time, end_time, role, roster_month_id, pharmacy_id")
-        .gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum");
+        .gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum").eq("covers_leave", false);
       if (snapError) throw snapError;
 
       const settingsQuery = supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", pharmacyId);
@@ -865,9 +866,9 @@ const refreshLeave = useCallback(async () => {
         generatedIds.add(String(st.id));
       }
 
-      // Copy last month for everyone not generated above (locums are never copied)
+      // Copy last month for everyone not generated above (locums and pharmacist cover shifts are never copied)
       const toCopy = (prevShifts || []).filter(
-        (s) => s.role !== "Locum" && !(s.staff_id != null && generatedIds.has(String(s.staff_id)))
+        (s) => s.role !== "Locum" && !s.covers_leave && !(s.staff_id != null && generatedIds.has(String(s.staff_id)))
       );
 
       if (!generated.length && !toCopy.length) {
@@ -922,9 +923,10 @@ const refreshLeave = useCallback(async () => {
       const toInsert = [...generated.map((s) => ({ ...s, roster_month_id: targetMonthId, pharmacy_id: pharmacyId })), ...deduped];
       if (!toInsert.length) { alert("No valid shifts to add. This month was left unchanged."); return; }
 
-      // Only now replace the month's non-locum shifts (nothing is wiped if there's nothing to add)
+      // Only now replace the month's non-locum shifts (nothing is wiped if there's nothing to add).
+      // Locum bookings and pharmacist cover shifts (covers_leave) stay.
       const { error: deleteError } = await supabase.from("roster_shifts").delete()
-        .gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum");
+        .gte("shift_date", targetMonthDate).lt("shift_date", targetEnd).neq("role", "Locum").eq("covers_leave", false);
       if (deleteError) throw deleteError;
       setCopyUndo({ monthLabel, targetMonthDate, targetEnd, shifts: snapshot || [] });
 
@@ -954,9 +956,9 @@ const refreshLeave = useCallback(async () => {
     if (!window.confirm(`Undo the copy into ${copyUndo.monthLabel}? This restores the shifts that were there before.`)) return;
     try {
       setUndoingCopy(true);
-      // Remove the copied-in non-locum shifts
+      // Remove the copied-in non-locum shifts (cover shifts were never touched, so they stay)
       await supabase.from("roster_shifts").delete()
-        .gte("shift_date", copyUndo.targetMonthDate).lt("shift_date", copyUndo.targetEnd).neq("role", "Locum");
+        .gte("shift_date", copyUndo.targetMonthDate).lt("shift_date", copyUndo.targetEnd).neq("role", "Locum").eq("covers_leave", false);
       // Restore the snapshot
       if (copyUndo.shifts.length) {
         await supabase.from("roster_shifts").insert(copyUndo.shifts);
