@@ -85,4 +85,6 @@ Shared libs (single sources of truth — reuse, don't duplicate logic):
 - Locums untouched; public holidays skipped; approved leave ignored (roster shows the clash); undo supported.
 
 ## End of session
-When Blair says "wrap up" (or similar), append a short summary to `docs/SESSION_NOTES.md` (create it if missing) with the date and these headings: **Done**, **Schema changes**, **New tables (add to RLS pass)**, **Follow-ups / parked**, **Not committed**. Keep it concise — Blair uploads it to his planning project.
+When Blair says "wrap up" (or similar), add a short summary of the session to `docs/SESSION_NOTES.md` (create it if missing) with the date and these headings: **Done**, **Schema changes**, **New tables (add to RLS pass)**, **Follow-ups / parked**, **Not committed**. Keep it concise — Blair uploads it to his planning project.
+- Put today's entry at the **TOP** of the file (newest first), not the bottom.
+- Then show that same entry in full in your reply, so Blair can copy just today's notes.

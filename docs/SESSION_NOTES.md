@@ -1,5 +1,41 @@
 # Session notes
 
+## 2026-10-26 / 27 — Staff Documents dates, inactive staff, /me speed, Tasks (section cleans, monthly tasks, checklists), locum cover
+
+### Done
+- **Staff Documents:** typed dates on file rows save once complete (no partial saves, focus kept, half-typed date reverts); Other qualifications upload box says "Type the qualification name first." (`64259f3`)
+- **Inactive staff blocked:** /me re-checks `active` when the app returns to the foreground (max every 30s) → signs out + inactive screen; `/api/push` never sends to inactive staff. (`1a33ace`)
+- **/me To do Training faster:** `api/me/certificates` loads everything in one parallel round; last known Training items shown instantly from this device (cleared on logout / inactive). ~0.9s → ~0.44s DB time. (`8f2e923`)
+- **Tasks page:** shared `components/Sidebar.js` (Tasks / Wages / Admin / Insights); Section Cleans — red "Inactive — reassign" badge, per-person Sections panel, "+ Add staff", year arrows (Perth month), new year auto-copies last year's schedule (`lib/sectionCleans.js` ensureSectionYear, also on kiosk). (`26ceb04`)
+- **Kiosk "today" from Perth time** (roster shifts, sick days, next shift, overdue/specific-date tasks, roster popup). (`0f48129`)
+- **Monthly tasks** (`4d8290e`): "Nothing this month" (kiosk button; Insights "—" rows with Remove; counts as resolved); Tasks tabs **Assigned jobs** (one-off) / **Recurring tasks**; On the List Monthly **Show from day** (day or last day; red once passed; missed month carries over in red and counts for its own month via `completions.period_start`). "Twice a month" was built then dropped. Insights compliance months now Perth-based.
+- **Consumables checklist (Part B)** (`1ea02b9`): Tasks → **Checklists** tab (tasks with `checklist_type`; Items / Suppliers / Settings (owner to order) / History by month + by item, printable). Kiosk sheet from the task card — counts or Low?, OK / Order / Owner / Shopping list, saves as you go, grouped items, Complete = normal completion + owner push. Follow-up kiosk cards "🧾 Consumables — N still to order" (assignee rostered) and "… for Blair to order" (owner rostered), red after 2 days, Ordered / Not ordering (who + when + note). History "Counted — N still to order" → "Complete"; Insights counts the month only when all orders are closed (points at count time). Items/suppliers deletable only if never used. Blair-to-order ticks in History record the owner.
+- **Locum cover** (`1ea02b9`): Next 12 months; assign a **pharmacist** as cover (real role + `covers_leave`) as well as locums; edit times on red rows (`locum_slot_overrides` / `locum_gaps`, Reset); public holidays skipped; copy month keeps cover shifts and never copies them forward.
+- CLAUDE.md: "wrap up" now adds the entry at the top of this file and shows it in the reply.
+
+### Schema changes (all run by Blair)
+- `task_month_skips` (Nothing this month); 12 board tasks split from Monthly Claims; `completions.period_start`; skip month may be the 16th (unused).
+- Consumables: `pharmacy_settings.consumables_owner_staff_id` (+ `consumables_task_id`, no longer used); `tasks.checklist_type`; consumables tables + seed; `item_group` on items and lines; combined items split (+ fix-up by id); `checklist_lines.not_ordering*`; October test data cleared (backups `*_backup_20261026`).
+- Locums: `roster_shifts.covers_leave`, `locum_slot_overrides`.
+- Section cleans: unique index `section_clean_schedule (section_id, month)`.
+
+### New tables (add to RLS pass)
+- `task_month_skips`, `consumable_suppliers`, `consumable_items`, `checklist_sheets`, `checklist_lines`, `shopping_list_items`, `locum_slot_overrides`.
+
+### Follow-ups / parked
+- **Part C — Shopping list kiosk card** not built yet (table exists; consumables already adds low "Buy in person" items to it).
+- Backups to drop once happy: `consumable_items_backup_20261026`, `consumable_items_backup_20261026b`, `checklist_sheets_backup_20261026`, `checklist_lines_backup_20261026`, `shopping_list_items_backup_20261026`, `completions_task116_backup_20261026`, `task_month_skips_task116_backup_20261026` (plus the induction template backups listed below).
+- Items / suppliers / owner are shared by every consumables checklist task (add `task_id` to items if a second list is ever needed).
+- Insights only loads completions inside the chosen period — a carried-over month done in the next month doesn't count when viewing "Last Month".
+- Roster drag-copy (Alt-drag) inserts without `pharmacy_id` and drops `covers_leave` — existing bug, not fixed.
+- Copy month `.neq("role","Locum")` skips null-role shifts (known gotcha) — unchanged.
+- Locums "Upcoming Bookings" still uses `toISOString` for today.
+- `2026-10-27_locum_cover_improvements.sql` was reconstructed from the plan — paste the exact text if it matters.
+- Toner items are not "owner to order" (left off on purpose).
+
+### Not committed
+- CLAUDE.md "End of session" change and this session-notes entry.
+
 ## 2026-09-29
 
 ### Done
