@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { fmtDateShort, perthDateOf } from "../lib/performanceReview";
-import { SUPPLIER_TYPES, RESULT_LABEL, RESULT_STYLE, fmtReorder, checklistTypeLabel, groupedRows, displayOrder, nameInGroup, groupSupplier, isOpenOrder, openOrderCount, sheetStatusLabel } from "../lib/consumables";
+import { SUPPLIER_TYPES, RESULT_LABEL, RESULT_STYLE, fmtReorder, checklistTypeLabel, groupedRows, displayOrder, nameInGroup, groupSupplier, isOpenOrder, openOrderCount, sheetStatusLabel, withDetails, lineDetails } from "../lib/consumables";
 import OrderLines from "./OrderLines";
 import { fetchAllRows } from "../lib/trainingPlan";
 
@@ -235,7 +235,7 @@ function Suppliers({ pharmacyId, suppliers, items, used, onChanged }) {
 
 // ─── Items ───────────────────────────────────────────────────────────────────
 function Items({ pharmacyId, items, suppliers, ownerName, used, onChanged }) {
-  const blank = { name: "", item_group: "", supplier_id: "", check_only: false, reorder_qty: "", reorder_unit: "", delivery_time: "", owner_to_order: false, active: true };
+  const blank = { name: "", item_group: "", supplier_id: "", check_only: false, reorder_qty: "", reorder_unit: "", delivery_time: "", owner_to_order: false, ask_details: false, ask_question: "", active: true };
   const display = displayOrder(items); // grouped items kept together (▲▼ moves within this order)
   const groupNames = [...new Set(items.map((it) => String(it.item_group || "").trim()).filter(Boolean))];
   const [editing, setEditing] = useState(null);
@@ -244,16 +244,18 @@ function Items({ pharmacyId, items, suppliers, ownerName, used, onChanged }) {
 
   const startEdit = (it) => {
     setEditing(it ? it.id : "new");
-    setForm(it ? { ...blank, ...it, item_group: it.item_group || "", supplier_id: it.supplier_id || "", reorder_qty: it.reorder_qty ?? "", reorder_unit: it.reorder_unit || "", delivery_time: it.delivery_time || "" } : blank);
+    setForm(it ? { ...blank, ...it, item_group: it.item_group || "", supplier_id: it.supplier_id || "", reorder_qty: it.reorder_qty ?? "", reorder_unit: it.reorder_unit || "", delivery_time: it.delivery_time || "", ask_details: !!it.ask_details, ask_question: it.ask_question || "" } : blank);
   };
   const save = async () => {
     if (!form.name.trim()) { alert("Enter an item name."); return; }
     const qty = String(form.reorder_qty).trim();
     if (!form.check_only && (qty === "" || !Number.isFinite(Number(qty)))) { alert("Enter a reorder point, or tick Check only."); return; }
+    if (form.ask_details && !String(form.ask_question || "").trim()) { alert("Enter the question to ask when it's low (e.g. What's needed?)."); return; }
     const row = {
       name: form.name.trim(), item_group: String(form.item_group || "").trim() || null, supplier_id: form.supplier_id || null, check_only: !!form.check_only,
       reorder_qty: form.check_only ? null : Number(qty), reorder_unit: form.check_only ? null : (form.reorder_unit?.trim() || null),
       delivery_time: form.delivery_time?.trim() || null, owner_to_order: !!form.owner_to_order, active: form.active !== false,
+      ask_details: !!form.ask_details, ask_question: form.ask_details ? String(form.ask_question).trim() : null,
     };
     const { error } = editing === "new"
       ? await supabase.from("consumable_items").insert([{ ...row, pharmacy_id: pharmacyId, sort_order: (items.length + 1) * 10 }])
@@ -293,6 +295,17 @@ function Items({ pharmacyId, items, suppliers, ownerName, used, onChanged }) {
           <input type="checkbox" checked={form.active !== false} onChange={(e) => setForm({ ...form, active: e.target.checked })} /> Active
         </label>
       </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1.5 text-sm text-gray-700">
+          <input type="checkbox" checked={!!form.ask_details}
+            onChange={(e) => setForm({ ...form, ask_details: e.target.checked, ask_question: e.target.checked && !form.ask_question ? "What's needed?" : form.ask_question })} />
+          Ask what's needed when low
+        </label>
+        {form.ask_details && (
+          <input value={form.ask_question} onChange={(e) => setForm({ ...form, ask_question: e.target.value })} maxLength={80}
+            placeholder="Question, e.g. Which label numbers?" className="w-64 rounded border border-gray-300 px-2 py-1.5 text-sm" />
+        )}
+      </div>
       <div className="flex justify-end gap-2">
         <button onClick={() => setEditing(null)} className="px-3 py-1.5 text-xs border rounded bg-white">Cancel</button>
         <button onClick={save} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded">Save</button>
@@ -326,6 +339,7 @@ function Items({ pharmacyId, items, suppliers, ownerName, used, onChanged }) {
                 {supplierName(it.supplier_id)} · {it.check_only ? "Check only" : `reorder at ${fmtReorder(it)}`}
                 {it.delivery_time && ` · ${it.delivery_time}`}
                 {it.owner_to_order && <span className="ml-1 text-purple-700">· {ownerName} to order</span>}
+                {it.ask_details && <span className="ml-1 text-amber-700">· asks “{it.ask_question}”</span>}
               </div>
             </div>
             <button onClick={() => startEdit(it)} className="px-2 py-1 text-xs border border-blue-200 text-blue-600 rounded">Edit</button>
@@ -366,7 +380,7 @@ function History({ pharmacyId, taskId, items, nameOf, ownerName, ownerStaffId, p
 
   useEffect(() => {
     if (!byItem) { setItemLines(null); return; }
-    supabase.from("checklist_lines").select("id, sheet_id, result, ordered, ordered_at, bought_at, qty_on_hand, is_low")
+    supabase.from("checklist_lines").select("id, sheet_id, result, ordered, ordered_at, bought_at, qty_on_hand, is_low, ask_question, details")
       .eq("item_id", byItem).in("result", ["order", "owner", "shopping"])
       .then(({ data }) => setItemLines(data || []));
   }, [byItem]); // lines from other tasks' sheets drop out below (only this task's sheets are matched)
@@ -414,7 +428,7 @@ function History({ pharmacyId, taskId, items, nameOf, ownerName, ownerStaffId, p
                 <div className="divide-y border rounded">
                   {rows.map((l) => (
                     <div key={l.id} className="px-3 py-1.5 text-xs flex justify-between">
-                      <span>{short(l.sheet.period_month)} · {RESULT_LABEL[l.result]}</span>
+                      <span>{short(l.sheet.period_month)} · {RESULT_LABEL[l.result]}{lineDetails(l) && <span className="text-gray-500"> — {lineDetails(l)}</span>}</span>
                       <span className="text-gray-500">
                         {l.ordered ? `Ordered ${fmtDateShort(perthDateOf(l.ordered_at))}` : l.bought_at ? `Bought ${fmtDateShort(perthDateOf(l.bought_at))}` : "Not ordered"}
                       </span>
@@ -459,14 +473,14 @@ function SheetView({ sheetId, nameOf, ownerName, ownerStaffId, pinStaffId, onBac
   const print = () => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const row = (l, inGroup) => `<tr><td${inGroup ? ' style="padding-left:18px"' : ""}>${esc(inGroup ? nameInGroup(l) : l.item_name)}</td><td>${esc(l.supplier_name || "")}</td><td>${esc(fmtReorder(l))}</td><td>${esc(entry(l))}</td><td>${esc(l.result === "owner" ? `${ownerName} to order` : RESULT_LABEL[l.result] || "")}</td><td>${esc(status(l))}</td></tr>`;
+    const row = (l, inGroup) => `<tr${inGroup ? ' class="sub"' : ""}><td${inGroup ? ' style="padding-left:22px"' : ""}>${esc(withDetails(inGroup ? nameInGroup(l) : l.item_name, l))}</td><td>${esc(l.supplier_name || "")}</td><td>${esc(fmtReorder(l))}</td><td>${esc(entry(l))}</td><td>${esc(l.result === "owner" ? `${ownerName} to order` : RESULT_LABEL[l.result] || "")}</td><td>${esc(status(l))}</td></tr>`;
     // Grouped items under one heading row (group + supplier), each type on its own row
     const rows = groupedRows(lines).map((sec) => (sec.group
-      ? `<tr><td colspan="6" style="background:#f9fafb;font-weight:600">${esc(sec.group)}${groupSupplier(sec.rows) ? ` <span style="font-weight:400;color:#666">· ${esc(groupSupplier(sec.rows))}</span>` : ""}</td></tr>${sec.rows.map((l) => row(l, true)).join("")}`
+      ? `<tr class="grp"><td colspan="6">${esc(sec.group)}${groupSupplier(sec.rows) ? ` <span class="sup">${esc(groupSupplier(sec.rows))}</span>` : ""}</td></tr>${sec.rows.map((l) => row(l, true)).join("")}`
       : row(sec.rows[0], false))).join("");
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Consumables — ${esc(monthName(sheet.period_month))}</title>
       <style>body{font:12px system-ui,sans-serif;margin:24px;color:#111}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 12px;color:#555}
-      table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:4px 6px;text-align:left;vertical-align:top}th{background:#f3f4f6}</style>
+      table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:4px 6px;text-align:left;vertical-align:top}th{background:#f3f4f6}tr.grp td{background:#ccfbf1;border-left:4px solid #14b8a6;font-weight:700;font-size:13px;color:#134e4a}tr.grp .sup{font-weight:400;font-size:11px;color:#666;margin-left:6px}tr.sub td{background:#f0fdfa;font-size:11px}tr.sub td:first-child{border-left:4px solid #14b8a6}</style>
       </head><body><h1>Consumables Checklist — ${esc(monthName(sheet.period_month))}</h1>
       <p>Started ${esc(fmtDateShort(perthDateOf(sheet.started_at)))} by ${esc(nameOf(sheet.started_by_staff_id) || "—")}${sheet.completed_at ? ` · Completed ${esc(fmtDateShort(perthDateOf(sheet.completed_at)))} by ${esc(nameOf(sheet.completed_by_staff_id) || "—")}` : " · In progress"}</p>
       <table><thead><tr><th>Item</th><th>Supplier</th><th>Reorder at</th><th>On hand / Low</th><th>Result</th><th>Ordered / bought</th></tr></thead><tbody>${rows}</tbody></table>
@@ -525,14 +539,14 @@ function SheetView({ sheetId, nameOf, ownerName, ownerStaffId, pinStaffId, onBac
               ...(sec.group ? [{ header: sec }] : []),
               ...sec.rows.map((l) => ({ line: l, inGroup: !!sec.group })),
             ]).map((r) => (r.header ? (
-              <tr key={`g-${r.header.group}`} className="border-t bg-gray-50">
-                <td colSpan={6} className="px-3 py-1.5 font-semibold text-gray-700">
+              <tr key={`g-${r.header.group}`} className="border-t bg-teal-100/70">
+                <td colSpan={6} className="px-3 py-2 text-sm font-bold text-teal-900 border-l-4 border-l-teal-500">
                   {r.header.group}{groupSupplier(r.header.rows) && <span className="font-normal text-gray-400"> · {groupSupplier(r.header.rows)}</span>}
                 </td>
               </tr>
             ) : (({ line: l, inGroup }) => (
-              <tr key={l.id} className="border-t">
-                <td className={`py-1.5 text-gray-800 ${inGroup ? "pl-6 pr-3" : "px-3"}`}>{inGroup ? nameInGroup(l) : l.item_name}</td>
+              <tr key={l.id} className={`border-t ${inGroup ? "bg-teal-50/50 text-[11px]" : ""}`}>
+                <td className={`py-1.5 text-gray-800 ${inGroup ? "pl-7 pr-3 border-l-4 border-l-teal-500" : "px-3"}`}>{withDetails(inGroup ? nameInGroup(l) : l.item_name, l)}</td>
                 <td className="px-3 py-1.5 text-gray-600">{l.supplier_name || "—"}</td>
                 <td className="px-3 py-1.5 text-gray-600">{fmtReorder(l)}</td>
                 <td className="px-3 py-1.5 text-gray-600">{entry(l)}</td>

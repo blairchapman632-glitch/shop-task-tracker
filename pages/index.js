@@ -10,6 +10,7 @@ import { loadConsumablesSettings, isConsumablesChecklist, ORDER_LINE_COLUMNS } f
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
 import { fmtDateShort, perthDateOf, todayPerth, addMonthsStr, addDaysStr } from "../lib/performanceReview";
 import OrderLines from "../components/OrderLines";
+import ShoppingList from "../components/ShoppingList";
 import { syncInductionAuto } from "../lib/inductionAuto";
 import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
 import { adminFetch } from "../lib/adminFetch";
@@ -1386,6 +1387,22 @@ export default function HomePage() {
     return () => { cancelled = true; };
   }, [currentPharmacyId, todayRosteredIds, staff, consumablesSettings.ownerStaffId, leadersRefreshKey]);
 
+  // 🛒 Shopping list card: number of open items (the modal loads the list itself). Refreshed every minute, after a
+  // checklist completes (leadersRefreshKey) and whenever the modal changes something.
+  const [shoppingCount, setShoppingCount] = useState(0);
+  const [showShoppingList, setShowShoppingList] = useState(false);
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    const loadCount = async () => {
+      const { count, error } = await supabase.from("shopping_list_items").select("id", { count: "exact", head: true })
+        .eq("pharmacy_id", currentPharmacyId).is("bought_at", null).is("removed_at", null);
+      if (!error) setShoppingCount(count || 0);
+    };
+    loadCount();
+    const interval = setInterval(loadCount, 60000);
+    return () => clearInterval(interval);
+  }, [currentPharmacyId, leadersRefreshKey, showShoppingList]);
+
   const followUpOverdue = (lines) => {
     const cutoff = addDaysStr(todayPerth(), -2);
     return lines.some((l) => l.completed_at && String(perthDateOf(l.completed_at)) <= cutoff);
@@ -2027,15 +2044,18 @@ const handleDeliveryTap = async (d) => {
                   </div>
 
                   {/* On the List section */}
-                  {(monthlyTotal > 0 || todayDeliveries.some((d) => d.status !== "skipped") || hireDueBack.length > 0 || policyJobs.length > 0 || inductionCards.length > 0 || showStaffFollowUp || showOwnerFollowUp) && (
+                  {/* Always shown — the Shopping list card is there even when empty, so people can add to it */}
+                  {(
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">Today's Jobs</div>
-                        <span className="text-[11px] font-semibold text-orange-600">{monthlyDone}/{monthlyTotal} ({monthlyPct}%)</span>
+                        {monthlyTotal > 0 && <span className="text-[11px] font-semibold text-orange-600">{monthlyDone}/{monthlyTotal} ({monthlyPct}%)</span>}
                       </div>
-                      <div className="w-full bg-orange-50 rounded-full h-1 mb-2">
-                        <div className="bg-orange-400 h-1 rounded-full transition-all" style={{ width: `${monthlyPct}%` }} />
-                      </div>
+                      {monthlyTotal > 0 ? (
+                        <div className="w-full bg-orange-50 rounded-full h-1 mb-2">
+                          <div className="bg-orange-400 h-1 rounded-full transition-all" style={{ width: `${monthlyPct}%` }} />
+                        </div>
+                      ) : <div className="mb-2" />}
                       <div className="grid grid-cols-2 gap-2">
                         {(() => {
                           if (todayDeliveries.length === 0) return null;
@@ -2059,6 +2079,18 @@ const handleDeliveryTap = async (d) => {
                             </button>
                           );
                         })()}
+                        <button
+                          onClick={() => setShowShoppingList(true)}
+                          className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${shoppingCount ? "border-l-blue-500" : "border-l-gray-300"} text-left bg-white shadow-sm hover:shadow-md transition-shadow`}
+                        >
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <div className="font-semibold text-sm leading-tight flex-1 text-gray-800">🛒 Shopping list</div>
+                          </div>
+                          <div className={`text-xs font-medium mb-1 ${shoppingCount ? "text-blue-600" : "text-gray-400"}`}>
+                            {shoppingCount ? `${shoppingCount} item${shoppingCount === 1 ? "" : "s"} to buy` : "Nothing to buy"}
+                          </div>
+                          <div className="text-[10px] text-gray-400">Tap to see or add</div>
+                        </button>
                         {hireDueBack.length > 0 && (
                           <button
                             onClick={() => setShowHireModal(true)}
@@ -3052,6 +3084,18 @@ const handleDeliveryTap = async (d) => {
           );
         })(),
         document.body,
+      )}
+
+      {/* 🛒 Shopping list */}
+      {showShoppingList && (
+        <ShoppingList
+          pharmacyId={currentPharmacyId}
+          staffId={selectedStaffId}
+          staffName={selectedStaffName}
+          nameOf={(id) => (id ? staffById[id]?.name || "" : "")}
+          onClose={() => setShowShoppingList(false)}
+          onChanged={setShoppingCount}
+        />
       )}
 
       {/* Consumables Checklist sheet */}

@@ -5,7 +5,7 @@
 import { useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { fmtDateShort, perthDateOf } from "../lib/performanceReview";
-import { supplierGroups, setOrderState } from "../lib/consumables";
+import { supplierGroups, setOrderState, withDetails } from "../lib/consumables";
 
 export default function OrderLines({ lines, staffId, canEdit = true, nameOf, onChanged, showMonth = false, tone = "amber" }) {
   const [busy, setBusy] = useState(new Set());
@@ -58,7 +58,7 @@ export default function OrderLines({ lines, staffId, canEdit = true, nameOf, onC
                     title="Ordered"
                   />
                   <span className="flex-1">
-                    <span className={l.not_ordering ? "line-through text-gray-400" : ""}>{l.item_name}</span>
+                    <span className={l.not_ordering ? "line-through text-gray-400" : ""}>{withDetails(l.item_name, l)}</span>
                     {l.delivery_time && <span className="text-xs text-gray-400"> · {l.delivery_time}</span>}
                     {showMonth && l.period_month && <span className="text-xs text-gray-400"> · {monthOf(l)}</span>}
                     {l.ordered && <span className="block text-[11px] text-green-700">Ordered by {nameOf(l.ordered_by_staff_id) || "—"} · {fmtDateShort(perthDateOf(l.ordered_at))}</span>}
