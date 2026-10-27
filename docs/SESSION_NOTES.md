@@ -1,5 +1,33 @@
 # Session notes
 
+## 2026-10-27 (pm) — Consumables polish + Shopping list (Part C)
+
+### Done (`b2746c3`)
+- **Group styling:** kiosk sheet, History and print show groups as one teal block (bold heading + supplier, tinted indented rows); all printer toners in one "Printer toner" group (Dispensary first).
+- **"Ask what's needed when low":** tick + question per item (Ancillary labels "Which label numbers?"; Coffee/tea, Cleaning products, A4 paper etc. "What's needed?"). Kiosk shows the box under a low row, saves as you type (600ms) and on close/Complete; answer shown as "Item — answer" in Order summary, follow-up cards, owner push, History, print. Complete warns "Low, but no details given" (doesn't block).
+- **Kiosk sheet columns line up:** name | On hand box or OK/Low | unit | result on every row (grouped rows indent the name only).
+- **🛒 Shopping list kiosk card** (always shown, count of open items): grouped by "Buy in person" shop + Other; name, who added (or "Consumables check"), date; Bought (who + date) → Bought recently (7 days) with Undo; Add item (name, details, shop; photo first; first letter capitalised); Remove (kept as removed). No completions/points.
+- **One shopping line per part:** details "coffee, biscuits" → "Coffee", "Biscuits", linked to the checklist line; editing details re-syncs (adds new, removes dropped, never touches bought); OK takes unbought lines off; the line counts as bought only when all its parts are.
+- Today's Jobs hides "0/0 (0%)" when there are no jobs.
+
+### Schema changes (all run by Blair)
+- `2026-10-27_printer_toner_group.sql` (5 toner items renamed/grouped).
+- `2026-10-27_consumables_ask_details.sql`: `consumable_items.ask_details`, `ask_question`; `checklist_lines.ask_question`, `details`; `shopping_list_items.details`.
+- `2026-10-27_shopping_list_split_lines.sql`: `shopping_list_items.checklist_line_id` (backfilled); unique index `shopping_list_items_one_open_item` replaced by `shopping_list_items_one_open_part` (checklist_line_id, lower(name), open only).
+- October consumables test data cleared again (final: `2026-10-27e_…`) — October starts fresh.
+
+### New tables (add to RLS pass)
+- None.
+
+### Follow-ups / parked
+- Backups to drop once happy: `consumable_items_backup_20261027`, `_20261027b`; `checklist_sheets_/checklist_lines_/shopping_list_items_/completions_task116_/task_month_skips_task116_backup_20261027`, `…_20261027b`, `…_20261027d`, `…_20261027e`; `shopping_list_items_backup_20261027c`.
+- `checklist_lines.shopping_item_id` is no longer used (safe to drop later).
+- History still says "On the shopping list" after a consumables shopping line is Removed.
+- No merging across months: last month's unbought "Coffee" and this month's both show.
+
+### Not committed
+- This session-notes entry.
+
 ## 2026-10-26 / 27 — Staff Documents dates, inactive staff, /me speed, Tasks (section cleans, monthly tasks, checklists), locum cover
 
 ### Done
@@ -23,7 +51,7 @@
 - `task_month_skips`, `consumable_suppliers`, `consumable_items`, `checklist_sheets`, `checklist_lines`, `shopping_list_items`, `locum_slot_overrides`.
 
 ### Follow-ups / parked
-- **Part C — Shopping list kiosk card** not built yet (table exists; consumables already adds low "Buy in person" items to it).
+- ~~Part C — Shopping list kiosk card~~ built 27/10 pm (see above).
 - Backups to drop once happy: `consumable_items_backup_20261026`, `consumable_items_backup_20261026b`, `checklist_sheets_backup_20261026`, `checklist_lines_backup_20261026`, `shopping_list_items_backup_20261026`, `completions_task116_backup_20261026`, `task_month_skips_task116_backup_20261026` (plus the induction template backups listed below).
 - Items / suppliers / owner are shared by every consumables checklist task (add `task_id` to items if a second list is ever needed).
 - Insights only loads completions inside the chosen period — a carried-over month done in the next month doesn't count when viewing "Last Month".
