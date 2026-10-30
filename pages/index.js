@@ -1257,7 +1257,7 @@ export default function HomePage() {
     if (!ids.length) { setPolicyJobs([]); return; }
     let cancelled = false;
     supabase.from("policy_read_requests")
-      .select(`${REQUEST_COLUMNS}, document:document_id(id, title, file_url, file_name, active)`)
+      .select(`${REQUEST_COLUMNS}, document:document_id(id, title, pdf_url, pdf_file_name, active)`)
       .eq("pharmacy_id", currentPharmacyId)
       .eq("status", "outstanding")
       .in("staff_id", ids)
@@ -1288,7 +1288,7 @@ export default function HomePage() {
         if (!indIds.length) { if (!cancelled) setInductionJobs([]); return; }
         const [rq, it, rv] = await Promise.all([
           supabase.from("policy_read_requests")
-            .select(`${REQUEST_COLUMNS}, document:document_id(id, title, file_url, file_name, active)`)
+            .select(`${REQUEST_COLUMNS}, document:document_id(id, title, pdf_url, pdf_file_name, active)`)
             .in("induction_id", indIds).neq("status", "cancelled").order("requested_at"),
           supabase.from("staff_induction_items").select("*").in("induction_id", indIds),
           supabase.from("performance_reviews").select("id, staff_id, review_type, status, signed_at, created_at")
@@ -2108,7 +2108,7 @@ const handleDeliveryTap = async (d) => {
                         {policyJobs.map((r) => (
                           <button
                             key={`policy-${r.id}`}
-                            onClick={() => { window.open(r.document.file_url, "_blank", "noopener,noreferrer"); setOpenPolicyJob(r); }}
+                            onClick={() => { if (r.document.pdf_url) window.open(r.document.pdf_url, "_blank", "noopener,noreferrer"); setOpenPolicyJob(r); }}
                             className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-blue-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
                           >
                             <div className="font-semibold text-sm leading-tight text-gray-800 mb-1 break-words">📄 Read: {r.document.title}</div>
@@ -3196,10 +3196,14 @@ const handleDeliveryTap = async (d) => {
                             <div key={r.id} className="rounded-lg border border-gray-200 p-3 space-y-2">
                               <div className="text-sm font-medium text-gray-800 break-words">{r.document.title}</div>
                               <div className="flex gap-2">
-                                <a href={r.document.file_url} target="_blank" rel="noopener noreferrer" className="flex-1 text-center border border-gray-300 rounded-lg py-2 text-sm text-gray-700 hover:bg-gray-50">
-                                  Open
-                                </a>
-                                <button onClick={() => handleInductionAck(r)} disabled={!!inductionAckId} className="flex-[2] bg-blue-600 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-40">
+                                {r.document.pdf_url ? (
+                                  <a href={r.document.pdf_url} target="_blank" rel="noopener noreferrer" className="flex-1 text-center border border-gray-300 rounded-lg py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                    Open
+                                  </a>
+                                ) : (
+                                  <span className="flex-1 text-center border border-gray-200 rounded-lg py-2 text-sm text-gray-400 bg-gray-50">Not available yet</span>
+                                )}
+                                <button onClick={() => handleInductionAck(r)} disabled={!!inductionAckId || !r.document.pdf_url} className="flex-[2] bg-blue-600 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-40">
                                   {inductionAckId === r.id ? "Saving…" : "I have read and understood"}
                                 </button>
                               </div>
@@ -3247,10 +3251,14 @@ const handleDeliveryTap = async (d) => {
               <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm text-blue-800">
                 For <span className="font-semibold">{staffById[openPolicyJob.staff_id]?.name || "this staff member"}</span>
               </div>
-              <a href={openPolicyJob.document.file_url} target="_blank" rel="noopener noreferrer" className="block text-center border border-gray-300 rounded-lg py-2 text-sm text-gray-700 hover:bg-gray-50">
-                Open the policy again
-              </a>
-              <button onClick={handlePolicyAck} disabled={policyAckBusy} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
+              {openPolicyJob.document.pdf_url ? (
+                <a href={openPolicyJob.document.pdf_url} target="_blank" rel="noopener noreferrer" className="block text-center border border-gray-300 rounded-lg py-2 text-sm text-gray-700 hover:bg-gray-50">
+                  Open the policy again
+                </a>
+              ) : (
+                <div className="text-center border border-gray-200 rounded-lg py-2 text-sm text-gray-400 bg-gray-50">Not available yet — the PDF hasn't been uploaded</div>
+              )}
+              <button onClick={handlePolicyAck} disabled={policyAckBusy || !openPolicyJob.document.pdf_url} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
                 {policyAckBusy ? "Saving…" : "I have read and understood"}
               </button>
             </div>

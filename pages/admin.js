@@ -10,7 +10,7 @@ import InductionStep, { InductionPdfEntry } from "../components/InductionTab";
 import DocumentSections from "../components/DocumentSections";
 import { AskToReadModal, PolicyProgress } from "../components/PolicyRequests";
 import { REQUEST_COLUMNS } from "../lib/policyReads";
-import { groupFolders, fileTag, titleFromFileName, nextMinorVersion, perthDate, storageSafeName, OTHER_GROUP } from "../lib/docFolders";
+import { groupFolders, fileTag, titleFromFileName, nextMinorVersion, perthDate, storageSafeName, OTHER_GROUP, isPdfName, pdfStatus, downloadUrl } from "../lib/docFolders";
 import { fetchAllRows } from "../lib/trainingPlan";
 import { docSections, loadServiceConfig, updateStaffDocument } from "../lib/staffDocuments";
 import { uploadStaffDoc, openStaffDoc, removeStaffDoc, attachTrainingCert, openTrainingCert, deleteTrainingRecord, recordHasCert } from "../lib/staffFiles";
@@ -2859,22 +2859,25 @@ const DOC_BUCKET = "pharmacy-documents";
 const slugify = (s) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "folder";
 
+// Replace the master (Word / Excel / PDF — admin only), the staff PDF, or both
 function NewVersionModal({ doc, staff, onClose, onSave }) {
-  const [file, setFile] = useState(null);
+  const [masterFile, setMasterFile] = useState(null);
+  const [pdfFile, setPdfFile] = useState(null);
   const [version, setVersion] = useState(nextMinorVersion(doc.version));
   const [staffId, setStaffId] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const canSave = file && version.trim() && staffId && !saving;
+  const pdfOk = !pdfFile || isPdfName(pdfFile.name);
+  const canSave = (masterFile || pdfFile) && pdfOk && (!masterFile || version.trim()) && staffId && !saving;
 
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
     setError("");
     try {
-      await onSave({ file, version: version.trim(), staffId, note });
+      await onSave({ masterFile, pdfFile, version: version.trim(), staffId, note });
     } catch (err) {
       setError(err?.message || String(err));
       setSaving(false);
@@ -2886,26 +2889,41 @@ function NewVersionModal({ doc, staff, onClose, onSave }) {
       <div className="bg-white rounded-xl max-w-md w-full max-h-[85vh] overflow-y-auto p-5 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-gray-800">Upload new version</h2>
+            <h2 className="text-base font-semibold text-gray-800">Replace files</h2>
             <p className="text-xs text-gray-500 mt-0.5 break-words">{doc.title} · currently v{doc.version || "1.0"}</p>
           </div>
           <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
 
         <label className="block">
-          <span className="block text-xs font-medium text-gray-600 mb-1">File</span>
-          <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="block w-full text-sm" />
+          <span className="block text-xs font-medium text-gray-600 mb-1">Master — Word, Excel or PDF <span className="text-gray-400 font-normal">(admin only · optional)</span></span>
+          <input type="file" onChange={(e) => setMasterFile(e.target.files?.[0] || null)} className="block w-full text-sm" />
+          {masterFile && isPdfName(masterFile.name) && !pdfFile && (
+            <span className="block text-[11px] text-green-700 mt-1">This PDF will also be the staff PDF.</span>
+          )}
+          {masterFile && !isPdfName(masterFile.name) && !pdfFile && (
+            <span className="block text-[11px] text-amber-700 mt-1">Staff will keep seeing the old PDF until you upload a new one — save it as PDF from Word and add it below.</span>
+          )}
         </label>
 
         <label className="block">
-          <span className="block text-xs font-medium text-gray-600 mb-1">Version</span>
-          <input
-            value={version}
-            onChange={(e) => setVersion(e.target.value)}
-            placeholder="e.g. 1.1"
-            className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-          />
+          <span className="block text-xs font-medium text-gray-600 mb-1">Staff PDF <span className="text-gray-400 font-normal">(what staff open · optional)</span></span>
+          <input type="file" accept="application/pdf,.pdf" onChange={(e) => setPdfFile(e.target.files?.[0] || null)} className="block w-full text-sm" />
+          {!pdfOk && <span className="block text-[11px] text-red-600 mt-1">The staff file must be a PDF.</span>}
         </label>
+
+        {masterFile && (
+          <label className="block">
+            <span className="block text-xs font-medium text-gray-600 mb-1">Version</span>
+            <input
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+              placeholder="e.g. 1.1"
+              className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </label>
+        )}
+        <p className="text-[11px] text-gray-400">Replacing a file doesn't reset who has read it — use "Ask staff to read" to send a new request.</p>
 
         <label className="block">
           <span className="block text-xs font-medium text-gray-600 mb-1">Updated by</span>
@@ -2934,7 +2952,7 @@ function NewVersionModal({ doc, staff, onClose, onSave }) {
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="text-sm px-3 py-1.5 rounded-lg border text-gray-600 hover:bg-gray-50">Cancel</button>
           <button type="button" onClick={save} disabled={!canSave} className="text-sm px-3 py-1.5 rounded-lg bg-blue-600 text-white disabled:opacity-40">
-            {saving ? "Uploading…" : "Save new version"}
+            {saving ? "Uploading…" : "Save"}
           </button>
         </div>
       </div>
@@ -2964,6 +2982,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
   const [versionDoc, setVersionDoc] = useState(null);    // document with "Upload new version" open
   const [openHistory, setOpenHistory] = useState({});    // document id -> history expanded
   const [history, setHistory] = useState({});            // document id -> document_versions rows
+  const [pdfFilter, setPdfFilter] = useState(false);     // show only documents without a current staff PDF
   const activeStaff = staffList.filter((s) => s.active);
   const staffName = (id) => staffList.find((s) => Number(s.id) === Number(id))?.name || "";
 
@@ -3003,6 +3022,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
     if (!doc) return;
     setSubTab("documents");
     setSearch("");
+    setPdfFilter(false);
     setActiveFolder(doc.folder_id);
     setOpenProgress((o) => ({ ...o, [doc.id]: true }));
     setTimeout(() => document.getElementById(`policy-${doc.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
@@ -3010,11 +3030,16 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
   }, [openPolicyId, loading]);
 
   const term = search.trim().toLowerCase();
-  const searching = term.length > 0;
   const folderName = (id) => folders.find((f) => f.id === id)?.name || "";
-  const folderDocs = searching
-    ? docs.filter((d) => (d.title || "").toLowerCase().includes(term))
-    : docs.filter((d) => d.folder_id === activeFolder);
+  // Staff PDF status across the whole library (count + "Show them" filter at the top)
+  const noPdfCount = docs.filter((d) => pdfStatus(d) === "missing").length;
+  const stalePdfCount = docs.filter((d) => pdfStatus(d) === "stale").length;
+  const searching = term.length > 0 || pdfFilter;
+  const folderDocs = pdfFilter
+    ? docs.filter((d) => pdfStatus(d) !== "ok" && (!term || (d.title || "").toLowerCase().includes(term)))
+    : term
+      ? docs.filter((d) => (d.title || "").toLowerCase().includes(term))
+      : docs.filter((d) => d.folder_id === activeFolder);
   const activeFolderObj = folders.find((f) => f.id === activeFolder);
   const groups = groupFolders(folders);
   const groupNames = [...new Set(folders.map((f) => (f.group_name || "").trim()).filter(Boolean))];
@@ -3080,6 +3105,10 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
         const { data: urlData } = supabase.storage.from(DOC_BUCKET).getPublicUrl(path);
         const now = new Date().toISOString();
         const staffId = Number(uploadBy);
+        // A PDF master is its own staff PDF; Word / Excel need a PDF uploaded (Replace files) before staff can open them
+        const pdf = isPdfName(file.name)
+          ? { pdf_url: urlData.publicUrl, pdf_file_name: path, pdf_updated_at: now, pdf_updated_by_staff_id: staffId }
+          : {};
         const { data: row, error: insErr } = await supabase
           .from("pharmacy_documents")
           .insert([{
@@ -3092,6 +3121,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
             uploaded_by: staffId,
             updated_by_staff_id: staffId,
             updated_at: now,
+            ...pdf,
           }])
           .select()
           .single();
@@ -3103,6 +3133,8 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
           version: "1.0",
           file_name: path,
           file_url: urlData.publicUrl,
+          pdf_file_name: pdf.pdf_file_name || null,
+          pdf_url: pdf.pdf_url || null,
           updated_by_staff_id: staffId,
           change_note: "First version",
           created_at: now,
@@ -3116,34 +3148,47 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
     }
   };
 
-  // Upload a new version: new storage path every time, old files are never deleted
-  const handleNewVersion = async (doc, { file, version, staffId, note }) => {
+  // Replace files: the master, the staff PDF, or both. New storage path every time, old files are never deleted.
+  // A PDF master with no separate PDF becomes the staff PDF too. A new Word / Excel master with no new PDF keeps the old
+  // PDF (flagged "older than the master"). Policy read requests are never reset (a new request is sent by hand).
+  const handleNewVersion = async (doc, { masterFile, pdfFile, version, staffId, note }) => {
     const dir = (doc.file_name || "").includes("/")
       ? doc.file_name.slice(0, doc.file_name.lastIndexOf("/"))
       : slugify(folderName(doc.folder_id) || "folder");
-    const path = `${dir}/${Date.now()} - ${storageSafeName(file.name)}`;
-    const { error: upErr } = await supabase.storage.from(DOC_BUCKET).upload(path, file, { upsert: false });
-    if (upErr) throw upErr;
-    const { data: urlData } = supabase.storage.from(DOC_BUCKET).getPublicUrl(path);
-    const now = new Date().toISOString();
-    const changes = {
-      file_url: urlData.publicUrl,
-      file_name: path,
-      version,
-      updated_by_staff_id: Number(staffId),
-      updated_at: now,
+    const put = async (file) => {
+      const path = `${dir}/${Date.now()} - ${storageSafeName(file.name)}`;
+      const { error: upErr } = await supabase.storage.from(DOC_BUCKET).upload(path, file, { upsert: false });
+      if (upErr) throw upErr;
+      return { path, url: supabase.storage.from(DOC_BUCKET).getPublicUrl(path).data.publicUrl };
     };
+    const now = new Date().toISOString();
+    const who = Number(staffId);
+    const changes = {};
+    if (masterFile) {
+      const m = await put(masterFile);
+      Object.assign(changes, { file_url: m.url, file_name: m.path, version, updated_by_staff_id: who, updated_at: now });
+      if (!pdfFile && isPdfName(masterFile.name)) {
+        Object.assign(changes, { pdf_url: m.url, pdf_file_name: m.path, pdf_updated_at: now, pdf_updated_by_staff_id: who });
+      }
+    }
+    if (pdfFile) {
+      const p = await put(pdfFile);
+      Object.assign(changes, { pdf_url: p.url, pdf_file_name: p.path, pdf_updated_at: now, pdf_updated_by_staff_id: who });
+    }
     const { error: updErr } = await supabase.from("pharmacy_documents").update(changes).eq("id", doc.id);
     if (updErr) throw updErr;
     setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, ...changes } : d)));
+    const after = { ...doc, ...changes };
     const { error: verErr } = await supabase.from("document_versions").insert([{
       pharmacy_id: PHARMACY_ID,
       document_id: doc.id,
-      version,
-      file_name: path,
-      file_url: urlData.publicUrl,
-      updated_by_staff_id: Number(staffId),
-      change_note: note.trim() || null,
+      version: after.version || "1.0",
+      file_name: after.file_name,
+      file_url: after.file_url,
+      pdf_file_name: after.pdf_file_name || null,
+      pdf_url: after.pdf_url || null,
+      updated_by_staff_id: who,
+      change_note: note.trim() || (masterFile ? null : "Staff PDF updated"),
       created_at: now,
     }]);
     if (verErr) throw new Error("New version saved, but its history entry failed: " + verErr.message);
@@ -3192,13 +3237,15 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
     // Collect every version's file before the row goes (versions cascade with it)
     const { data: versions, error: vErr } = await supabase
       .from("document_versions")
-      .select("file_name, file_url")
+      .select("file_name, file_url, pdf_file_name, pdf_url")
       .eq("document_id", doc.id);
     if (vErr) { setError("Delete failed: " + vErr.message); return; }
-    const paths = new Set();
+    const paths = new Set(); // masters + staff PDFs (a PDF master is listed once)
     for (const v of [...(versions || []), doc]) {
       const p = v.file_name || storagePathFromUrl(v.file_url);
       if (p) paths.add(p);
+      const q = v.pdf_file_name || storagePathFromUrl(v.pdf_url);
+      if (q) paths.add(q);
     }
     const { error: delErr } = await supabase.from("pharmacy_documents").delete().eq("id", doc.id);
     if (delErr) { setError("Delete failed: " + delErr.message); return; }
@@ -3277,7 +3324,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                   </div>
                 ) : (
                   <button
-                    onClick={() => setActiveFolder(f.id)}
+                    onClick={() => { setActiveFolder(f.id); setPdfFilter(false); }}
                     className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-50"
                   >
                     <span>📁</span>
@@ -3323,7 +3370,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
       <div className="flex-1 bg-white overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b shrink-0 gap-3">
           <h2 className="font-semibold text-gray-800 truncate">
-            {searching ? "Search results" : activeFolderObj?.name || "Documents"}
+            {pdfFilter ? "Needs a staff PDF" : searching ? "Search results" : activeFolderObj?.name || "Documents"}
             <span className="text-gray-400 font-normal text-sm ml-2">({folderDocs.length})</span>
           </h2>
           <div className="flex items-center gap-2 shrink-0">
@@ -3352,11 +3399,23 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
           </div>
         </div>
 
+        {(noPdfCount > 0 || stalePdfCount > 0 || pdfFilter) && (
+          <div className={`px-5 py-2 border-b shrink-0 flex items-center gap-3 text-xs ${noPdfCount ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"}`}>
+            <span className="flex-1">
+              {noPdfCount > 0 && <><span className="font-semibold">{noPdfCount} document{noPdfCount === 1 ? "" : "s"} with no PDF</span> — staff can't open {noPdfCount === 1 ? "it" : "them"}.</>}
+              {noPdfCount > 0 && stalePdfCount > 0 && " "}
+              {stalePdfCount > 0 && <span className={noPdfCount ? "text-amber-800" : ""}>{stalePdfCount} with a staff PDF older than the master.</span>}
+              {noPdfCount === 0 && stalePdfCount === 0 && "Every document has a current staff PDF."}
+            </span>
+            <button onClick={() => setPdfFilter((v) => !v)} className="font-semibold underline shrink-0">{pdfFilter ? "Back to folders" : "Show them"}</button>
+          </div>
+        )}
+
         {error && <div className="px-5 py-2 text-sm text-red-500 shrink-0">{error}</div>}
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {folderDocs.length === 0 ? (
-            <p className="text-sm text-gray-400">No documents in this folder{search ? " matching your search" : ""}.</p>
+            <p className="text-sm text-gray-400">{pdfFilter ? "Nothing needs a PDF." : `No documents in this folder${search ? " matching your search" : ""}.`}</p>
           ) : (
             <div className="space-y-1.5">
               {folderDocs.map((doc) => (
@@ -3378,7 +3437,18 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                         {searching && ` · ${folderName(doc.folder_id)}`}
                       </div>
                     </div>
-                    <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Open</a>
+                    {(() => {
+                      const st = pdfStatus(doc);
+                      return st === "missing" ? (
+                        <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-red-50 text-red-700 border-red-200">No PDF — staff can't open</span>
+                      ) : st === "stale" ? (
+                        <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-800 border-amber-200" title="The master was replaced after this PDF was uploaded">PDF older than master</span>
+                      ) : null;
+                    })()}
+                    {doc.pdf_url && (
+                      <a href={doc.pdf_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0" title="What staff see">Staff PDF</a>
+                    )}
+                    <a href={downloadUrl(doc.file_url, doc.file_name)} className="text-xs text-gray-600 hover:underline shrink-0" title="Download the master to edit (admin only)">Master ↓</a>
                   </div>
                   <div className="flex items-center gap-3 mt-2 pl-10 flex-wrap">
                     <label className="text-[11px] text-gray-500 flex items-center gap-1">
@@ -3401,7 +3471,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                         </optgroup>
                       ))}
                     </select>
-                    <button onClick={() => setVersionDoc(doc)} className="text-[11px] text-blue-600 hover:underline">Upload new version</button>
+                    <button onClick={() => setVersionDoc(doc)} className="text-[11px] text-blue-600 hover:underline">Replace files</button>
                     <button onClick={() => toggleHistory(doc.id)} className="text-[11px] text-gray-500 hover:text-gray-700">
                       {openHistory[doc.id] ? "Hide history" : "History"}
                     </button>
@@ -3426,7 +3496,8 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                               </div>
                               {v.change_note && <div className="text-gray-500 mt-0.5 break-words">{v.change_note}</div>}
                             </div>
-                            <a href={v.file_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0">Open</a>
+                            {v.pdf_url && <a href={v.pdf_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0">PDF</a>}
+                            <a href={downloadUrl(v.file_url, v.file_name)} className="text-gray-600 hover:underline shrink-0">Master ↓</a>
                           </div>
                         ))
                       )}

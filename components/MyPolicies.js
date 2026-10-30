@@ -11,7 +11,7 @@ const READ_PREVIEW = 5; // "Policies read" shows this many newest first, then "S
 // Display only: strip a trailing file extension from a policy title
 const displayTitle = (t) => String(t || "").replace(/\.(docx|doc|pdf|xlsx)$/i, "");
 
-// -> { outstanding: [{ id, title, file_url, requested_at }], read: [{ id, title, read_at, read_via }] } or null
+// -> { outstanding: [{ id, title, pdf_url, requested_at }], read: [{ id, title, read_at, read_via }] } or null
 export const fetchMyPolicies = async () => {
   try {
     return await callMeApi("/api/policies/mine");

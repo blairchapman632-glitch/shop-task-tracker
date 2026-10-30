@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   try {
     const staff = await staffFromRequest(req);
     const { data, error } = await supabaseAdmin().from("policy_read_requests")
-      .select("id, status, requested_at, read_at, read_via, read_file_name, document:document_id(id, title, file_url, active)")
+      .select("id, status, requested_at, read_at, read_via, read_file_name, document:document_id(id, title, pdf_url, active)")
       .eq("staff_id", Number(staff.id))
       .in("status", ["outstanding", "read"])
       .order("requested_at", { ascending: false });
@@ -18,7 +18,7 @@ export default async function handler(req, res) {
     res.status(200).json({
       outstanding: rows
         .filter((r) => r.status === "outstanding" && r.document && r.document.active !== false)
-        .map((r) => ({ id: r.id, title: r.document.title, file_url: r.document.file_url, requested_at: r.requested_at })),
+        .map((r) => ({ id: r.id, title: r.document.title, pdf_url: r.document.pdf_url || null, requested_at: r.requested_at })),
       read: rows
         .filter((r) => r.status === "read")
         .sort((a, b) => String(b.read_at || "").localeCompare(String(a.read_at || "")))

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
-import { groupFolders, fileTag } from "../lib/docFolders";
+import { groupFolders, fileTag, STAFF_DOC_COLUMNS } from "../lib/docFolders";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -401,7 +401,7 @@ function KioskPolicies({ staffList, onClose }) {
     setError("");
     if (!id) return;
     const { data, error: err } = await supabase.from("policy_read_requests")
-      .select(`${REQUEST_COLUMNS}, document:document_id(id, title, file_url, file_name, active)`)
+      .select(`${REQUEST_COLUMNS}, document:document_id(id, title, pdf_url, pdf_file_name, active)`)
       .eq("staff_id", Number(id))
       .eq("status", "outstanding")
       .order("requested_at");
@@ -451,10 +451,15 @@ function KioskPolicies({ staffList, onClose }) {
               <div key={r.id} className="rounded-xl border border-slate-200 px-3.5 py-3 space-y-2">
                 <div className="text-sm font-medium text-slate-800 break-words">{r.document.title}</div>
                 <div className="flex gap-2">
-                  <a href={r.document.file_url} target="_blank" rel="noopener noreferrer" className="flex-1 text-center border border-slate-300 rounded-lg py-2 text-sm text-slate-700 hover:bg-slate-50">
-                    Open
-                  </a>
-                  <button onClick={() => handleRead(r)} disabled={busyId === r.id} className="flex-[2] bg-slate-800 text-white rounded-lg py-2 text-sm font-semibold hover:bg-slate-700 disabled:opacity-40">
+                  {r.document.pdf_url ? (
+                    <a href={r.document.pdf_url} target="_blank" rel="noopener noreferrer" className="flex-1 text-center border border-slate-300 rounded-lg py-2 text-sm text-slate-700 hover:bg-slate-50">
+                      Open
+                    </a>
+                  ) : (
+                    <span className="flex-1 text-center border border-slate-200 rounded-lg py-2 text-sm text-slate-400 bg-slate-50">Not available yet</span>
+                  )}
+                  {/* Can't confirm reading a policy that can't be opened yet */}
+                  <button onClick={() => handleRead(r)} disabled={busyId === r.id || !r.document.pdf_url} className="flex-[2] bg-slate-800 text-white rounded-lg py-2 text-sm font-semibold hover:bg-slate-700 disabled:opacity-40">
                     {busyId === r.id ? "Saving…" : "I have read and understood"}
                   </button>
                 </div>
@@ -498,7 +503,7 @@ export default function DocumentsPage() {
         .order("sort_order");
       const { data: d } = await supabase
         .from("pharmacy_documents")
-        .select("*")
+        .select(STAFF_DOC_COLUMNS) // staff PDF only — never the master
         .eq("pharmacy_id", PHARMACY_ID)
         .eq("active", true)
         .order("title");
@@ -773,11 +778,32 @@ export default function DocumentsPage() {
               ) : (
                 <div className="space-y-1.5">
                   {folderDocs.map((doc) => {
-                    const tag = fileTag(doc.file_name);
+                    const body = (
+                      <span className="flex-1 min-w-0">
+                        <span className="flex items-baseline gap-1.5 min-w-0">
+                          <span className={`text-sm font-medium truncate ${doc.pdf_url ? "text-slate-800" : "text-slate-400"}`}>{doc.title}</span>
+                          {doc.version && <span className="shrink-0 text-[11px] text-slate-400">v{doc.version}</span>}
+                        </span>
+                        {searching && (
+                          <span className="block text-[11px] text-slate-400 truncate">{folderName(doc.folder_id)}</span>
+                        )}
+                      </span>
+                    );
+                    // Staff only ever open the staff PDF; no PDF yet = not clickable
+                    if (!doc.pdf_url) {
+                      return (
+                        <div key={doc.id} className="flex items-center gap-3 bg-slate-50 rounded-xl border border-slate-100 px-3.5 py-3">
+                          <span className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-md border bg-slate-100 text-slate-400 border-slate-200">—</span>
+                          {body}
+                          <span className="shrink-0 text-[11px] text-slate-400">Not available yet</span>
+                        </div>
+                      );
+                    }
+                    const tag = fileTag(doc.pdf_file_name || ".pdf");
                     return (
                       <a
                         key={doc.id}
-                        href={doc.file_url}
+                        href={doc.pdf_url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-3 bg-white rounded-xl border border-slate-100 px-3.5 py-3 hover:border-slate-300 hover:shadow-sm transition-all"
@@ -785,15 +811,7 @@ export default function DocumentsPage() {
                         <span className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded-md border ${tag.cls}`}>
                           {tag.label}
                         </span>
-                        <span className="flex-1 min-w-0">
-                          <span className="flex items-baseline gap-1.5 min-w-0">
-                            <span className="text-sm font-medium text-slate-800 truncate">{doc.title}</span>
-                            {doc.version && <span className="shrink-0 text-[11px] text-slate-400">v{doc.version}</span>}
-                          </span>
-                          {searching && (
-                            <span className="block text-[11px] text-slate-400 truncate">{folderName(doc.folder_id)}</span>
-                          )}
-                        </span>
+                        {body}
                       </a>
                     );
                   })}

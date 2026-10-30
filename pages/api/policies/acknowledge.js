@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     const db = supabaseAdmin();
 
     const { data: request, error } = await db.from("policy_read_requests")
-      .select("id, staff_id, status, document:document_id(title, file_name, file_url)")
+      .select("id, staff_id, status, document:document_id(title, pdf_file_name, pdf_url)")
       .eq("id", String(id)).maybeSingle();
     if (error) throw error;
     // Someone else's request looks the same as a missing one
@@ -25,8 +25,8 @@ export default async function handler(req, res) {
       status: "read",
       read_at: new Date().toISOString(),
       read_via: "phone",
-      read_file_name: request.document?.title || request.document?.file_name || null,
-      read_file_url: request.document?.file_url || null,
+      read_file_name: request.document?.title || request.document?.pdf_file_name || null,
+      read_file_url: request.document?.pdf_url || null, // the staff PDF (never the master)
     }).eq("id", request.id).eq("staff_id", Number(staff.id)).eq("status", "outstanding").select("id, document_id, induction_id, read_at, read_via");
     if (upErr) throw upErr;
     if (!updated?.length) return res.status(409).json({ error: "This policy is no longer waiting to be read." });
