@@ -2983,6 +2983,8 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
   const [openHistory, setOpenHistory] = useState({});    // document id -> history expanded
   const [history, setHistory] = useState({});            // document id -> document_versions rows
   const [pdfFilter, setPdfFilter] = useState(false);     // show only documents without a current staff PDF
+  const [retired, setRetired] = useState([]);            // retired (archived) documents, newest first
+  const [showArchived, setShowArchived] = useState(false);
   const activeStaff = staffList.filter((s) => s.active);
   const staffName = (id) => staffList.find((s) => Number(s.id) === Number(id))?.name || "";
 
@@ -2997,10 +2999,12 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
       .from("pharmacy_documents")
       .select("*")
       .eq("pharmacy_id", PHARMACY_ID)
-      .eq("active", true)
       .order("title");
     setFolders(f || []);
-    setDocs(d || []);
+    // active = false means retired (archived): hidden from staff everywhere and from the main library
+    setDocs((d || []).filter((x) => x.active !== false));
+    setRetired((d || []).filter((x) => x.active === false)
+      .sort((a, b) => String(b.retired_at || "").localeCompare(String(a.retired_at || ""))));
     if (!activeFolder && f && f.length) setActiveFolder(f[0].id);
     setLoading(false);
   };
@@ -3079,8 +3083,9 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
 
   const handleDeleteFolder = async (id) => {
     const count = docs.filter((d) => d.folder_id === id).length;
-    if (count > 0) {
-      alert(`This folder still has ${count} document${count === 1 ? "" : "s"}. Move or delete them first.`);
+    const archived = retired.filter((d) => d.folder_id === id).length; // retired ones still belong to the folder
+    if (count > 0 || archived > 0) {
+      alert(`This folder still has ${count} document${count === 1 ? "" : "s"}${archived ? ` and ${archived} archived` : ""}. Move or delete them first${archived ? " (restore archived ones to move them)" : ""}.`);
       return;
     }
     if (!window.confirm("Delete this empty folder?")) return;
@@ -3227,12 +3232,41 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
     setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, title: title.trim() } : d)));
   };
 
+  // Retire = archive: hidden from staff and the main library, outstanding read requests cancelled, read records kept
+  const handleRetire = async (doc) => {
+    const reason = window.prompt(`Retire "${doc.title}"?\n\nStaff won't see it any more and its outstanding read requests are cancelled (read records are kept). You can restore it from Archived.\n\nReason (optional):`, "");
+    if (reason === null) return;
+    setError("");
+    const now = new Date().toISOString();
+    const who = adminUser?.id ? Number(adminUser.id) : null;
+    const changes = { active: false, retired_at: now, retired_by_staff_id: who, retired_reason: reason.trim().slice(0, 300) || null };
+    const { error: err } = await supabase.from("pharmacy_documents").update(changes).eq("id", doc.id);
+    if (err) { setError("Couldn't retire: " + err.message); return; }
+    setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+    setRetired((prev) => [{ ...doc, ...changes }, ...prev]);
+    const { error: cErr } = await supabase.from("policy_read_requests")
+      .update({ status: "cancelled", cancelled_by: who, cancelled_at: now })
+      .eq("document_id", doc.id).eq("status", "outstanding");
+    if (cErr) setError("Retired, but its outstanding read requests couldn't be cancelled: " + cErr.message);
+    await loadRequests();
+  };
+
+  // Restore = back in its folder for staff. Cancelled requests stay cancelled (send a new one with "Ask staff to read").
+  const handleRestore = async (doc) => {
+    if (!window.confirm(`Restore "${doc.title}"? Staff will see it again in ${folderName(doc.folder_id) || "its folder"}.`)) return;
+    const changes = { active: true, retired_at: null, retired_by_staff_id: null, retired_reason: null };
+    const { error: err } = await supabase.from("pharmacy_documents").update(changes).eq("id", doc.id);
+    if (err) { setError("Couldn't restore: " + err.message); return; }
+    setRetired((prev) => prev.filter((d) => d.id !== doc.id));
+    setDocs((prev) => [...prev, { ...doc, ...changes }].sort((a, b) => String(a.title).localeCompare(String(b.title))));
+  };
+
   const handleDeleteDoc = async (doc) => {
     if (requests.some((r) => String(r.document_id) === String(doc.id))) {
-      alert("Staff have been asked to read this document, so it can't be deleted (the read records are QSPP evidence). Use Upload new version instead.");
+      alert("Staff have been asked to read this document, so it can't be deleted (the read records are QSPP evidence). Use Retire instead.");
       return;
     }
-    if (!window.confirm("Delete this document and all its versions? This removes the files permanently.")) return;
+    if (!window.confirm("Delete this document and all its versions? This removes the files permanently.\n\nOnly use Delete for mistakes (e.g. a duplicate). To take a document out of use, Cancel and use Retire instead — it can be restored.")) return;
     setError("");
     // Collect every version's file before the row goes (versions cascade with it)
     const { data: versions, error: vErr } = await supabase
@@ -3324,7 +3358,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                   </div>
                 ) : (
                   <button
-                    onClick={() => { setActiveFolder(f.id); setPdfFilter(false); }}
+                    onClick={() => { setActiveFolder(f.id); setPdfFilter(false); setShowArchived(false); }}
                     className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-50"
                   >
                     <span>📁</span>
@@ -3344,6 +3378,14 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
           </div>
           ))}
         </div>
+        <button
+          onClick={() => { setShowArchived((v) => !v); setPdfFilter(false); setSearch(""); }}
+          className={`border-t shrink-0 w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-50 ${showArchived ? "bg-amber-50" : ""}`}
+        >
+          <span>🗄</span>
+          <span className="flex-1 text-sm font-medium text-gray-700">Archived</span>
+          <span className="text-xs text-gray-400">{retired.length}</span>
+        </button>
         <div className="border-t p-2 shrink-0 space-y-1.5">
           <input
             value={newFolderName}
@@ -3370,8 +3412,8 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
       <div className="flex-1 bg-white overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b shrink-0 gap-3">
           <h2 className="font-semibold text-gray-800 truncate">
-            {pdfFilter ? "Needs a staff PDF" : searching ? "Search results" : activeFolderObj?.name || "Documents"}
-            <span className="text-gray-400 font-normal text-sm ml-2">({folderDocs.length})</span>
+            {showArchived ? "Archived (retired)" : pdfFilter ? "Needs a staff PDF" : searching ? "Search results" : activeFolderObj?.name || "Documents"}
+            <span className="text-gray-400 font-normal text-sm ml-2">({showArchived ? retired.length : folderDocs.length})</span>
           </h2>
           <div className="flex items-center gap-2 shrink-0">
             <input
@@ -3399,7 +3441,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
           </div>
         </div>
 
-        {(noPdfCount > 0 || stalePdfCount > 0 || pdfFilter) && (
+        {!showArchived && (noPdfCount > 0 || stalePdfCount > 0 || pdfFilter) && (
           <div className={`px-5 py-2 border-b shrink-0 flex items-center gap-3 text-xs ${noPdfCount ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"}`}>
             <span className="flex-1">
               {noPdfCount > 0 && <><span className="font-semibold">{noPdfCount} document{noPdfCount === 1 ? "" : "s"} with no PDF</span> — staff can't open {noPdfCount === 1 ? "it" : "them"}.</>}
@@ -3414,7 +3456,34 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
         {error && <div className="px-5 py-2 text-sm text-red-500 shrink-0">{error}</div>}
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {folderDocs.length === 0 ? (
+          {showArchived ? (
+            // Retired documents: hidden from staff; files kept; Restore puts them back in their folder
+            retired.length === 0 ? (
+              <p className="text-sm text-gray-400">No retired documents. Use "Retire" on a document to archive it.</p>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-xs text-gray-500 mb-2">Staff can't see these. Their read records are kept; outstanding requests were cancelled when retired.</p>
+                {retired.map((doc) => (
+                  <div key={doc.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5 flex items-start gap-3">
+                    {(() => { const tag = fileTag(doc.file_name); return (
+                      <span className={`shrink-0 mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded border ${tag.cls}`}>{tag.label}</span>
+                    ); })()}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-700 break-words">{doc.title} <span className="text-[11px] text-gray-400 font-normal">v{doc.version || "1.0"}</span></div>
+                      <div className="text-[11px] text-gray-500">
+                        {folderName(doc.folder_id) || "No folder"} · retired {perthDate(doc.retired_at) || "—"}
+                        {doc.retired_by_staff_id && staffName(doc.retired_by_staff_id) && ` by ${staffName(doc.retired_by_staff_id)}`}
+                      </div>
+                      {doc.retired_reason && <div className="text-[11px] text-gray-600 mt-0.5 break-words">“{doc.retired_reason}”</div>}
+                    </div>
+                    {doc.pdf_url && <a href={doc.pdf_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline shrink-0">Staff PDF</a>}
+                    <a href={downloadUrl(doc.file_url, doc.file_name)} className="text-xs text-gray-600 hover:underline shrink-0">Master ↓</a>
+                    <button onClick={() => handleRestore(doc)} className="text-xs text-green-700 hover:underline shrink-0">Restore</button>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : folderDocs.length === 0 ? (
             <p className="text-sm text-gray-400">{pdfFilter ? "Nothing needs a PDF." : `No documents in this folder${search ? " matching your search" : ""}.`}</p>
           ) : (
             <div className="space-y-1.5">
@@ -3475,6 +3544,7 @@ function DocumentsTab({ staffList, onOpenStaff, adminUser, openPolicyId }) {
                     <button onClick={() => toggleHistory(doc.id)} className="text-[11px] text-gray-500 hover:text-gray-700">
                       {openHistory[doc.id] ? "Hide history" : "History"}
                     </button>
+                    <button onClick={() => handleRetire(doc)} className="text-[11px] text-amber-700 hover:text-amber-900">Retire</button>
                     <button onClick={() => handleDeleteDoc(doc)} className="text-[11px] text-red-500 hover:text-red-700">Delete</button>
                     <button onClick={() => setAskDoc(doc)} className="text-[11px] text-blue-600 hover:underline ml-auto">Ask staff to read</button>
                   </div>
