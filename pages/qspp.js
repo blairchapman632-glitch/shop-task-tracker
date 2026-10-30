@@ -1,9 +1,9 @@
 // /qspp — the one QSPP area. No login (shop computers, like the kiosk).
-//   Staff tabs: Library, Incidents.
+//   Staff tabs: Library, Incidents & feedback (sub-tabs Incidents | Feedback).
 //   "🔒 Manager" → admin PIN (lib/adminPin) → manager mode: extra tabs (Reviews, Training overview) and manager tools.
 //   Manager mode lives in memory only: it auto-locks after 10 minutes with no activity, and when leaving or reloading
 //   the page (nothing is stored in the browser).
-// ?tab=incidents opens the Incidents tab. ?doc=<id> (Admin → Needs attention) asks for the manager PIN, then opens
+// ?tab=incidents opens Incidents & feedback (?tab=feedback opens its Feedback sub-tab). ?doc=<id> (Admin → Needs attention) asks for the manager PIN, then opens
 // that document's side panel. Reviews opens a person in Admin (/admin?staff=…&staffTab=reviews — Admin asks for its PIN).
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -11,6 +11,7 @@ import { useRouter } from "next/router";
 import Sidebar from "../components/Sidebar";
 import Library from "../components/qspp/Library";
 import StaffIncidents from "../components/qspp/StaffIncidents";
+import FeedbackRegister from "../components/qspp/FeedbackRegister";
 import ManagerPinModal from "../components/qspp/ManagerPinModal";
 import supabase from "../lib/supabaseClient";
 import { ReviewsOverview } from "../components/PerformanceReviews";
@@ -22,7 +23,7 @@ const IDLE_LOCK_MS = 10 * 60 * 1000;
 
 const STAFF_TABS = [
   { key: "library", label: "Library" },
-  { key: "incidents", label: "Incidents" },
+  { key: "incidents", label: "Incidents & feedback" },
 ];
 const MANAGER_TABS = [
   { key: "reviews", label: "Reviews" },
@@ -36,9 +37,11 @@ export default function QsppPage() {
   const [askPin, setAskPin] = useState(false);
   const lastActivity = useRef(Date.now());
   const [docToOpen, setDocToOpen] = useState(null); // ?doc=<id>
+  const [incSub, setIncSub] = useState("incidents"); // incidents | feedback
 
   useEffect(() => {
     if (router.query.tab === "incidents") setTab("incidents");
+    if (router.query.tab === "feedback") { setTab("incidents"); setIncSub("feedback"); }
   }, [router.query.tab]);
   useEffect(() => {
     if (!router.query.doc) return;
@@ -122,7 +125,23 @@ export default function QsppPage() {
 
         {/* Content */}
         {tab === "library" && <Library manager={manager} openDocId={docToOpen} onOpenedDoc={() => setDocToOpen(null)} />}
-        {tab === "incidents" && <StaffIncidents manager={manager} />}
+        {tab === "incidents" && (
+          <>
+            <div className="max-w-3xl mx-auto px-4">
+              <div className="inline-flex p-1 rounded-[12px] bg-white border border-[#E5E7EB]">
+                {[{ k: "incidents", l: "Incidents" }, { k: "feedback", l: "Feedback" }].map((o) => (
+                  <button key={o.k} onClick={() => setIncSub(o.k)}
+                    className={`min-h-[36px] px-4 rounded-[9px] text-sm ${incSub === o.k ? "bg-[#EFF6FF] text-[#1E3A8A] font-semibold" : "text-slate-600 hover:bg-slate-50"}`}>
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {incSub === "incidents"
+              ? <StaffIncidents manager={manager} />
+              : <div className="max-w-3xl mx-auto px-4 py-5"><FeedbackRegister manager={manager} /></div>}
+          </>
+        )}
         {manager && tab === "reviews" && <ManagerReviews onOpen={(st, reviewId) => router.push(`/admin?staff=${st.id}&staffTab=reviews${reviewId ? `&review=${reviewId}` : ""}`)} />}
         {manager && tab === "training" && (
           <div className="max-w-6xl mx-auto px-4 pb-10">

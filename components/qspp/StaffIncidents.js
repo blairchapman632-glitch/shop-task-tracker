@@ -3,9 +3,14 @@
 //   follow-up, quality improvements — locked once filled, as before). Reassigning and closing (date resolved) are
 //   shown read-only.
 //   Manager mode (manager = { id, name }): ManagerIncidentModal — every field incl. reassign / close, Hide / Unhide,
-//   Delete; the list includes hidden incidents ("Show hidden").
+//   Delete; the list includes hidden incidents ("Show hidden"), the annual incident & feedback review, Export PDF.
+//   Extra sections (clinical / non-clinical, third parties, open disclosure, feedback to staff): ./IncidentExtras.
 import { useEffect, useState } from "react";
 import supabase from "../../lib/supabaseClient";
+import IncidentExtras, { extrasFrom, extrasPatch, clinicalLabel, thirdPartySummary, disclosureSummary, CLINICAL_TYPES } from "./IncidentExtras";
+import AnnualReviews from "./AnnualReviews";
+import { buildRegisterPdf, downloadPdf } from "../../lib/registerPdf";
+import { todayPerth } from "../../lib/performanceReview";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -16,6 +21,7 @@ function EditIncidentModal({ incident, staffList, onClose, onSaved }) {
   const actionLocked = !!incident.actioned_by_staff_id;
   const resolvedLocked = !!incident.date_resolved;
   const [followUpRequired, setFollowUpRequired] = useState(incident.follow_up_required || "");
+  const [extras, setExtras] = useState(extrasFrom(incident));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -31,6 +37,7 @@ function EditIncidentModal({ incident, staffList, onClose, onSaved }) {
         actioned_by_staff_id: actionedById || null,
         quality_improvement: qualityImprovement || null,
         follow_up_required: followUpRequired || null,
+        ...extrasPatch(extras),
         updated_at: new Date().toISOString(), // reassigning / closing are manager-only (ManagerIncidentModal)
       })
       .eq("id", incident.id);
@@ -107,6 +114,8 @@ function EditIncidentModal({ incident, staffList, onClose, onSaved }) {
             />
           </div>
 
+          <IncidentExtras value={extras} onChange={setExtras} staffList={staffList} saved={incident} />
+
           {/* Reassigning and closing are manager-only — shown read-only here */}
           <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
             <div>
@@ -145,7 +154,7 @@ function EditIncidentModal({ incident, staffList, onClose, onSaved }) {
 
 function ReportIncidentForm({ staffList, onClose, onSaved }) {
   const [reporterId, setReporterId] = useState("");
-  const [incidentDate, setIncidentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [incidentDate, setIncidentDate] = useState(() => todayPerth()); // Perth date (UTC would be yesterday before 8am)
   const [natureOfIncident, setNatureOfIncident] = useState("");
   const [showMore, setShowMore] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -166,6 +175,7 @@ function ReportIncidentForm({ staffList, onClose, onSaved }) {
   const [qualityImprovement, setQualityImprovement] = useState("");
   const [followUpRequired, setFollowUpRequired] = useState("");
   const [assignedToId, setAssignedToId] = useState("");
+  const [clinicalType, setClinicalType] = useState("");
 
   const canSubmit = reporterId && incidentDate && natureOfIncident.trim().length > 0;
 
@@ -193,6 +203,7 @@ function ReportIncidentForm({ staffList, onClose, onSaved }) {
       quality_improvement: qualityImprovement || null,
       follow_up_required: followUpRequired || null,
       assigned_to_staff_id: assignedToId || null,
+      clinical_type: clinicalType || null,
     });
     setSaving(false);
     if (err) {
@@ -244,6 +255,18 @@ function ReportIncidentForm({ staffList, onClose, onSaved }) {
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
               placeholder="Describe the incident…"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">Clinical / non-clinical</label>
+            <div className="flex gap-2">
+              {CLINICAL_TYPES.map((c) => (
+                <button key={c.key} type="button" onClick={() => setClinicalType(clinicalType === c.key ? "" : c.key)}
+                  className={`flex-1 min-h-[40px] rounded-lg border text-sm ${clinicalType === c.key ? "bg-[#EFF6FF] border-[#BFDBFE] text-[#1E3A8A] font-semibold" : "bg-white border-slate-200 text-slate-600"}`}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide pt-1">Action &amp; improvement</div>
@@ -378,6 +401,7 @@ function ManagerIncidentModal({ incident, staffList, onClose, onUpdate, onDelete
   const [followUpRequired, setFollowUpRequired] = useState(incident.follow_up_required || "");
   const [assignedToId, setAssignedToId] = useState(incident.assigned_to_staff_id || "");
   const [dateResolved, setDateResolved] = useState(incident.date_resolved || "");
+  const [extras, setExtras] = useState(extrasFrom(incident));
   const [saving, setSaving] = useState(false);
 
   const reporterName = staffList.find((s) => s.id === incident.reporter_staff_id)?.name || "Unknown";
@@ -393,6 +417,7 @@ function ManagerIncidentModal({ incident, staffList, onClose, onUpdate, onDelete
       follow_up_required: followUpRequired || null,
       assigned_to_staff_id: assignedToId || null,
       date_resolved: dateResolved || null,
+      ...extrasPatch(extras),
     });
     setSaving(false);
     if (ok) onClose();
@@ -433,6 +458,7 @@ function ManagerIncidentModal({ incident, staffList, onClose, onUpdate, onDelete
             </select></div>
           <div><label className={label}>Quality improvements</label>
             <textarea value={qualityImprovement} onChange={(e) => setQualityImprovement(e.target.value)} rows={2} className={field} /></div>
+          <IncidentExtras value={extras} onChange={setExtras} staffList={staffList} manager />
           <div className="grid grid-cols-2 gap-3">
             <div><label className={label}>Assigned to</label>
               <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className={field}>
@@ -463,6 +489,9 @@ export default function StaffIncidents({ manager = null }) {
   const [showReportForm, setShowReportForm] = useState(false);
   const [openIncident, setOpenIncident] = useState(null);
   const [showHidden, setShowHidden] = useState(false); // manager only
+  const [statusFilter, setStatusFilter] = useState("all"); // all | open | resolved
+  const [search, setSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   // Staff never see hidden incidents; manager mode loads them too (shown with "Show hidden")
   const refreshIncidents = async () => {
@@ -490,7 +519,50 @@ export default function StaffIncidents({ manager = null }) {
   }, [isManager]);
 
   const staffName = (id) => staffList.find((s) => s.id === id)?.name || "";
-  const visible = incidents.filter((i) => !i.hidden || (isManager && showHidden));
+  const term = search.trim().toLowerCase();
+  const visible = incidents
+    .filter((i) => !i.hidden || (isManager && showHidden))
+    .filter((i) => statusFilter === "all" || (statusFilter === "resolved" ? !!i.date_resolved : !i.date_resolved))
+    .filter((i) => !term || [i.nature_of_incident, i.action_needed, i.person_name, String(i.report_number)].some((v) => String(v || "").toLowerCase().includes(term)));
+
+  // Incident register PDF (what the list is showing)
+  const exportPdf = async () => {
+    setExporting(true);
+    try {
+      const { data: ps } = await supabase.from("pharmacy_settings").select("name").eq("pharmacy_id", PHARMACY_ID).maybeSingle();
+      const { bytes, warnings } = await buildRegisterPdf({
+        heading: "Incident Register", pharmacyName: ps?.name || "", generatedOn: todayPerth(), generatedBy: manager?.name || "",
+        filterLabel: [statusFilter === "all" ? "All incidents" : statusFilter === "open" ? "Open" : "Resolved", term ? `search "${search.trim()}"` : "", isManager && showHidden ? "incl. hidden" : ""].filter(Boolean).join(", "),
+        itemWord: "incident",
+        columns: [
+          { key: "no", label: "#", w: 32 },
+          { key: "date", label: "Date", w: 62 },
+          { key: "type", label: "Type", w: 62 },
+          { key: "what", label: "What happened", w: 205 },
+          { key: "action", label: "Action / improvement", w: 175 },
+          { key: "reported", label: "Third parties / disclosure / staff told", w: 160 },
+          { key: "status", label: "Status", w: 73 },
+        ],
+        rows: visible.map((i) => ({
+          no: String(i.report_number ?? ""),
+          date: i.incident_date || "",
+          type: clinicalLabel(i.clinical_type),
+          what: i.nature_of_incident || "",
+          action: [i.action_needed, i.quality_improvement ? `Improvement: ${i.quality_improvement}` : ""].filter(Boolean).join(" — "),
+          reported: [thirdPartySummary(i) ? `Reported: ${thirdPartySummary(i)}` : "", disclosureSummary(i, staffName),
+            i.staff_feedback_date ? `Staff told ${i.staff_feedback_date}${i.staff_feedback_how ? ` (${i.staff_feedback_how})` : ""}` : ""].filter(Boolean).join(" · "),
+          status: i.date_resolved ? `Resolved ${i.date_resolved}` : "Open",
+          _red: i.date_resolved ? [] : ["status"],
+        })),
+      });
+      downloadPdf(bytes, `incident_register_${todayPerth()}.pdf`);
+      if (warnings.length) alert(warnings.join("\n"));
+    } catch (err) {
+      alert("Couldn't create the PDF: " + (err?.message || String(err)));
+    } finally {
+      setExporting(false);
+    }
+  };
   const hiddenCount = incidents.filter((i) => i.hidden).length;
 
   const handleUpdate = async (id, patch) => {
@@ -517,13 +589,30 @@ export default function StaffIncidents({ manager = null }) {
       >
         + Report an incident
       </button>
-      {isManager && hiddenCount > 0 && (
-        <div className="mb-3 flex justify-end">
-          <button onClick={() => setShowHidden((v) => !v)} className="min-h-[36px] px-3 text-xs text-slate-500 hover:text-slate-700">
-            {showHidden ? "Hide hidden incidents" : `Show hidden (${hiddenCount})`}
+      {isManager && <AnnualReviews manager={manager} staffList={staffList} />}
+      <div className="mb-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {[{ k: "all", l: "All" }, { k: "open", l: "Open" }, { k: "resolved", l: "Resolved" }].map((o) => (
+            <button key={o.k} onClick={() => setStatusFilter(o.k)}
+              className={`min-h-[36px] px-3 rounded-full text-sm border ${statusFilter === o.k ? "bg-[#EFF6FF] border-[#BFDBFE] text-[#1E3A8A] font-semibold" : "bg-white border-[#E5E7EB] text-slate-600 hover:bg-slate-50"}`}>
+              {o.l}
+            </button>
+          ))}
+          {isManager && hiddenCount > 0 && (
+            <button onClick={() => setShowHidden((v) => !v)} className="min-h-[36px] px-3 text-xs text-slate-500 hover:text-slate-700">
+              {showHidden ? "Hide hidden incidents" : `Show hidden (${hiddenCount})`}
+            </button>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search incidents…"
+            className="flex-1 min-h-[44px] border border-[#E5E7EB] rounded-[12px] px-4 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#BFDBFE]" />
+          <button onClick={exportPdf} disabled={exporting}
+            className="min-h-[44px] px-4 rounded-[12px] text-sm font-medium bg-white border border-[#E5E7EB] text-slate-700 hover:bg-slate-50 disabled:opacity-40 shrink-0">
+            {exporting ? "Creating…" : "↓ Export PDF"}
           </button>
         </div>
-      )}
+      </div>
       {showReportForm && (
         <ReportIncidentForm
           staffList={staffList}
@@ -537,7 +626,7 @@ export default function StaffIncidents({ manager = null }) {
       {incidentsLoading ? (
         <p className="text-sm text-slate-400 py-10">Loading…</p>
       ) : visible.length === 0 ? (
-        <p className="text-sm text-slate-400 px-1 py-12 text-center">No incidents logged yet.</p>
+        <p className="text-sm text-slate-400 px-1 py-12 text-center">{incidents.length ? "No incidents match." : "No incidents logged yet."}</p>
       ) : (
         <div className="space-y-2">
           {visible.map((inc) => {
@@ -552,6 +641,7 @@ export default function StaffIncidents({ manager = null }) {
                   <span className="text-xs font-semibold text-slate-400">#{inc.report_number} · {inc.incident_date}</span>
                   <span className="flex items-center gap-1">
                     {inc.hidden && <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Hidden</span>}
+                    {inc.clinical_type && <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{clinicalLabel(inc.clinical_type)}</span>}
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                       resolved ? "bg-green-50 text-green-700 border-green-200" : "bg-amber-50 text-amber-700 border-amber-200"
                     }`}>
