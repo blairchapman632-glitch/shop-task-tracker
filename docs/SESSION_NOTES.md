@@ -1,5 +1,36 @@
 # Session notes
 
+## 2026-10-28 → 11-01 — QSPP: staff PDFs, /me policies, one /qspp area, feedback, other training
+
+### Done
+- **Staff PDF vs master** (`05814b7`): every library doc has an admin-only master + a staff PDF; staff screens only load/open the PDF ("Not available yet" without one); LibreOffice script converted 165 docs + linked 42 PDFs (all 207 verified).
+- **/me policies** (`24378bb`): read + "I have read and understood" on the phone again (PDF opens in a new tab; iPhone "Done" returns); kiosk re-checks policy cards every minute.
+- **Retire / Archived** (`666680b`) and **Document Register** with PDF export; blanket review date 30 Sep 2027 (not Reference Library); "Updated by" shows the QSPP migration text.
+- **One /qspp area** (`7b0c619`): QSPP in both sidebars; PIN-locked manager mode (auto-lock 10 min / on leave). Library with domain folders, clean rows, manager side panel (open/download/replace, folder, review date, reads + ask to read, history, retire/restore/delete), summary tiles, Folders | List (Register), Manage folders. Reviews + Training overview moved in; **Admin → QSPP removed**; /documents redirects; Needs attention → /qspp?doc=; /admin?staff= deep link.
+- **Stage 2** (`30cd9ec`): Incidents & feedback tab — Feedback register (log, staff follow-up, manager close/hide/delete, filters, PDF); incident gaps (clinical/non-clinical, third parties, open disclosure, feedback to staff) + Incident Register PDF; annual incident & feedback review with 12-month reminder + PDFs. Incident date default now Perth time.
+- **Stage 3** (`df6278c`): Other training (courses / in-house / drills, not S2/S3 hours) — editable topics, /qspp list with filters/search/add/edit/delete/PDF, group attendees, private attachments; per-person lists in Admin staff Training tab and /training (staff add own course + certificate).
+
+### Schema changes (all run by Blair)
+- `pharmacy_documents`: pdf_url, pdf_file_name, pdf_updated_at, pdf_updated_by_staff_id; retired_at, retired_by_staff_id, retired_reason. `document_versions`: pdf_url, pdf_file_name.
+- 159 active non-Reference-Library docs set to review_date 2027-09-30 (backup `pharmacy_documents_backup_20261030`).
+- `incidents`: clinical_type, third_party_reports (jsonb), patient_harmed, disclosure_date, disclosure_by_staff_id, disclosure_notes, staff_feedback_date, staff_feedback_how.
+- New: `feedback`, `incident_feedback_reviews`, `training_topics` (15 seeded), `other_training`, `other_training_attendees`.
+
+### New tables (add to RLS pass)
+- `feedback`, `incident_feedback_reviews`, `training_topics`, `other_training`, `other_training_attendees`.
+
+### Follow-ups / parked
+- **Masters still reachable**: pharmacy-documents bucket is public and the anon key can read master links / list the bucket — needs a private bucket + signed links + RLS (RLS pass).
+- Staff incident/feedback editing has no identity check (no login on /qspp) — anyone at the shop computer can update actions.
+- /qspp manager-mode attachments need the device logged in to the pharmacy dashboard.
+- Other-training attachments: PDF/JPG/PNG only (same as certificates).
+- Kiosk induction card refreshes only on page reload (not in the 1-minute policy re-check).
+- Converted Excel PDFs (Delivery Register 2024, Staff Exit Checklist) — check layout.
+- Backups to drop once happy: `*_backup_20261027b/c/d/e`, `pharmacy_documents_backup_20261030`, `consumable_items_backup_20261027b`.
+
+### Not committed
+- This session-notes entry.
+
 ## 2026-10-27 (pm) — Consumables polish + Shopping list (Part C)
 
 ### Done (`b2746c3`)
