@@ -1,6 +1,6 @@
 // Performance reviews in Admin (Part 1 — manager side):
 //   default export ReviewsTab  — staff form "Reviews" tab: list, start, edit, sign off, PDF, copy given
-//   ReviewsOverview            — Admin → QSPP → Reviews: due / in progress / new comments / signed reviews
+//   ReviewsOverview            — /qspp → Reviews (manager mode): due / in progress / new comments / signed reviews
 // Form wording + due-date rules live in lib/performanceReview.js. PDFs are generated server-side (pages/api/reviews/*).
 import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
@@ -681,7 +681,7 @@ function ReviewEditor({ review, member, people, nameOf, onBack, onChanged, onDel
   );
 }
 
-// ─── Admin → QSPP → Reviews ──────────────────────────────────────────────────
+// ─── /qspp → Reviews (manager mode) ──────────────────────────────────────────────────
 // onOpen(staff, reviewId?) opens Admin → Staff on that person's Reviews tab (and that review, if given).
 
 export function ReviewsOverview({ staffList, onOpen }) {

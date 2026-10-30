@@ -1,6 +1,6 @@
 // Admin → Staff main screen (no one selected): "Needs attention" across reviews, training, certificates and new starters (incl. inductions).
 // Reuses the same rules as QSPP → Reviews / Training (lib/performanceReview.js, lib/trainingPlan.js).
-// onOpen(staff, tab, reviewId?) opens that person on the right staff-form tab; onOpenPolicy(docId) opens QSPP → Documents.
+// onOpen(staff, tab, reviewId?) opens that person on the right staff-form tab; onOpenPolicy(docId) opens that document in /qspp.
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { reviewAttention, perthDateOf, fmtDateShort, todayPerth } from "../lib/performanceReview";

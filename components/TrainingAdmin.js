@@ -1,4 +1,4 @@
-// Admin → QSPP → 🎓 Training: QSPP anniversary/cycle date, needs attention, training hours table, pharmacist services.
+// /qspp → Training overview (manager mode): QSPP anniversary/cycle date, needs attention, training hours table, pharmacist services.
 // Rules live in lib/trainingPlan.js.
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";

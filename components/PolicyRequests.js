@@ -1,4 +1,4 @@
-// Admin → QSPP → Documents: ask staff to read a policy, and see who has read it.
+// /qspp → Library side panel (manager mode): ask staff to read a policy, and see who has read it.
 //   AskToReadModal — Everyone / By role / Individual people (active, non-locum); skips anyone with it outstanding
 //   PolicyProgress — "x of y read" + expandable list (read: date + phone/kiosk; not yet: Cancel)
 // Rules: lib/policyReads.js
@@ -55,7 +55,7 @@ export function AskToReadModal({ doc, staffList, requests, adminUser, onClose, o
   const toggle = (list, setList, v) => setList(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
       <div className="bg-white rounded-xl max-w-md w-full max-h-[85vh] overflow-y-auto p-5 space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div>

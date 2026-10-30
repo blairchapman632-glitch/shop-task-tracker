@@ -304,7 +304,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       <NavLink href="/availability" icon="🗓️" label="Time off" />
       <NavLink href="/messages" icon="💬" label="Messages" />
       <NavLink href="/training" icon="📚" label="Training" />
-      <NavLink href="/documents" icon="📁" label="QSPP" />
+      <NavLink href="/qspp" icon="📁" label="QSPP" />
       <NavLink href="/deliveries" icon="🚚" label="Deliveries" />
       <div className="border-t my-1" />
       <NavLink href="/roster" icon="📅" label="Roster" />
@@ -2409,7 +2409,7 @@ const handleDeliveryTap = async (d) => {
                             delete next[s.id];
                             return next;
                           });
-                          router.push("/documents?tab=incidents");
+                          router.push("/qspp?tab=incidents");
                         }}
                         className="absolute -bottom-1 -left-1 z-10 text-base cursor-pointer"
                         title="Incident to review"

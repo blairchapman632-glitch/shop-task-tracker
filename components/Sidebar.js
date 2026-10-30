@@ -1,5 +1,5 @@
 // Shared left sidebar for the desktop pages (Tasks, Wages, Admin, Insights). The kiosk home page has its own.
-// active: key of the current page ("home" | "roster" | "insights" | "tasks" | "wages" | "requests" | "admin")
+// active: key of the current page ("home" | "roster" | "insights" | "tasks" | "wages" | "requests" | "qspp" | "admin")
 import Link from "next/link";
 
 const LINKS = [
@@ -9,6 +9,7 @@ const LINKS = [
   { key: "tasks", href: "/tasks", icon: "✅", label: "Tasks" },
   { key: "wages", href: "/wages", icon: "💰", label: "Wages" },
   { key: "requests", href: "/availability", icon: "🗓️", label: "Requests" },
+  { key: "qspp", href: "/qspp", icon: "📁", label: "QSPP" },
   { key: "admin", href: "/admin", icon: "⚙️", label: "Admin" },
 ];
 
