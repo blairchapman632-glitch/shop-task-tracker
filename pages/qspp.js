@@ -16,6 +16,7 @@ import ManagerPinModal from "../components/qspp/ManagerPinModal";
 import supabase from "../lib/supabaseClient";
 import { ReviewsOverview } from "../components/PerformanceReviews";
 import TrainingAdminTab from "../components/TrainingAdmin";
+import OtherTrainingAdmin from "../components/qspp/OtherTrainingAdmin";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -146,6 +147,7 @@ export default function QsppPage() {
         {manager && tab === "training" && (
           <div className="max-w-6xl mx-auto px-4 pb-10">
             <div className="bg-white rounded-[14px] border border-[#E5E7EB] overflow-hidden"><TrainingAdminTab /></div>
+            <div className="mt-4"><OtherTrainingAdmin manager={manager} /></div>
           </div>
         )}
       </main>

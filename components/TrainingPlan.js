@@ -2,6 +2,7 @@
 //   Plan (Pharmacy Assistant / DAA / Retail Manager): S2/S3 certificate from Documents + training hours this year / this cycle
 //   Pharmacists / interns: CPD line + required certificates of their ticked services (status read from Documents)
 //   Policies (all staff except locums): to read / read, from QSPP library read requests (read-only)
+//   Other training (all staff except locums): courses / in-house sessions / drills they attended (not S2/S3 hours)
 //   Goals (all staff except locums): Section 4 of their latest signed review + manual goals
 //   Download training record (PDF)
 // Rules live in lib/trainingPlan.js.
@@ -12,6 +13,8 @@ import { addMonthsStr, todayPerth, perthDateOf, fmtDateShort, LABELS, REVIEW_TYP
 import { isPharmacistRole, loadServiceConfig, docSections, sectionStatus, DOC_STATE_STYLE } from "../lib/staffDocuments";
 import { viaLabel } from "../lib/policyReads";
 import { docHasFile, openStaffDoc } from "../lib/staffFiles";
+import { loadOtherTraining } from "../lib/otherTraining";
+import OtherTrainingList from "./OtherTrainingList";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -25,6 +28,7 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
   const [review, setReview] = useState(null);
   const [services, setServices] = useState(null);
   const [policies, setPolicies] = useState([]);
+  const [otherTraining, setOtherTraining] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -46,6 +50,7 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
       setGoals(gl.data || []);
       setReview(rv.data?.[0] || null);
       setPolicies(pr.data || []);
+      setOtherTraining(await loadOtherTraining(supabase, PHARMACY_ID, { staffId: member.id }));
       if (isPharmacistRole(member.role)) setServices(await loadServiceConfig(supabase, PHARMACY_ID, [member.id]));
       setError("");
     } catch (err) {
@@ -76,6 +81,13 @@ export default function StaffTrainingPlan({ member, records, documents, adminUse
         <GoalsSection member={member} review={review} goals={goals} adminUser={adminUser} onOpenReview={onOpenReview} reload={load} />
       )}
       {hasGoals(member) && <PoliciesSection policies={policies} />}
+      {hasGoals(member) && (
+        <section className="border-t pt-4 space-y-2">
+          <div className={sectionTitleCls}>Other training</div>
+          <p className="text-[11px] text-gray-400">Courses, in-house sessions and drills — not counted towards S2/S3 hours. Add or edit them in QSPP → Training overview.</p>
+          <OtherTrainingList records={otherTraining} />
+        </section>
+      )}
       <RecordDownload member={member} records={records} settings={settings} hours={hours} />
       <div className="border-t" />
     </div>

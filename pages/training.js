@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import { attachTrainingCert, openTrainingCert, recordHasCert } from "../lib/staffFiles";
+import { loadTopics, loadOtherTraining } from "../lib/otherTraining";
+import OtherTrainingForm from "../components/OtherTrainingForm";
+import OtherTrainingList from "../components/OtherTrainingList";
 import { HOURS_PER_YEAR, CYCLE_YEARS, PLAN_ROLES, hasPlan, hoursStatus } from "../lib/trainingPlan";
 import { fmtDateShort } from "../lib/performanceReview";
 
@@ -153,6 +156,21 @@ function TrainingView({ staff }) {
   const [saved, setSaved] = useState(false);
   const [certUploadingId, setCertUploadingId] = useState(null);
   const [certError, setCertError] = useState("");
+  // Other training (courses / sessions / drills — not S2/S3 hours): own records, and "add a course I've done"
+  const [otherTraining, setOtherTraining] = useState(null);
+  const [topics, setTopics] = useState([]);
+  const [addingOther, setAddingOther] = useState(false);
+  const loadOther = async () => {
+    try {
+      const [recs, tps] = await Promise.all([loadOtherTraining(supabase, PHARMACY_ID, { staffId: staff.id }), loadTopics(supabase, PHARMACY_ID)]);
+      setOtherTraining(recs);
+      setTopics(tps);
+    } catch (err) {
+      console.error("[other training]", err);
+      setOtherTraining([]);
+    }
+  };
+  useEffect(() => { loadOther(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [staff.id]);
 
   const handleCertUpload = async (record, selectedFile) => {
     if (!selectedFile) return;
@@ -419,7 +437,34 @@ function TrainingView({ staff }) {
           {certError && <p className="text-sm text-red-500 mt-2">{certError}</p>}
           <p className="text-[11px] text-gray-400 mt-3">Need to change or remove a record? Ask your manager.</p>
         </div>
+
+        {/* Other training — doesn't count towards the hours above */}
+        <div className="bg-white rounded-2xl shadow-sm border p-4 space-y-3">
+          <div>
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              Other training {otherTraining?.length > 0 && <span className="text-gray-400 font-normal">({otherTraining.length})</span>}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">Courses, in-house sessions and drills like infection control, WHS or fire drills. These don't count towards your S2/S3 hours.</p>
+          </div>
+          <OtherTrainingList records={otherTraining} kiosk={kiosk} emptyText="Nothing recorded yet." />
+          <button onClick={() => setAddingOther(true)} className="w-full border border-blue-200 text-blue-700 rounded-lg py-2.5 text-sm font-medium hover:bg-blue-50">
+            + Add a course I've done
+          </button>
+          <p className="text-[11px] text-gray-400">Group sessions and drills are added by your manager. Need to change or remove one? Ask your manager.</p>
+        </div>
       </main>
+
+      {addingOther && (
+        <OtherTrainingForm
+          mode="self"
+          topics={topics}
+          self={{ id: staff.id, name: staff.name }}
+          kiosk={kiosk}
+          pharmacyId={PHARMACY_ID}
+          onClose={() => setAddingOther(false)}
+          onSaved={() => { setAddingOther(false); loadOther(); }}
+        />
+      )}
     </div>
   );
 }
