@@ -2214,14 +2214,14 @@ function DeliveriesCard({ onOpen }) {
 
 // To do: performance review (Section 2 prep / comments) + policies to read
 // + Inductions (only for staff who can sign them off; not part of the badge count)
-function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, nudges, onOpenNudge, inductions }) {
+function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, onPoliciesChanged, nudges, onOpenNudge, inductions }) {
   const hasReview = !!(myReview?.mode && myReview.review);
   const hasPolicies = !!(myPolicies?.outstanding?.length || myPolicies?.read?.length);
   return (
     <div className="max-w-lg mx-auto space-y-4">
       <MyReviewSection data={myReview} onChanged={onReviewChanged} focus={focusReview} />
       <TrainingNudges items={nudges} onOpen={onOpenNudge} />
-      <MyPoliciesSection data={myPolicies} focus={focusPolicies} />
+      <MyPoliciesSection data={myPolicies} focus={focusPolicies} onChanged={onPoliciesChanged} />
       {!hasReview && !hasPolicies && !nudges?.length && (
         <div className="bg-white rounded-2xl shadow-sm border p-6 text-center text-sm text-gray-400">
           Nothing to do right now.
@@ -3659,6 +3659,7 @@ export default function MePage() {
           <TodoTab
             myReview={myReview} onReviewChanged={setMyReview} focusReview={focusReview}
             myPolicies={myPolicies} focusPolicies={focusPolicies}
+            onPoliciesChanged={async () => { const r = await fetchMyPolicies(); if (r) setMyPolicies(r); }}
             nudges={myNudges}
             inductions={myInductions}
             onOpenNudge={(sub, section) => { setTrainingTarget((t) => ({ sub, section, n: (t?.n || 0) + 1 })); setTab("training"); }}

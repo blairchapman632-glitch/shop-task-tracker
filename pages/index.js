@@ -1250,6 +1250,12 @@ export default function HomePage() {
 
   // Policy reads as Today's Jobs: projected from policy_read_requests (no task rows, no completions, no leaderboard).
   // Outstanding requests for ACTIVE staff rostered on today, on active documents. Cancelled/read ones never show.
+  // Re-checked every minute so a policy ticked on someone's phone (/me) drops off the kiosk.
+  const [policyTick, setPolicyTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setPolicyTick((n) => n + 1), 60000);
+    return () => clearInterval(t);
+  }, []);
   useEffect(() => {
     if (!currentPharmacyId) return;
     const activeIds = new Set(staff.map((st) => Number(st.id)));
@@ -1269,7 +1275,7 @@ export default function HomePage() {
         setPolicyJobs((data || []).filter((r) => r.document && r.document.active !== false && !r.induction_id));
       });
     return () => { cancelled = true; };
-  }, [todayRosteredIds, currentPharmacyId, staff]);
+  }, [todayRosteredIds, currentPharmacyId, staff, policyTick]);
 
   // Induction card: one per rostered-on staff member with an in-progress induction and at least one policy still to read.
   // Same rules as policy cards (no task rows, not in the progress count, no leaderboard).

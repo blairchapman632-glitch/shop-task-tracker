@@ -1,7 +1,8 @@
-// Policies to read on /me (staff side) — READ-ONLY. Staff read and tick policies on the kiosk (Today's Jobs, or
-// QSPP Library → Policies to read); opening files on iPhone stalls, so /me only lists them.
-// Data comes from pages/api/policies/mine (own requests only, Supabase access token).
-// (pages/api/policies/acknowledge still exists but /me no longer calls it.)
+// Policies to read on /me (staff side): Open (the staff PDF only — never the master) + "I have read and understood",
+// same rules as the kiosk (no PDF yet = "Not available yet", tick greyed out; opening first isn't required).
+// Data: pages/api/policies/mine; tick: pages/api/policies/acknowledge (own requests only, Supabase access token).
+// Open is a plain link to the PDF in a new tab — on iPhone home-screen apps that opens Safari's viewer with "Done" back to
+// the app; Android opens a Chrome tab. (No blob / iframe: those stall or show blank on iOS.)
 import { useEffect, useRef, useState } from "react";
 import { callMeApi } from "./MyReview";
 import { perthDateOf, fmtDateShort } from "../lib/performanceReview";
@@ -33,15 +34,30 @@ export function MyPoliciesBanner({ data, onOpen }) {
       onClick={onOpen}
       className="w-full max-w-lg mx-auto mb-4 block text-left rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800"
     >
-      📄 You have {n} {n === 1 ? "policy" : "policies"} to read — find {n === 1 ? "it" : "them"} in Today's Jobs on the kiosk.
+      📄 You have {n} {n === 1 ? "policy" : "policies"} to read — tap to read {n === 1 ? "it" : "them"}.
     </button>
   );
 }
 
-// To do tab section (read-only)
-export function MyPoliciesSection({ data, focus }) {
+// To do tab section. onChanged() reloads the list after a tick.
+export function MyPoliciesSection({ data, focus, onChanged }) {
   const ref = useRef(null);
   const [showAllRead, setShowAllRead] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  const acknowledge = async (p) => {
+    setBusyId(p.id);
+    setError("");
+    try {
+      await callMeApi("/api/policies/acknowledge", { id: p.id });
+    } catch (err) {
+      // e.g. already ticked on the kiosk — the reload below clears it either way
+      setError(err?.message || String(err));
+    }
+    await onChanged?.();
+    setBusyId(null);
+  };
   useEffect(() => {
     if (focus && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [focus]);
@@ -58,14 +74,29 @@ export function MyPoliciesSection({ data, focus }) {
         {data.outstanding.length === 0 ? (
           <p className="text-sm text-gray-500 mt-1">✓ You're all caught up.</p>
         ) : (
-          <>
-            <ul className="mt-1.5 divide-y">
-              {data.outstanding.map((p) => (
-                <li key={p.id} className="py-1.5 text-sm text-gray-700 break-words">{p.title}</li>
-              ))}
-            </ul>
-            <p className="text-xs text-gray-400 mt-1">Read and tick these on the kiosk — they're in Today's Jobs when you're rostered on.</p>
-          </>
+          <div className="mt-2 space-y-2">
+            {data.outstanding.map((p) => (
+              <div key={p.id} className="rounded-xl border border-gray-200 px-3.5 py-3 space-y-2">
+                <div className="text-sm font-medium text-gray-800 break-words">{displayTitle(p.title)}</div>
+                <div className="flex gap-2">
+                  {p.pdf_url ? (
+                    <a href={p.pdf_url} target="_blank" rel="noopener noreferrer"
+                      className="flex-1 text-center border border-gray-300 rounded-lg py-2.5 text-sm text-gray-700 active:bg-gray-50">
+                      Open
+                    </a>
+                  ) : (
+                    <span className="flex-1 text-center border border-gray-200 rounded-lg py-2.5 text-sm text-gray-400 bg-gray-50">Not available yet</span>
+                  )}
+                  <button type="button" onClick={() => acknowledge(p)} disabled={!!busyId || !p.pdf_url}
+                    className="flex-[2] bg-blue-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
+                    {busyId === p.id ? "Saving…" : "I have read and understood"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {error && <p className="text-sm text-red-500">{error}</p>}
+            <p className="text-xs text-gray-400">Open shows the policy. On iPhone, tap Done (top left) to come back here.</p>
+          </div>
         )}
       </div>
       {data.read.length > 0 && (

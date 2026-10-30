@@ -1,6 +1,7 @@
-// POST (Authorization: Bearer <Supabase access token>) { id }
+// POST (Authorization: Bearer <Supabase access token>) { id }  — called by /me (components/MyPolicies.js)
 // Records "I have read and understood" on the logged-in staff member's own outstanding request:
-// read_at, read_via = 'phone', and a snapshot of the file version (name + URL) they read.
+// read_at, read_via = 'phone', and a snapshot of the staff PDF (name + URL) they read. Same record as the kiosk, so it
+// clears everywhere (kiosk card, Admin results, Training tab, Needs attention, induction line).
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { staffFromRequest, fail } from "../../../lib/reviewServer";
 import { tickInductionLine } from "../../../lib/policyReads";
@@ -20,6 +21,8 @@ export default async function handler(req, res) {
     // Someone else's request looks the same as a missing one
     if (!request || Number(request.staff_id) !== Number(staff.id)) return res.status(404).json({ error: "Policy not found" });
     if (request.status !== "outstanding") return res.status(409).json({ error: "This policy is no longer waiting to be read." });
+    // Same as the kiosk: can't confirm reading a policy that has no staff PDF to open yet
+    if (!request.document?.pdf_url) return res.status(409).json({ error: "This policy isn't available to read yet." });
 
     const { data: updated, error: upErr } = await db.from("policy_read_requests").update({
       status: "read",
