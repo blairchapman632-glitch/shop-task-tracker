@@ -1,12 +1,16 @@
-// Tasks → Checklists: the tasks with a checklist, then per task Items, Suppliers, Settings (owner), History.
+// Tasks → Checklists: the tasks with a checklist ("+ New checklist" makes one), then per task:
+//   Stock count (checklist_type 'consumables'): Items, Suppliers, Settings (owner), History (this file)
+//   Tick list ('ticklist'): Lines, History (components/TicklistAdmin.js)
 // The owner ticks "owner to order" lines as ordered from a month's sheet here (also opened from the push notification:
 // /tasks?tab=checklists&sheet=<id>). Who ticked = the staff member who unlocked the Tasks page with their PIN.
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { fmtDateShort, perthDateOf } from "../lib/performanceReview";
-import { SUPPLIER_TYPES, RESULT_LABEL, RESULT_STYLE, fmtReorder, checklistTypeLabel, groupedRows, displayOrder, nameInGroup, groupSupplier, isOpenOrder, openOrderCount, sheetStatusLabel, withDetails, lineDetails } from "../lib/consumables";
+import { SUPPLIER_TYPES, RESULT_LABEL, RESULT_STYLE, fmtReorder, checklistTypeLabel, CHECKLIST_TYPES, isTicklistChecklist, groupedRows, displayOrder, nameInGroup, groupSupplier, isOpenOrder, openOrderCount, sheetStatusLabel, withDetails, lineDetails } from "../lib/consumables";
 import OrderLines from "./OrderLines";
 import { fetchAllRows } from "../lib/trainingPlan";
+import { LAST_DAY } from "../lib/taskPeriods";
+import TicklistAdmin from "./TicklistAdmin";
 
 const inputCls = "w-full rounded border border-gray-300 px-2 py-1.5 text-sm";
 const monthName = (d) => new Date(`${String(d).slice(0, 7)}-01T00:00:00`).toLocaleDateString("en-AU", { month: "long", year: "numeric" });
@@ -16,18 +20,19 @@ const statusStyle = (sheet, lines) => (sheet.status === "completed" && !openOrde
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // Tasks → Checklists. Opens with the tasks that have a checklist (tasks.checklist_type — set in Recurring tasks);
-// pick one for its Items / Suppliers / Settings / History. Items, suppliers and the owner are pharmacy-wide (shared by
-// every consumables checklist task); History is per task.
-export default function ConsumablesAdmin({ pharmacyId, staffOptions, tasks, pinStaffId, initialSheetId }) {
+// pick one for its Items / Suppliers / Settings / History. Items and History are per task (consumable_items.task_id);
+// suppliers and the owner are pharmacy-wide (shared by every consumables checklist task).
+export default function ConsumablesAdmin({ pharmacyId, staffOptions, tasks, pinStaffId, initialSheetId, onTasksChanged }) {
   const checklistTasks = (tasks || []).filter((t) => t.checklist_type);
   const [taskId, setTaskId] = useState(null);
   const [view, setView] = useState(initialSheetId ? "history" : "items");
   const [suppliers, setSuppliers] = useState([]);
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState([]); // every task's items (a supplier used by any of them can't be deleted)
   const [used, setUsed] = useState({ items: new Set(), suppliers: new Set() }); // on a sheet at least once
   const [settings, setSettings] = useState({ consumables_owner_staff_id: null });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false); // "+ New checklist" form open
 
   const load = async () => {
     const [sp, it, st, lines] = await Promise.all([
@@ -69,20 +74,29 @@ export default function ConsumablesAdmin({ pharmacyId, staffOptions, tasks, pinS
   if (loading) return <div className="text-sm text-gray-400 py-8 text-center">Loading…</div>;
 
   const task = checklistTasks.find((t) => Number(t.id) === Number(taskId));
+  const taskItems = task ? items.filter((it) => Number(it.task_id) === Number(task.id)) : [];
   if (!task) {
     return (
       <div className="bg-white rounded-xl border overflow-hidden">
-        <div className="px-4 py-3 border-b">
-          <div className="text-sm font-semibold text-gray-700">Checklists</div>
-          <div className="text-xs text-gray-400">Tasks with a checklist. Add one by ticking "Checklist" on a task in Recurring tasks.</div>
+        <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-gray-700">Checklists</div>
+            <div className="text-xs text-gray-400">Recurring tasks whose kiosk card opens a checklist. You can also tick "Checklist" on a task in Recurring tasks.</div>
+          </div>
+          <button onClick={() => setCreating(true)} className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg shrink-0">+ New checklist</button>
         </div>
+        {creating && (
+          <NewChecklist pharmacyId={pharmacyId} staffOptions={staffOptions} pinStaffId={pinStaffId}
+            onCancel={() => setCreating(false)}
+            onCreated={async (id) => { setCreating(false); await onTasksChanged?.(); setView("items"); setTaskId(id); }} />
+        )}
         {error && <p className="px-4 py-2 text-sm text-red-500">{error}</p>}
         {checklistTasks.length === 0 ? (
           <div className="px-4 py-6 text-sm text-gray-400 text-center">No tasks have a checklist yet.</div>
         ) : checklistTasks.map((t) => (
           <button key={t.id} onClick={() => setTaskId(t.id)} className="w-full text-left px-4 py-3 border-t hover:bg-gray-50 flex items-center justify-between">
             <span>
-              <span className="text-sm font-medium text-gray-800">🧾 {t.title}</span>
+              <span className="text-sm font-medium text-gray-800">{isTicklistChecklist(t) ? "☑️" : "🧾"} {t.title}</span>
               <span className="block text-xs text-gray-400">{checklistTypeLabel(t.checklist_type)}{t.active === false ? " · task inactive" : ""}</span>
             </span>
             <span className="text-gray-400">›</span>
@@ -92,13 +106,25 @@ export default function ConsumablesAdmin({ pharmacyId, staffOptions, tasks, pinS
     );
   }
 
+  const header = (
+    <div className="flex items-center gap-3">
+      <button onClick={() => setTaskId(null)} className="text-sm text-blue-600">‹ Checklists</button>
+      <div className="text-sm font-semibold text-gray-800">{isTicklistChecklist(task) ? "☑️" : "🧾"} {task.title}</div>
+      <span className="text-xs text-gray-400">{checklistTypeLabel(task.checklist_type)}</span>
+    </div>
+  );
+  if (isTicklistChecklist(task)) {
+    return (
+      <div className="space-y-4">
+        {header}
+        <TicklistAdmin key={task.id} pharmacyId={pharmacyId} task={task} nameOf={nameOf} initialSheetId={initialSheetId} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <button onClick={() => setTaskId(null)} className="text-sm text-blue-600">‹ Checklists</button>
-        <div className="text-sm font-semibold text-gray-800">🧾 {task.title}</div>
-        <span className="text-xs text-gray-400">{checklistTypeLabel(task.checklist_type)}</span>
-      </div>
+      {header}
       {error && <p className="text-sm text-red-500">{error}</p>}
 
       <div className="flex gap-1">
@@ -122,10 +148,125 @@ export default function ConsumablesAdmin({ pharmacyId, staffOptions, tasks, pinS
         </div>
       )}
       {view === "suppliers" && <Suppliers pharmacyId={pharmacyId} suppliers={suppliers} items={items} used={used.suppliers} onChanged={load} />}
-      {view === "items" && <Items pharmacyId={pharmacyId} items={items} suppliers={suppliers} ownerName={ownerName} used={used.items} onChanged={load} />}
+      {view === "items" && <Items pharmacyId={pharmacyId} taskId={task.id} items={taskItems} suppliers={suppliers} ownerName={ownerName} used={used.items} onChanged={load} />}
       {view === "history" && (
-        <History pharmacyId={pharmacyId} taskId={task.id} items={items} nameOf={nameOf} ownerName={ownerName} ownerStaffId={settings.consumables_owner_staff_id} pinStaffId={pinStaffId} initialSheetId={initialSheetId} />
+        <History pharmacyId={pharmacyId} taskId={task.id} items={taskItems} nameOf={nameOf} ownerName={ownerName} ownerStaffId={settings.consumables_owner_staff_id} pinStaffId={pinStaffId} initialSheetId={initialSheetId} />
       )}
+    </div>
+  );
+}
+
+// ─── + New checklist ─────────────────────────────────────────────────────────
+// Creates the recurring monthly On the List task with its checklist set (same fields as Recurring tasks), then opens
+// its Lines / Items setup. Monthly only — a checklist keeps one sheet per month.
+const ROLES = ["Pharmacist", "Intern Pharmacist", "Pharmacy Assistant", "DAA Coordinator", "Retail Manager"];
+const ordinal = (n) => `${n}${[11, 12, 13].includes(n % 100) ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`;
+function NewChecklist({ pharmacyId, staffOptions, pinStaffId, onCancel, onCreated }) {
+  const [form, setForm] = useState({ title: "", checklist_type: CHECKLIST_TYPES[0].key, show_from: "", assign_type: "anyone", assigned_staff_id: "", assigned_role: "", assigned_staff_ids: [], points: 1 });
+  const [saving, setSaving] = useState(false);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  const save = async () => {
+    if (!form.title.trim()) { alert("Enter the checklist name."); return; }
+    if (form.assign_type === "person" && !form.assigned_staff_id) { alert("Pick the person it's assigned to."); return; }
+    if (form.assign_type === "role" && !form.assigned_role) { alert("Pick the role it's assigned to."); return; }
+    if (form.assign_type === "multiple" && !form.assigned_staff_ids.length) { alert("Tick at least one person."); return; }
+    setSaving(true);
+    const { data, error } = await supabase.from("tasks").insert([{
+      pharmacy_id: pharmacyId,
+      title: form.title.trim(),
+      task_type: "on_the_list",
+      frequency: "monthly_anytime",
+      // "Show from day": 1–31, 0 = last day of the month, null = from the 1st (as in Recurring tasks)
+      day_of_month: form.show_from === "last" ? LAST_DAY : form.show_from ? Number(form.show_from) : null,
+      days_of_week: [],
+      points: Number(form.points) || 1,
+      active: true,
+      rollover: false,
+      show_next_shift: false,
+      checklist_type: form.checklist_type,
+      assigned_staff_id: form.assign_type === "person" ? Number(form.assigned_staff_id) : null,
+      assigned_role: form.assign_type === "role" ? form.assigned_role : null,
+      assigned_staff_ids: form.assign_type === "multiple" ? form.assigned_staff_ids : [],
+      created_by_staff_id: pinStaffId ? Number(pinStaffId) : null,
+    }]).select("id").single();
+    setSaving(false);
+    if (error) { alert("Couldn't create the checklist: " + error.message); return; }
+    onCreated(data.id);
+  };
+
+  return (
+    <div className="px-4 py-4 bg-blue-50 border-b space-y-3">
+      <div className="text-sm font-semibold text-gray-700">New checklist</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Name</label>
+          <input value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. Pharmacy Claims" className={inputCls} autoFocus />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Type</label>
+          <select value={form.checklist_type} onChange={(e) => set({ checklist_type: e.target.value })} className={inputCls}>
+            {CHECKLIST_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+          </select>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            {form.checklist_type === "ticklist" ? "Each line is ticked Done or Not required this month." : "Count stock against reorder points (its own items; suppliers are shared)."}
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Frequency</label>
+          <select value="monthly_anytime" disabled className={`${inputCls} bg-gray-50`}><option value="monthly_anytime">Monthly</option></select>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Show from day (optional)</label>
+          <select value={form.show_from} onChange={(e) => set({ show_from: e.target.value })} className={inputCls}>
+            <option value="">From the 1st</option>
+            {Array.from({ length: 30 }, (_, i) => i + 2).map((d) => <option key={d} value={d}>From the {ordinal(d)}</option>)}
+            <option value="last">Last day of the month</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Assign to</label>
+          <select value={form.assign_type} onChange={(e) => set({ assign_type: e.target.value, assigned_staff_id: "", assigned_role: "", assigned_staff_ids: [] })} className={inputCls}>
+            <option value="anyone">Anyone</option>
+            <option value="person">Specific person</option>
+            <option value="role">Role</option>
+            <option value="multiple">Multiple people</option>
+          </select>
+          {form.assign_type === "person" && (
+            <select value={form.assigned_staff_id} onChange={(e) => set({ assigned_staff_id: e.target.value })} className={`${inputCls} mt-1.5`}>
+              <option value="">Select staff member</option>
+              {staffOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          )}
+          {form.assign_type === "role" && (
+            <select value={form.assigned_role} onChange={(e) => set({ assigned_role: e.target.value })} className={`${inputCls} mt-1.5`}>
+              <option value="">Select role</option>
+              {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          )}
+          {form.assign_type === "multiple" && (
+            <div className="mt-1.5 space-y-1 max-h-40 overflow-y-auto border rounded bg-white p-2">
+              {staffOptions.map((s) => {
+                const on = form.assigned_staff_ids.includes(s.id);
+                return (
+                  <label key={s.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={on} onChange={() => set({ assigned_staff_ids: on ? form.assigned_staff_ids.filter((x) => x !== s.id) : [...form.assigned_staff_ids, s.id] })} />
+                    {s.name}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Points</label>
+          <input type="number" min={0} value={form.points} onChange={(e) => set({ points: e.target.value })} className="w-24 rounded border border-gray-300 px-2 py-1.5 text-sm" />
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className="px-3 py-1.5 text-xs border rounded bg-white">Cancel</button>
+        <button onClick={save} disabled={saving} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded disabled:opacity-50">{saving ? "Creating…" : "Create checklist"}</button>
+      </div>
     </div>
   );
 }
@@ -234,7 +375,7 @@ function Suppliers({ pharmacyId, suppliers, items, used, onChanged }) {
 }
 
 // ─── Items ───────────────────────────────────────────────────────────────────
-function Items({ pharmacyId, items, suppliers, ownerName, used, onChanged }) {
+function Items({ pharmacyId, taskId, items, suppliers, ownerName, used, onChanged }) {
   const blank = { name: "", item_group: "", supplier_id: "", check_only: false, reorder_qty: "", reorder_unit: "", delivery_time: "", owner_to_order: false, ask_details: false, ask_question: "", active: true };
   const display = displayOrder(items); // grouped items kept together (▲▼ moves within this order)
   const groupNames = [...new Set(items.map((it) => String(it.item_group || "").trim()).filter(Boolean))];
@@ -258,7 +399,7 @@ function Items({ pharmacyId, items, suppliers, ownerName, used, onChanged }) {
       ask_details: !!form.ask_details, ask_question: form.ask_details ? String(form.ask_question).trim() : null,
     };
     const { error } = editing === "new"
-      ? await supabase.from("consumable_items").insert([{ ...row, pharmacy_id: pharmacyId, sort_order: (items.length + 1) * 10 }])
+      ? await supabase.from("consumable_items").insert([{ ...row, pharmacy_id: pharmacyId, task_id: Number(taskId), sort_order: (items.length + 1) * 10 }])
       : await supabase.from("consumable_items").update(row).eq("id", editing);
     if (error) { alert("Couldn't save: " + error.message); return; }
     setEditing(null);
@@ -318,7 +459,7 @@ function Items({ pharmacyId, items, suppliers, ownerName, used, onChanged }) {
       <div className="px-4 py-3 border-b flex items-center justify-between">
         <div>
           <div className="text-sm font-semibold text-gray-700">Items</div>
-          <div className="text-xs text-gray-400">Shown on the checklist in this order. Changes apply to new months — past sheets keep what they had.</div>
+          <div className="text-xs text-gray-400">This checklist's own items, shown in this order. Changes apply to new months — past sheets keep what they had.</div>
         </div>
         <button onClick={() => startEdit(null)} className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg">+ Item</button>
       </div>

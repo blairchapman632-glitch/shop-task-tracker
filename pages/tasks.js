@@ -771,6 +771,7 @@ const handleAutoBalance = async (staffId, staffName) => {
               tasks={tasks}
               pinStaffId={pinStaffId}
               initialSheetId={initialSheetId}
+              onTasksChanged={refreshTasks}
             />
           ) : activeTab === "sections" ? (
             <div className="space-y-4">
@@ -1340,7 +1341,7 @@ const handleAutoBalance = async (staffId, staffName) => {
                       >
                         {CHECKLIST_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
                       </select>
-                      <p className="text-[11px] text-gray-400 mt-1">Tapping the card on the kiosk opens the checklist. Set up its items in the Checklists tab.</p>
+                      <p className="text-[11px] text-gray-400 mt-1">Tapping the card on the kiosk opens the checklist. Set up its lines (tick list) or items (stock count) in the Checklists tab.</p>
                     </div>
                   )}
                 </div>

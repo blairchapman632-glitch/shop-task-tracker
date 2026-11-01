@@ -417,20 +417,22 @@ export default function InsightsPage() {
 
     const rows = [];
     const scheduled = tasks.filter(
-      (t) => t.task_type === "on_the_list" && t.active !== false && (t.frequency === "weekly" || t.frequency === "monthly_anytime" || t.frequency === "monthly")
+      // Inactive tasks too — they only show for the period they had completions / skips (filtered below)
+      (t) => t.task_type === "on_the_list" && (t.frequency === "weekly" || t.frequency === "monthly_anytime" || t.frequency === "monthly")
     );
 
     for (const t of scheduled) {
       const isWeekly = t.frequency === "weekly";
       // Show-from monthly tasks: this month only counts once its show-from day has arrived
-      const buckets = isWeekly ? expectedWeeks
+      const periodBuckets = isWeekly ? expectedWeeks
         : hasShowFrom(t) ? expectedMonths.filter((ym) => showFromDate(t, ym) <= endDate)
         : expectedMonths;
 
       // Completions for this task in the period (from completions table). Monthly: the month it counts for —
       // period_start if set (a carried-over month done in the next month), else the Perth month it was done.
-      // Checklist tasks (Consumables): a month is done only when its sheet is counted AND every Order / Owner line is
-      // closed (Ordered or Not ordering) — the completion row alone isn't enough. (Points still come with the count.)
+      // Checklist tasks: a month is done when its sheet is completed — a tick list completes once every line is Done
+      // or Not required; a stock count also needs every Order / Owner line closed (Ordered or Not ordering) — the
+      // completion row alone isn't enough. (Points still come with the count.)
       const doneBuckets = t.checklist_type
         ? new Set(checklistDone.sheets
           .filter((sh) => Number(sh.task_id) === Number(t.id) && !checklistDone.openSheetIds.includes(sh.id))
@@ -445,6 +447,18 @@ export default function InsightsPage() {
       const skipBuckets = isWeekly ? new Set() : new Set(
         monthSkips.filter((k) => Number(k.task_id) === Number(t.id)).map((k) => String(k.month).slice(0, 7))
       );
+
+      // Weeks / months before the task existed don't count: from the week / month it was created — or its first
+      // completion or skip, if earlier (some tasks were re-created after they'd been in use).
+      // An inactive task counts only up to its last completion or skip (there's no record of when it was switched
+      // off), and drops out if it had none in the period.
+      const activity = [...doneBuckets, ...skipBuckets].filter((b) => periodBuckets.includes(b)).sort();
+      const createdKey = t.created_at ? (isWeekly ? weekKey(t.created_at) : monthKey(t.created_at)) : "";
+      const firstKey = [createdKey, activity[0]].filter(Boolean).sort()[0] || "";
+      const lastKey = activity[activity.length - 1];
+      if (t.active === false && !lastKey) continue;
+      const buckets = periodBuckets.filter((b) => b >= firstKey && (t.active !== false || b <= lastKey));
+      if (!buckets.length) continue;
 
       const expected = buckets.length;
       const done = buckets.filter((b) => doneBuckets.has(b)).length;
@@ -781,7 +795,10 @@ export default function InsightsPage() {
                         <tbody>
                           {scheduleCompliance.map((r, i) => (
                             <tr key={i} className={`border-t hover:bg-gray-50 ${r.missed > 0 ? "bg-red-50" : ""}`}>
-                              <td className="px-4 py-2 font-medium text-gray-800">{r.task.title}</td>
+                              <td className="px-4 py-2 font-medium text-gray-800">
+                                {r.task.title}
+                                {r.task.active === false && <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Inactive</span>}
+                              </td>
                               <td className="px-4 py-2 text-gray-500">{r.assignedTo}</td>
                               <td className="px-4 py-2"><span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{r.cadence}</span></td>
                               <td className="px-4 py-2 text-gray-600">{r.expected}</td>

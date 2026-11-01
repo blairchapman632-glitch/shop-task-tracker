@@ -1,5 +1,34 @@
 # Session notes
 
+## 2026-11-01 — Tick-list checklists, Pharmacy Claims, per-checklist stock items, Missing documents, training record edit
+
+### Done
+- **Admin training records** (`e80758d`): edit topic/date/hours/provider inline + attach/replace certificate; 📄 Certificate / No certificate on each row.
+- **Needs attention → Missing documents** (`faf5caa`): employment contract / induction checklist, one line per person; "No contract required" + "No induction required" ticks; paper induction tick removed (an uploaded checklist counts); "Induction not started" for Chalkboard new starters.
+- **Each stock count has its own items**: `consumable_items.task_id` (all existing → task 116); Checklists → Items, the kiosk sheet and History use that checklist's items only. Suppliers + "owner to order" stay shared.
+- **Tick-list checklists** (type "Tick list"; consumables now labelled "Stock count"): Checklists → [checklist] → Lines (name, note, ▲▼, active; delete only if never used) and History by month ("In progress — N of M" / Complete, each line ✓ Done / — Not required · name · date, Print). Kiosk sheet: Done / Not required this month per line, who + when, tap again to clear, saves as you go; anyone can answer; completes (points, Activity) when the last line is answered — answers can still be switched (not cleared) before closing. Show-from, overdue, carry-over and "Nothing this month" as other monthly tasks.
+- **"+ New checklist"** on the Checklists tab: name, type, Monthly, show-from day, assigned to, points → creates the recurring task and opens its Lines / Items. Recurring tasks "Checklist" tick + type picker still works.
+- **Pharmacy Claims** (task 119): monthly tick list (DAA Claim, IDAA Claim, Staged Supply Claim, Naloxone, Pharma Programs Claim), same assignment/points as DAA Claim. The 5 separate tasks switched off (inactive). PBS Claim 1 / 2 untouched.
+- **Insights Schedule Compliance**: months/weeks before a task existed no longer count as missed (from its created date, or first completion/skip if earlier); inactive tasks show (marked Inactive) up to their last completion/skip in the period. (The 5 old claim tasks had no completions or skips, so they don't appear.)
+
+### Schema changes (all run by Blair)
+- `staff.contract_not_required`, `staff.induction_not_required` (`paper_induction_on_file` now unused).
+- `2026-11-01_consumable_items_per_task.sql`: `consumable_items.task_id` (+ index), existing items → 116 (backup `consumable_items_backup_20261101`).
+- `2026-11-01_ticklist_checklists.sql`: `tasks.checklist_type` allows 'ticklist'; new `checklist_task_lines`; `checklist_lines.task_line_id`, `line_note`, `answer`.
+- `2026-11-01_pharmacy_claims.sql`: Pharmacy Claims task + 5 lines; 5 claim tasks inactive (backup `tasks_claims_backup_20261101`); unique index `checklist_lines_one_per_task_line`.
+
+### New tables (add to RLS pass)
+- `checklist_task_lines`.
+
+### Follow-ups / parked
+- "+ New checklist" offers Monthly only (sheets are one per month) — weekly checklists would need per-week sheets.
+- A tick list's 3 points go to whoever answers the last line.
+- Out of scope (designed for later): number/reading checklists (fridge temps), per-checklist owner-to-order, per-line assignment.
+- Backups to drop once happy: `consumable_items_backup_20261101`, `tasks_claims_backup_20261101` (plus those listed below).
+
+### Not committed
+- Nothing.
+
 ## 2026-10-28 → 11-01 — QSPP: staff PDFs, /me policies, one /qspp area, feedback, other training
 
 ### Done

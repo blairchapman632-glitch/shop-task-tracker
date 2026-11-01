@@ -6,7 +6,8 @@ import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import ConsumablesSheet from "../components/ConsumablesSheet";
-import { loadConsumablesSettings, isConsumablesChecklist, ORDER_LINE_COLUMNS } from "../lib/consumables";
+import TicklistSheet from "../components/TicklistSheet";
+import { loadConsumablesSettings, isTicklistChecklist, ORDER_LINE_COLUMNS } from "../lib/consumables";
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
 import { fmtDateShort, perthDateOf, todayPerth, addMonthsStr, addDaysStr } from "../lib/performanceReview";
 import OrderLines from "../components/OrderLines";
@@ -675,7 +676,7 @@ export default function HomePage() {
   // (this month once its day arrives, plus last month if it was missed — carried over in red)
   const [monthCards, setMonthCards] = useState({});
   const [consumablesSettings, setConsumablesSettings] = useState({ ownerStaffId: null });
-  const [checklistOpen, setChecklistOpen] = useState(null); // { task, period, periodMonth } — Consumables sheet open
+  const [checklistOpen, setChecklistOpen] = useState(null); // { task, period, periodMonth } — a checklist sheet open (stock count or tick list)
 
   useEffect(() => {
     if (!currentPharmacyId) return;
@@ -1491,8 +1492,8 @@ export default function HomePage() {
   const handleTaskTap = async (task) => {
     try {
       if (infoOpenId) { setInfoOpenId(null); return; }
-      // The Consumables Checklist task opens its sheet — it's completed from the sheet, not by tapping the card
-      if (isConsumablesTask(task)) { openChecklist(task, null); return; }
+      // A checklist task (stock count / tick list) opens its sheet — it's completed from the sheet, not by tapping the card
+      if (isChecklistTask(task)) { openChecklist(task, null); return; }
       if (completedTaskIds.has(task.id)) {
         const ok = window.confirm(`Undo completion for "${task.title}" today?`);
         if (!ok) return;
@@ -1557,8 +1558,9 @@ export default function HomePage() {
     else setTasks((prev) => prev.filter((t) => t.id !== task.id));
   };
 
-  // ── Consumables Checklist (tasks with checklist_type 'consumables'; sheet in components/ConsumablesSheet.js) ──
-  const isConsumablesTask = (task) => isConsumablesChecklist(task);
+  // ── Checklist tasks (tasks.checklist_type): 'consumables' = stock count (components/ConsumablesSheet.js),
+  // 'ticklist' = tick list (components/TicklistSheet.js). Both complete the task from the sheet, for the sheet's month.
+  const isChecklistTask = (task) => !!task?.checklist_type;
   const openChecklist = (task, period) => {
     if (!selectedStaffId) { alert("Tap your photo first, then tap the checklist."); return; }
     setChecklistOpen({ task, period, periodMonth: period ? period.start : perthMonthStart() });
@@ -1587,7 +1589,7 @@ export default function HomePage() {
   // completions has no one-per-day rule (checked 26/10/2026), so both cards can be done on the same day.
   const handleMonthCardTap = async (task, period) => {
     if (infoOpenId) { setInfoOpenId(null); return; }
-    if (isConsumablesTask(task)) { openChecklist(task, period); return; } // a carried-over month opens that month's sheet
+    if (isChecklistTask(task)) { openChecklist(task, period); return; } // a carried-over month opens that month's sheet
     if (!selectedStaffId) { alert("Tap your photo first, then tap the task."); return; }
     const { error } = await supabase.from("completions").insert([{
       task_id: Number(task.id),
@@ -2218,8 +2220,8 @@ const handleDeliveryTap = async (d) => {
                               {assignedStaff && !task.assigned_role && !(task.assigned_staff_ids?.length > 0) && (
                                 <div className="text-xs text-blue-600 font-medium mb-1">👤 {assignedStaff.name}</div>
                               )}
-                              {isConsumablesTask(task) && (
-                                <div className="text-[11px] text-blue-700 mb-1">🧾 Tap to open the checklist</div>
+                              {isChecklistTask(task) && (
+                                <div className="text-[11px] text-blue-700 mb-1">{isTicklistChecklist(task) ? "☑️" : "🧾"} Tap to open the checklist</div>
                               )}
                               {task.info && (
                                 <div className="text-xs text-gray-500 leading-snug mb-1 truncate">{task.info}</div>
@@ -3104,8 +3106,22 @@ const handleDeliveryTap = async (d) => {
         />
       )}
 
-      {/* Consumables Checklist sheet */}
-      {checklistOpen && (
+      {/* Tick-list checklist sheet */}
+      {checklistOpen && isTicklistChecklist(checklistOpen.task) && (
+        <TicklistSheet
+          task={checklistOpen.task}
+          periodMonth={checklistOpen.periodMonth}
+          staffId={selectedStaffId}
+          staffName={selectedStaffName}
+          nameOf={(id) => (id ? staffById[id]?.name || "" : "")}
+          pharmacyId={currentPharmacyId}
+          onClose={() => setChecklistOpen(null)}
+          onCompleted={onChecklistCompleted}
+        />
+      )}
+
+      {/* Consumables (stock count) checklist sheet */}
+      {checklistOpen && !isTicklistChecklist(checklistOpen.task) && (
         <ConsumablesSheet
           task={checklistOpen.task}
           periodMonth={checklistOpen.periodMonth}
