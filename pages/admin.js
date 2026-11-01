@@ -338,6 +338,49 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     }
   };
 
+  // Edit a record inline (updates the same row; pharmacy_id unchanged). A certificate is attached / replaced through
+  // the private training-certificates route (attachTrainingCert), which removes the replaced file.
+  const [editTr, setEditTr] = useState(null); // { id, topic, date, hours, provider, file }
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editTrError, setEditTrError] = useState("");
+  const startEditTraining = (r) => {
+    setEditTrError("");
+    setEditTr({ id: r.id, topic: r.topic || "", date: r.training_date || "", hours: r.hours ?? "", provider: r.provider || "", file: null });
+  };
+  const handleSaveTraining = async () => {
+    if (!editTr) return;
+    setEditTrError("");
+    if (!editTr.topic.trim()) { setEditTrError("Topic is required."); return; }
+    if (!editTr.date) { setEditTrError("Date is required."); return; }
+    if (editTr.hours === "" || isNaN(Number(editTr.hours))) { setEditTrError("Hours is required."); return; }
+    setSavingEdit(true);
+    try {
+      const { data: updated, error: upErr } = await supabase.from("training_records").update({
+        topic: editTr.topic.trim(),
+        training_date: editTr.date,
+        hours: Number(editTr.hours),
+        provider: editTr.provider.trim() || null,
+      }).eq("id", editTr.id).select().single();
+      if (upErr) throw upErr;
+      let rec = updated;
+      let certErr = null;
+      if (editTr.file) {
+        try { rec = await attachTrainingCert(updated, editTr.file); } catch (e) { certErr = e; }
+      }
+      setTraining((prev) => prev.map((r) => (r.id === rec.id ? rec : r)).sort((a, b) => b.training_date.localeCompare(a.training_date)));
+      if (certErr) {
+        setEditTr((e) => ({ ...e, file: null }));
+        setEditTrError("Saved, but the certificate didn't upload: " + (certErr?.message || String(certErr)));
+      } else {
+        setEditTr(null);
+      }
+    } catch (err) {
+      setEditTrError("Couldn't save: " + (err?.message || String(err)));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const handleDeleteTraining = async (rec) => {
     if (!window.confirm("Delete this training record?")) return;
     try {
@@ -1145,7 +1188,56 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                 <p className="text-xs text-gray-400">No training recorded yet.</p>
               ) : (
                 <div className="space-y-1.5">
-                  {training.map((r) => (
+                  {training.map((r) => (editTr?.id === r.id ? (
+                    // Inline edit — same fields as "Add training record"; certificate attach / replace
+                    <div key={r.id} className="border border-blue-200 rounded-lg p-3 bg-blue-50/40 space-y-3">
+                      <div className="text-xs font-semibold text-gray-600">Edit training record</div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Topic *</label>
+                        <input value={editTr.topic} onChange={(e) => setEditTr({ ...editTr, topic: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+                          <input type="date" value={editTr.date} onChange={(e) => setEditTr({ ...editTr, date: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Hours *</label>
+                          <input type="text" inputMode="decimal" value={editTr.hours} onChange={(e) => setEditTr({ ...editTr, hours: e.target.value.replace(/[^\d.]/g, "") })} className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Training Provider</label>
+                        <input value={editTr.provider} onChange={(e) => setEditTr({ ...editTr, provider: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Certificate</label>
+                        {recordHasCert(r) && (
+                          <div className="flex items-center gap-2 mb-1.5 text-sm">
+                            <span className="text-green-600">✓</span>
+                            <button type="button" onClick={() => openTrainingCert(r)} className="text-blue-600 hover:underline truncate min-w-0">
+                              {r.certificate_filename || "Certificate"}
+                            </button>
+                          </div>
+                        )}
+                        <label className="flex items-center gap-2 w-full border-2 border-dashed rounded-lg px-3 py-2.5 cursor-pointer border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50">
+                          <span className="text-gray-400">📎</span>
+                          <span className="text-xs text-gray-500 truncate">
+                            {editTr.file ? editTr.file.name : recordHasCert(r) ? "Replace certificate (PDF, JPG or PNG)" : "Attach certificate (PDF, JPG or PNG)"}
+                          </span>
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => setEditTr({ ...editTr, file: e.target.files?.[0] || null })} />
+                        </label>
+                        {editTr.file && recordHasCert(r) && <p className="text-[11px] text-amber-700 mt-1">Saving replaces the current certificate.</p>}
+                      </div>
+                      {editTrError && <p className="text-sm text-red-500">{editTrError}</p>}
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setEditTr(null)} disabled={savingEdit} className="flex-1 border rounded-lg py-2 text-sm text-gray-600 bg-white hover:bg-gray-50">Cancel</button>
+                        <button type="button" onClick={handleSaveTraining} disabled={savingEdit} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
+                          {savingEdit ? "Saving…" : "Save changes"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
                     <div key={r.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
                       <div className="flex items-start gap-2">
                         <span className="text-sm">📚</span>
@@ -1157,13 +1249,17 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                             {r.provider ? ` · ${r.provider}` : ""}
                           </div>
                         </div>
-                        {recordHasCert(r) && (
-                          <button type="button" onClick={() => openTrainingCert(r)} className="text-xs text-blue-600 hover:underline shrink-0">Certificate</button>
+                        {recordHasCert(r) ? (
+                          <button type="button" onClick={() => openTrainingCert(r)} title={r.certificate_filename || "Open certificate"}
+                            className="text-[11px] px-1.5 py-0.5 rounded border border-green-200 bg-green-50 text-green-700 hover:underline shrink-0">📄 Certificate</button>
+                        ) : (
+                          <span className="text-[11px] px-1.5 py-0.5 rounded border border-gray-200 bg-white text-gray-400 shrink-0">No certificate</span>
                         )}
+                        <button type="button" onClick={() => startEditTraining(r)} className="text-xs text-blue-600 hover:underline shrink-0">Edit</button>
                         <button type="button" onClick={() => handleDeleteTraining(r)} className="text-xs text-red-500 hover:text-red-700 shrink-0">Remove</button>
                       </div>
                     </div>
-                  ))}
+                  )))}
                 </div>
               )}
 
