@@ -17,6 +17,8 @@ import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview
 import { adminFetch } from "../lib/adminFetch";
 import { ensureSectionYear, perthYear, perthMonthStart } from "../lib/sectionCleans";
 import { hasShowFrom, showFromDate, prevMonthOf, monthShort, periodMonthOfCompletion } from "../lib/taskPeriods";
+import { buildKioskJobs, isMine, jobsFor, waitingCount, anyoneJobs, everyoneGroups, comingUpFor, dayMonth, TAG_STYLE, CARD_BORDER } from "../lib/kioskJobs";
+import { fetchAllRows } from "../lib/trainingPlan";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -116,6 +118,9 @@ const truncate = (text, max = 180) => {
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + "…";
 };
+
+// "Blair Chapman" done for "Bridget Ellement" -> "Blair Chapman (for Bridget)" (kiosk "covering for")
+const coverLabel = (who, forName) => (forName ? `${who} (for ${String(forName).split(" ")[0]})` : who);
 
 const getWeekStart = (d = new Date()) => {
   const x = new Date(d);
@@ -614,6 +619,15 @@ export default function HomePage() {
 
   // ── Data ──
   const [tasks, setTasks] = useState([]);
+  // On the List jobs due today for people NOT on today (Everyone view), and every active On the List task (Coming up)
+  const [offRosterTasks, setOffRosterTasks] = useState([]);
+  const [allListTasks, setAllListTasks] = useState([]);
+  // Kiosk home: which list "My jobs" shows — the selected person's ("person") or everyone's ("everyone")
+  const [jobsView, setJobsView] = useState("person");
+  const [comingUpOpen, setComingUpOpen] = useState(false);
+  const [comingUpMore, setComingUpMore] = useState(false); // "Show more" — the rest of next month
+  // "This is [name]'s job. Did you do it for them?" — { whose, forId, run(coverFor) } while the confirm is open
+  const [coverAsk, setCoverAsk] = useState(null);
   const [staff, setStaff] = useState([]);
   const [onShiftStaff, setOnShiftStaff] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -656,7 +670,6 @@ export default function HomePage() {
   const [monthlyCompletions, setMonthlyCompletions] = useState({});
   const [sectionCleans, setSectionCleans] = useState([]);
   const [sectionCleansExpanded, setSectionCleansExpanded] = useState(false);
-  const [cleanMonth, setCleanMonth] = useState("this");
   const [showOffRoster, setShowOffRoster] = useState(false);
   const [completingSection, setCompletingSection] = useState(null);
   const [todayRosteredIds, setTodayRosteredIds] = useState(new Set());
@@ -741,7 +754,7 @@ export default function HomePage() {
         supabase.from("tasks").select("*").eq("pharmacy_id", currentPharmacyId).order("due_time", { ascending: true, nullsFirst: false }).order("title", { ascending: true }),
         supabase.from("staff").select("*").eq("pharmacy_id", currentPharmacyId).order("name", { ascending: true }),
         supabase.from("roster_shifts").select(`id, shift_date, start_time, end_time, staff_id, staff_name, staff:staff_id(id, name, photo_url)`).eq("shift_date", todayStr),
-        supabase.from("completions").select("task_id, staff_id, completed_at, period_start").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
+        supabase.from("completions").select("task_id, staff_id, completed_at, period_start, covering_for_staff_id").eq("pharmacy_id", currentPharmacyId).gte("completed_at", monthStart).lt("completed_at", monthEnd),
         (async () => {
           const months = [];
           for (let i = 2; i >= -1; i--) {
@@ -750,7 +763,7 @@ export default function HomePage() {
           }
           // A new year with no schedule yet gets last year's months copied in before reading
           try { await ensureSectionYear(supabase, currentPharmacyId, perthYear()); } catch (err) { console.error("[section year]", err); }
-          return supabase.from("section_clean_schedule").select(`id, month, completed_at, completed_by_staff_id, section:section_id(id, name, assigned_staff_id, notes, staff:assigned_staff_id(id, name))`).in("month", months);
+          return supabase.from("section_clean_schedule").select(`id, month, completed_at, completed_by_staff_id, covering_for_staff_id, section:section_id(id, name, assigned_staff_id, notes, staff:assigned_staff_id(id, name))`).in("month", months);
         })(),
         supabase.from("roster_shifts").select("staff_id, shift_date").gte("shift_date", todayStr).lte("shift_date", lookAheadEnd).order("shift_date", { ascending: true }),
         supabase.from("sick_days").select("roster_shift_id").eq("sick_date", todayStr),
@@ -795,7 +808,7 @@ export default function HomePage() {
         if (!monthlyCompMap[c.task_id]) {
           monthlyCompMap[c.task_id] = {
             completedAt: c.completed_at,
-            staffName: staffById2[c.staff_id]?.name || "Someone",
+            staffName: coverLabel(staffById2[c.staff_id]?.name || "Someone", staffById2[c.covering_for_staff_id]?.name),
           };
         }
       }
@@ -845,6 +858,37 @@ export default function HomePage() {
 
       const activeTasks = (t || []).filter((x) => x.active !== false && !(x.task_type === "on_the_list" && x.completed_at));
       const staffRoleMap = Object.fromEntries((s || []).map((st) => [st.id, st.role]));
+      // On the List — date/day gate: must match today's schedule
+      const listDateGate = (task) => {
+        const freq = task.frequency || "monthly_anytime";
+        if (freq === "weekly") {
+          const arr = Array.isArray(task.days_of_week) ? task.days_of_week : [];
+          if (arr.length && !arr.includes(dow)) return false;
+        } else if (freq === "specific_date") {
+          if (task.specific_date?.slice(0, 10) !== todayStr) return false;
+        }
+        if (hasShowFrom(task)) {
+          // Monthly with a show-from day → shown while this month (from its day) or a missed last month is open
+          if (!(openMonths[task.id] || []).length) return false;
+        } else {
+          // monthly_anytime → no date gate, shows all month
+          // ...but hide it once it's been completed this month
+          if (freq === "monthly_anytime" && monthlyCompMap[task.id]) return false;
+          // ...or marked "Nothing this month" (resolved for the month, like a completion)
+          if ((freq === "monthly_anytime" || freq === "monthly") && skippedThisMonth.has(Number(task.id))) return false;
+        }
+        return true;
+      };
+      // On the List — assignment gate: is someone it belongs to rostered on today
+      const listRosterGate = (task) => {
+        // Role-based — show if anyone in that role is rostered today
+        if (task.assigned_role) return uniqueOnShift.some((sh) => staffRoleMap[sh.id] === task.assigned_role);
+        // Multiple staff — show if any of the selected staff are rostered today
+        if (task.assigned_staff_ids?.length > 0) return task.assigned_staff_ids.some((id) => activeStaffIds.has(Number(id)));
+        // Single person
+        if (task.assigned_staff_id) return activeStaffIds.has(Number(task.assigned_staff_id));
+        return true;
+      };
       const todayTasks = activeTasks.filter((task) => {
         // Next shift tasks — show only on the day that staff member is next rostered
         if (task.show_next_shift) {
@@ -853,41 +897,7 @@ export default function HomePage() {
           return nextShift === todayStr;
         }
         // On the List tasks — show based on schedule (day/date) AND assignment type
-        if (task.task_type === "on_the_list") {
-          // Date/day gate — must match today's schedule first
-          const freq = task.frequency || "monthly_anytime";
-          if (freq === "weekly") {
-            const arr = Array.isArray(task.days_of_week) ? task.days_of_week : [];
-            if (arr.length && !arr.includes(dow)) return false;
-          } else if (freq === "specific_date") {
-            if (task.specific_date?.slice(0, 10) !== todayStr) return false;
-          }
-          if (hasShowFrom(task)) {
-            // Monthly with a show-from day → shown while this month (from its day) or a missed last month is open
-            if (!(openMonths[task.id] || []).length) return false;
-          } else {
-            // monthly_anytime → no date gate, shows all month
-            // ...but hide it once it's been completed this month
-            if (freq === "monthly_anytime" && monthlyCompMap[task.id]) return false;
-            // ...or marked "Nothing this month" (resolved for the month, like a completion)
-            if ((freq === "monthly_anytime" || freq === "monthly") && skippedThisMonth.has(Number(task.id))) return false;
-          }
-
-          // Assignment gate — who is rostered
-          // Role-based — show if anyone in that role is rostered today
-          if (task.assigned_role) {
-            return uniqueOnShift.some((sh) => staffRoleMap[sh.id] === task.assigned_role);
-          }
-          // Multiple staff — show if any of the selected staff are rostered today
-          if (task.assigned_staff_ids?.length > 0) {
-            return task.assigned_staff_ids.some((id) => activeStaffIds.has(Number(id)));
-          }
-          // Single person
-          if (task.assigned_staff_id) {
-            return activeStaffIds.has(Number(task.assigned_staff_id));
-          }
-          return true;
-        }
+        if (task.task_type === "on_the_list") return listDateGate(task) && listRosterGate(task);
         // Daily tasks — filter by frequency and roster
         if (!isTaskForToday(task, now)) return false;
         if (task.assigned_staff_id) {
@@ -902,10 +912,14 @@ export default function HomePage() {
         return (a.title || "").localeCompare(b.title || "");
       });
       setTasks(todayTasks);
+      // Everyone view: jobs due today that belong only to people who aren't on (next-shift jobs wait for that shift).
+      // Kept out of `tasks` so the leaderboard and everything else read exactly what they did before.
+      setOffRosterTasks(activeTasks.filter((task) => task.task_type === "on_the_list" && !task.show_next_shift && listDateGate(task) && !listRosterGate(task)));
+      setAllListTasks(activeTasks.filter((task) => task.task_type === "on_the_list"));
 
       const start = new Date(); start.setHours(0, 0, 0, 0);
       const end = new Date(); end.setHours(23, 59, 59, 999);
-      const { data: comps } = await supabase.from("completions").select("task_id, staff_id, completed_at").eq("pharmacy_id", currentPharmacyId).gte("completed_at", start.toISOString()).lt("completed_at", end.toISOString()).order("completed_at", { ascending: false });
+      const { data: comps } = await supabase.from("completions").select("task_id, staff_id, completed_at, covering_for_staff_id").eq("pharmacy_id", currentPharmacyId).gte("completed_at", start.toISOString()).lt("completed_at", end.toISOString()).order("completed_at", { ascending: false });
 
       const doneIds = new Set((comps || []).map((c) => c.task_id));
       setCompletedTaskIds(doneIds);
@@ -915,7 +929,7 @@ export default function HomePage() {
       setFeed((comps || []).map((c) => ({
         id: `c_${c.task_id}_${c.staff_id}_${c.completed_at}`,
         taskTitle: tasksById[c.task_id] ?? `Task #${c.task_id}`,
-        staffName: staffById[c.staff_id] ?? "Someone",
+        staffName: coverLabel(staffById[c.staff_id] ?? "Someone", staffById[c.covering_for_staff_id]),
         timeStr: new Date(c.completed_at).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }),
       })));
 
@@ -1345,7 +1359,7 @@ export default function HomePage() {
   // ── Consumables follow-up orders: completed counts with Order / Owner lines not yet ticked ──
   // Staff card: shown when the checklist task's assignee is rostered on. Owner card: when the owner is rostered on.
   // Both stay until every line is Ordered or Not ordering; red 2 days after the count was completed.
-  const [orderFollowUps, setOrderFollowUps] = useState({ staff: [], owner: [], staffVisible: false, ownerVisible: false });
+  const [orderFollowUps, setOrderFollowUps] = useState({ staff: [], owner: [], staffVisible: false, ownerVisible: false, tasks: [] });
   const [followUpOpen, setFollowUpOpen] = useState(null); // "staff" | "owner"
   useEffect(() => {
     if (!currentPharmacyId) return;
@@ -1386,6 +1400,7 @@ export default function HomePage() {
           owner: ownerLines,
           staffVisible: staffLines.some((l) => assigneeOn(taskById[l.task_id])),
           ownerVisible: !!consumablesSettings.ownerStaffId && rostered.has(Number(consumablesSettings.ownerStaffId)),
+          tasks: ctasks || [],
         });
       } catch (err) {
         console.error("[consumables follow-ups]", err);
@@ -1410,6 +1425,50 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [currentPharmacyId, leadersRefreshKey, showShoppingList]);
 
+  // Checklist progress on job cards ("12 of 34"): this month's and last month's sheets of today's checklist tasks.
+  // Reloaded when a sheet closes and after anything is completed.
+  const [checklistProgress, setChecklistProgress] = useState({}); // "taskId|YYYY-MM-01" -> { n, of }
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    const ids = [...new Set([...tasks, ...offRosterTasks].filter((t) => t.checklist_type).map((t) => Number(t.id)))];
+    if (!ids.length) { setChecklistProgress({}); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const months = [`${prevMonthOf(todayPerth().slice(0, 7))}-01`, perthMonthStart()];
+        const { data: sheets, error } = await supabase.from("checklist_sheets").select("id, task_id, period_month, kind")
+          .eq("pharmacy_id", currentPharmacyId).in("task_id", ids).in("period_month", months);
+        if (error) throw error;
+        const sheetIds = (sheets || []).map((x) => x.id);
+        const lines = sheetIds.length
+          ? await fetchAllRows(() => supabase.from("checklist_lines").select("id, sheet_id, result, answer").in("sheet_id", sheetIds).order("id"))
+          : [];
+        if (cancelled) return;
+        const map = {};
+        for (const sh of sheets || []) {
+          const mine = lines.filter((l) => l.sheet_id === sh.id);
+          const n = mine.filter((l) => (sh.kind === "ticklist" ? l.answer : l.result)).length;
+          map[`${sh.task_id}|${String(sh.period_month).slice(0, 10)}`] = { n, of: mine.length };
+        }
+        setChecklistProgress(map);
+      } catch (err) {
+        console.error("[checklist progress]", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentPharmacyId, tasks, offRosterTasks, checklistOpen, leadersRefreshKey]);
+
+  // "Done this month N ✓" under the selected person's jobs (every completion this month, as on the leaderboard)
+  const [doneThisMonth, setDoneThisMonth] = useState(null);
+  useEffect(() => {
+    if (!selectedStaffId || !currentPharmacyId) { setDoneThisMonth(null); return; }
+    let cancelled = false;
+    supabase.from("completions").select("id", { count: "exact", head: true })
+      .eq("pharmacy_id", currentPharmacyId).eq("staff_id", Number(selectedStaffId)).gte("completed_at", getMonthStart().toISOString())
+      .then(({ count, error }) => { if (!cancelled && !error) setDoneThisMonth(count || 0); });
+    return () => { cancelled = true; };
+  }, [selectedStaffId, currentPharmacyId, leadersRefreshKey]);
+
   const followUpOverdue = (lines) => {
     const cutoff = addDaysStr(todayPerth(), -2);
     return lines.some((l) => l.completed_at && String(perthDateOf(l.completed_at)) <= cutoff);
@@ -1428,7 +1487,11 @@ export default function HomePage() {
 
   // "These were explained to me and I understand them" (kiosk; server checks ready + rostered on today)
   const [inductionConfirmBusy, setInductionConfirmBusy] = useState(false);
+  // Policy reads, induction policies and the induction confirm are a QSPP record: only the person themselves can
+  // acknowledge them, so the kiosk needs THEIR photo selected (anyone else sees the panel read-only).
+  const isSelf = (staffId) => !!selectedStaffId && Number(selectedStaffId) === Number(staffId);
   const handleInductionConfirm = async (j) => {
+    if (!isSelf(j.staffId)) return;
     setInductionConfirmBusy(true);
     try {
       const res = await adminFetch("/api/inductions/kiosk-confirm", {
@@ -1448,6 +1511,7 @@ export default function HomePage() {
 
   // "I have read and understood" inside the induction panel (acknowledgeRequest also ticks the Section 3 line)
   const handleInductionAck = async (r) => {
+    if (!isSelf(r.staff_id)) return;
     setInductionAckId(r.id);
     try {
       await acknowledgeRequest(supabase, r, r.document, "kiosk"); // false = already recorded elsewhere
@@ -1466,7 +1530,7 @@ export default function HomePage() {
   // "I have read and understood" for the named person on the card (read_via kiosk + file snapshot)
   const handlePolicyAck = async () => {
     const r = openPolicyJob;
-    if (!r) return;
+    if (!r || !isSelf(r.staff_id)) return;
     setPolicyAckBusy(true);
     try {
       await acknowledgeRequest(supabase, r, r.document, "kiosk"); // false = already recorded elsewhere; card goes either way
@@ -1487,9 +1551,16 @@ export default function HomePage() {
   }, [tasks, completedTaskIds]);
 
   // ── Handlers ──
+  // A task done / skipped for the month drops off today's list and the Everyone (off today) list
+  const dropTask = (id) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+    setOffRosterTasks((prev) => prev.filter((t) => t.id !== id));
+  };
   const burstConfetti = () => { setShowConfetti(true); setTimeout(() => setShowConfetti(false), 900); };
 
-  const handleTaskTap = async (task) => {
+  // coverFor = the staff id the job was done for (after "Did you do it for them?"), saved as covering_for_staff_id
+  const doneByLabel = (coverFor) => coverLabel(selectedStaffName ?? "Someone", coverFor ? staffById[coverFor]?.name : null);
+  const handleTaskTap = async (task, coverFor = null) => {
     try {
       if (infoOpenId) { setInfoOpenId(null); return; }
       // A checklist task (stock count / tick list) opens its sheet — it's completed from the sheet, not by tapping the card
@@ -1518,17 +1589,18 @@ export default function HomePage() {
           staff_id: selectedStaff.id,
           completed_at: new Date().toISOString(),
           pharmacy_id: currentPharmacyId,
+          covering_for_staff_id: coverFor ? Number(coverFor) : null,
         }]);
         await supabase.from("tasks").update({
           completed_at: new Date().toISOString(),
           completed_by_staff_id: selectedStaff.id,
         }).eq("id", task.id);
-        setTasks((prev) => prev.filter((t) => t.id !== task.id));
+        dropTask(task.id);
       } else {
-        recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId);
+        recordCompletion(supabase, task.id, selectedStaff.id, currentPharmacyId, coverFor);
       }
       setCompletedTaskIds((prev) => { const next = new Set(prev); next.add(task.id); return next; });
-      setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: task.title, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
+      setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: task.title, staffName: doneByLabel(coverFor), timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
       setLeadersRefreshKey((k) => k + 1);
       burstConfetti();
     } catch (err) {
@@ -1555,7 +1627,7 @@ export default function HomePage() {
     }]);
     if (error && error.code !== "23505") { alert("Couldn't save: " + error.message); return; } // 23505 = already marked
     if (period) closeMonthCard(task.id, period.start);
-    else setTasks((prev) => prev.filter((t) => t.id !== task.id));
+    else dropTask(task.id);
   };
 
   // ── Checklist tasks (tasks.checklist_type): 'consumables' = stock count (components/ConsumablesSheet.js),
@@ -1569,7 +1641,7 @@ export default function HomePage() {
     const { task, period } = checklistOpen;
     setChecklistOpen(null);
     if (period) closeMonthCard(task.id, period.start);
-    else setTasks((prev) => prev.filter((t) => t.id !== task.id));
+    else dropTask(task.id);
     setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: period?.carry ? `${task.title} (${monthShort(period.ym)})` : task.title, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
     setLeadersRefreshKey((k) => k + 1);
     burstConfetti();
@@ -1579,7 +1651,7 @@ export default function HomePage() {
   const closeMonthCard = (taskId, start) => {
     setMonthCards((prev) => {
       const left = (prev[taskId] || []).filter((p) => p.start !== start);
-      if (!left.length) setTasks((ts) => ts.filter((t) => t.id !== taskId));
+      if (!left.length) dropTask(taskId);
       return { ...prev, [taskId]: left };
     });
   };
@@ -1587,7 +1659,7 @@ export default function HomePage() {
   // Completing a show-from card counts for THAT card's month (completions.period_start), so a red carried-over
   // October card done in November still counts for October. Otherwise a normal completion (points, Activity feed).
   // completions has no one-per-day rule (checked 26/10/2026), so both cards can be done on the same day.
-  const handleMonthCardTap = async (task, period) => {
+  const handleMonthCardTap = async (task, period, coverFor = null) => {
     if (infoOpenId) { setInfoOpenId(null); return; }
     if (isChecklistTask(task)) { openChecklist(task, period); return; } // a carried-over month opens that month's sheet
     if (!selectedStaffId) { alert("Tap your photo first, then tap the task."); return; }
@@ -1597,10 +1669,11 @@ export default function HomePage() {
       pharmacy_id: currentPharmacyId,
       completed_at: new Date().toISOString(),
       period_start: period.start,
+      covering_for_staff_id: coverFor ? Number(coverFor) : null,
     }]);
     if (error) { alert("Error: " + error.message); return; }
     closeMonthCard(task.id, period.start);
-    setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: period.carry ? `${task.title} (${monthShort(period.ym)})` : task.title, staffName: selectedStaffName ?? "Someone", timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
+    setFeed((f) => [{ id: crypto.randomUUID(), taskTitle: period.carry ? `${task.title} (${monthShort(period.ym)})` : task.title, staffName: doneByLabel(coverFor), timeStr: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }) }, ...f].slice(0, 25));
     setLeadersRefreshKey((k) => k + 1);
     burstConfetti();
   };
@@ -1818,6 +1891,63 @@ const handleDeliveryTap = async (d) => {
     } catch (err) { alert("Error: " + (err?.message || String(err))); }
     finally { setCompletingDelivery(null); }
   };
+  // Section clean done / undone (tap again to undo) — from a job card or the Section cleans list
+  const handleSectionComplete = async (sc, coverFor = null) => {
+    if (!selectedStaffId) { alert("Tap your photo first."); return; }
+    if (sc.completed_at) {
+      const ok = window.confirm(`Undo completion for "${sc.section?.name}"?`);
+      if (!ok) return;
+      try {
+        setCompletingSection(sc.id);
+        await supabase.from("section_clean_schedule").update({ completed_at: null, completed_by_staff_id: null, covering_for_staff_id: null }).eq("id", sc.id);
+        await supabase.from("completions").delete().eq("section_clean_id", sc.id);
+        setSectionCleans((prev) => prev.map((s) => s.id === sc.id ? { ...s, completed_at: null, completed_by_staff_id: null, covering_for_staff_id: null } : s));
+        setFeed((f) => f.filter((e) => e.sectionCleanId !== sc.id));
+      } catch (err) { alert("Error: " + err.message); }
+      finally { setCompletingSection(null); }
+      return;
+    }
+    try {
+      setCompletingSection(sc.id);
+      const now2 = new Date().toISOString();
+      const cover = coverFor ? Number(coverFor) : null;
+      await supabase.from("section_clean_schedule").update({ completed_at: now2, completed_by_staff_id: Number(selectedStaffId), covering_for_staff_id: cover }).eq("id", sc.id);
+      await supabase.from("completions").insert([{
+        section_clean_id: sc.id,
+        staff_id: Number(selectedStaffId),
+        completed_at: now2,
+        pharmacy_id: currentPharmacyId,
+        covering_for_staff_id: cover,
+      }]);
+      setSectionCleans((prev) => prev.map((s) => s.id === sc.id ? { ...s, completed_at: now2, completed_by_staff_id: Number(selectedStaffId), covering_for_staff_id: cover } : s));
+      setFeed((f) => [{
+        id: crypto.randomUUID(),
+        sectionCleanId: sc.id,
+        taskTitle: `Section Clean: ${sc.section?.name}`,
+        staffName: doneByLabel(coverFor),
+        timeStr: new Date(now2).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }),
+      }, ...f].slice(0, 25));
+      setLeadersRefreshKey((k) => k + 1);
+      burstConfetti();
+    } catch (err) { alert("Error: " + err.message); }
+    finally { setCompletingSection(null); }
+  };
+
+  // Kiosk home: no photo selected = Everyone's jobs. Tap a photo = just that person's jobs (tap again = back to
+  // Everyone). The Everyone button shows all jobs while keeping whoever is selected as the person completing
+  // (covering for someone off today); tap it again to go back to that person's jobs.
+  const tapPerson = (id) => {
+    if (Number(id) === Number(selectedStaffId) && jobsView === "person") { setSelectedStaffId(null); return; }
+    setSelectedStaffId(id);
+    setJobsView("person");
+    setComingUpOpen(false);
+    setComingUpMore(false);
+  };
+  const tapEveryone = () => {
+    if (!selectedStaffId) return; // already showing Everyone
+    setJobsView((v) => (v === "everyone" ? "person" : "everyone"));
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push("/login");
@@ -1882,599 +2012,470 @@ const handleDeliveryTap = async (d) => {
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Tasks column */}
-        <div className="w-[52%] min-w-[380px] flex flex-col border-r bg-white overflow-hidden">
+        {/* Kiosk home: staff strip, then "Team today" (shared) and "My jobs" (the tapped photo, or Everyone).
+            Jobs come from lib/kioskJobs.js — the photo badges, each list and Everyone use the same rules. */}
+        <div className="w-[62%] min-w-[420px] flex flex-col border-r bg-gray-50 overflow-hidden">
+          {(() => {
+            const todayStr = todayPerth();
+            const monthStart = perthMonthStart();
+            const jobs = loading ? [] : buildKioskJobs({
+              tasks, offRosterTasks, monthCards, completedTaskIds, monthlyCompletions, staffById,
+              rosteredIds: new Set([...todayRosteredIds].map(Number)), sectionCleans, policyJobs, inductionCards,
+              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart,
+            });
+            const roleOf = (id) => staffById[id]?.role || null;
+            const listFor = (id) => jobsFor(jobs, id, roleOf(id));
+            const everyone = everyoneGroups(jobs, onShiftStaff, staff.filter((x) => x.role !== "Locum" || todayRosteredIds.has(x.id)));
+            const forAnyone = anyoneJobs(jobs);
+            const firstOf = (name) => String(name || "").split(" ")[0];
 
-          {/* Date heading */}
-          <div className="px-4 pt-4 pb-3 border-b shrink-0">
-            <div className="text-xl font-bold text-gray-800">
-              {new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}
-            </div>
-          </div>
-
-          {/* Task grid */}
-          <div className="flex-1 overflow-y-auto px-3 pb-3 pt-2">
-            {loading ? (
-              <div className="text-sm text-gray-500 p-4">Loading tasks...</div>
-            ) : (() => {
-              const regularTasks = tasks.filter((t) => t.task_type !== "on_the_list");
-              const monthlyTasks = tasks.filter((t) => t.task_type === "on_the_list");
-
-              const dailyDone = regularTasks.filter((t) => completedTaskIds.has(t.id)).length;
-              const dailyTotal = regularTasks.length;
-              const dailyPct = dailyTotal ? Math.round((dailyDone / dailyTotal) * 100) : 0;
-
-              const monthlyDone = monthlyTasks.filter((t) =>
-                t.frequency === "weekly" ? completedTaskIds.has(t.id) : hasShowFrom(t) ? false : Boolean(monthlyCompletions[t.id])
-              ).length;
-              const monthlyTotal = monthlyTasks.length;
-              const monthlyPct = monthlyTotal ? Math.round((monthlyDone / monthlyTotal) * 100) : 0;
-
-              const renderTaskCard = (task, isMonthly = false) => {
-                const isDone = isMonthly
-                  ? Boolean(monthlyCompletions[task.id])
-                  : completedTaskIds.has(task.id);
-                const overdue = isOverdue(task, completedTaskIds);
-                const badge = getTaskBadge(task);
-                const monthlyComp = monthlyCompletions[task.id];
-                const borderColour = isDone
-                  ? "border-l-green-500"
-                  : overdue
-                  ? "border-l-red-500"
-                  : isMonthly
-                  ? "border-l-orange-400"
-                  : "border-l-blue-400";
-
-                const assignedStaff = task.assigned_staff_id
-                  ? staffById[task.assigned_staff_id]
-                  : null;
-
-                return (
-                  <button
-                    key={task.id}
-                    onClick={() => { if (infoOpenId) { setInfoOpenId(null); return; } handleTaskTap(task); }}
-                    className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${borderColour} text-left bg-white shadow-sm hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
-                  >
-                    <div className="flex items-start justify-between gap-1">
-                      <div className="font-medium text-[11px] leading-tight break-words line-clamp-2 flex-1 text-gray-800">{task.title}</div>
-                      {isDone && <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>}
-                    </div>
-                    {isMonthly && (
-                      <div className="text-[10px] text-blue-600 font-medium truncate">
-                        {assignedStaff ? assignedStaff.name : "All staff"}
-                      </div>
-                    )}
-                    <div className="mt-1 flex items-center justify-between">
-                      <span className="text-[10px] text-gray-400">
-                        {overdue ? (
-                          <span className="text-red-500 font-medium">Overdue</span>
-                        ) : isMonthly && monthlyComp ? (
-                          <span className="text-green-600">by {monthlyComp.staffName}</span>
-                        ) : task.due_time ? (
-                          `${formatTime(task.due_time)}`
-                        ) : ""}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <span className={`text-[9px] px-1 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); setInfoOpenId((prev) => prev === task.id ? null : task.id); }}
-                          className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-[9px] text-gray-500"
-                        >i</button>
-                      </div>
-                    </div>
-                  </button>
-                );
-              };
-
-              // Section cleans logic
-              const nowDate = new Date();
-              const thisMonthKey = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, "0")}-01`;
-              const nextMonthDate = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 1);
-              const nextMonthKey = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, "0")}-01`;
-              const activeMonthKey = cleanMonth === "next" ? nextMonthKey : thisMonthKey;
-
-              // Sections for the active month tab (this month includes overdue from prior months)
-              const activeMonthCleans = sectionCleans.filter((sc) =>
-                cleanMonth === "next" ? sc.month === nextMonthKey : (sc.isCurrentMonth || sc.isOverdue)
-              );
-
-              const myTodaySections = activeMonthCleans.filter((sc) => {
-                if (sc.completed_at) return false;
-                if (cleanMonth === "next") return true; // no "today" concept for next month — show all incomplete
-                const assignedId = sc.section?.assigned_staff_id;
-                if (!assignedId) return true; // OTC = all staff
-                return todayRosteredIds.has(assignedId);
-              });
-
-              // Sort: overdue first, then current month
-              const myTodaySectionsSorted = [
-                ...myTodaySections.filter((sc) => sc.isOverdue),
-                ...myTodaySections.filter((sc) => !sc.isOverdue),
-              ];
-
-              const sectionDone = activeMonthCleans.filter((sc) => sc.completed_at).length;
-              const sectionTotal = activeMonthCleans.length;
-
-              const handleSectionComplete = async (sc) => {
-                if (!selectedStaffId) { alert("Tap your photo first."); return; }
-                if (sc.completed_at) {
-                  const ok = window.confirm(`Undo completion for "${sc.section?.name}"?`);
-                  if (!ok) return;
-                  try {
-                    setCompletingSection(sc.id);
-                    await supabase.from("section_clean_schedule").update({ completed_at: null, completed_by_staff_id: null }).eq("id", sc.id);
-                    await supabase.from("completions").delete().eq("section_clean_id", sc.id);
-                    setSectionCleans((prev) => prev.map((s) => s.id === sc.id ? { ...s, completed_at: null, completed_by_staff_id: null } : s));
-                    setFeed((f) => f.filter((e) => e.sectionCleanId !== sc.id));
-                  } catch (err) { alert("Error: " + err.message); }
-                  finally { setCompletingSection(null); }
-                  return;
-                }
-                try {
-                  setCompletingSection(sc.id);
-                  const now2 = new Date().toISOString();
-                  await supabase.from("section_clean_schedule").update({ completed_at: now2, completed_by_staff_id: Number(selectedStaffId) }).eq("id", sc.id);
-                  await supabase.from("completions").insert([{
-                    section_clean_id: sc.id,
-                    staff_id: Number(selectedStaffId),
-                    completed_at: now2,
-                    pharmacy_id: currentPharmacyId,
-                  }]);
-                  setSectionCleans((prev) => prev.map((s) => s.id === sc.id ? { ...s, completed_at: now2, completed_by_staff_id: Number(selectedStaffId) } : s));
-                  setFeed((f) => [{
-                    id: crypto.randomUUID(),
-                    sectionCleanId: sc.id,
-                    taskTitle: `Section Clean: ${sc.section?.name}`,
-                    staffName: selectedStaffName ?? "Someone",
-                    timeStr: new Date(now2).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }),
-                  }, ...f].slice(0, 25));
-                  setLeadersRefreshKey((k) => k + 1);
-                  burstConfetti();
-                } catch (err) { alert("Error: " + err.message); }
-                finally { setCompletingSection(null); }
-              };
-
+            // Daily routines (the old Daily Tasks grid)
+            const regularTasks = tasks.filter((t) => t.task_type !== "on_the_list");
+            const dailyDone = regularTasks.filter((t) => completedTaskIds.has(t.id)).length;
+            const dailyTotal = regularTasks.length;
+            const dailyPct = dailyTotal ? Math.round((dailyDone / dailyTotal) * 100) : 0;
+            const renderTaskCard = (task) => {
+              const isDone = completedTaskIds.has(task.id);
+              const overdue = isOverdue(task, completedTaskIds);
+              const badge = getTaskBadge(task);
+              const borderColour = isDone ? "border-l-green-500" : overdue ? "border-l-red-500" : "border-l-blue-400";
               return (
-                <div className="space-y-4">
-                  {/* Daily Tasks section */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Daily Tasks</div>
-                      <span className="text-[11px] font-semibold text-blue-700">{dailyDone}/{dailyTotal} ({dailyPct}%)</span>
-                    </div>
-                    <div className="w-full bg-gray-100 rounded-full h-1 mb-2">
-                      <div className="bg-blue-500 h-1 rounded-full transition-all" style={{ width: `${dailyPct}%` }} />
-                    </div>
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {regularTasks.map((task) => renderTaskCard(task, false))}
-                    </div>
+                <button
+                  key={task.id}
+                  onClick={() => { if (infoOpenId) { setInfoOpenId(null); return; } handleTaskTap(task); }}
+                  className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${borderColour} text-left bg-white shadow-sm hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-1">
+                    <div className={`font-medium text-[11px] leading-tight break-words line-clamp-2 flex-1 ${isDone ? "text-gray-500" : "text-gray-800"}`}>{task.title}</div>
+                    {isDone && <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>}
                   </div>
-
-                  {/* On the List section */}
-                  {/* Always shown — the Shopping list card is there even when empty, so people can add to it */}
-                  {(
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">Today's Jobs</div>
-                        {monthlyTotal > 0 && <span className="text-[11px] font-semibold text-orange-600">{monthlyDone}/{monthlyTotal} ({monthlyPct}%)</span>}
-                      </div>
-                      {monthlyTotal > 0 ? (
-                        <div className="w-full bg-orange-50 rounded-full h-1 mb-2">
-                          <div className="bg-orange-400 h-1 rounded-full transition-all" style={{ width: `${monthlyPct}%` }} />
-                        </div>
-                      ) : <div className="mb-2" />}
-                      <div className="grid grid-cols-2 gap-2">
-                        {(() => {
-                          if (todayDeliveries.length === 0) return null;
-                          const active = todayDeliveries.filter((d) => d.status !== "skipped");
-                          if (active.length === 0) return null;
-                          const doneCount = active.filter((d) => d.status === "delivered").length;
-                          const allDone = doneCount === active.length;
-                          return (
-                            <button
-                              onClick={() => setShowDeliveriesModal(true)}
-                              className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${allDone ? "border-l-green-500" : "border-l-orange-400"} text-left bg-white shadow-sm hover:shadow-md transition-shadow`}
-                            >
-                              <div className="flex items-start justify-between gap-2 mb-1">
-                                <div className="font-semibold text-sm leading-tight flex-1 text-gray-800">🚚 Deliveries</div>
-                                {allDone && <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]">✓</span>}
-                              </div>
-                              <div className="text-xs text-blue-600 font-medium mb-1">
-                                {doneCount}/{active.length} delivered
-                              </div>
-                              <div className="text-[10px] text-gray-400">Tap to see today's drops</div>
-                            </button>
-                          );
-                        })()}
-                        <button
-                          onClick={() => setShowShoppingList(true)}
-                          className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${shoppingCount ? "border-l-blue-500" : "border-l-gray-300"} text-left bg-white shadow-sm hover:shadow-md transition-shadow`}
-                        >
-                          <div className="flex items-start justify-between gap-2 mb-1">
-                            <div className="font-semibold text-sm leading-tight flex-1 text-gray-800">🛒 Shopping list</div>
-                          </div>
-                          <div className={`text-xs font-medium mb-1 ${shoppingCount ? "text-blue-600" : "text-gray-400"}`}>
-                            {shoppingCount ? `${shoppingCount} item${shoppingCount === 1 ? "" : "s"} to buy` : "Nothing to buy"}
-                          </div>
-                          <div className="text-[10px] text-gray-400">Tap to see or add</div>
-                        </button>
-                        {hireDueBack.length > 0 && (
-                          <button
-                            onClick={() => setShowHireModal(true)}
-                            className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-red-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
-                          >
-                            <div className="flex items-start justify-between gap-2 mb-1">
-                              <div className="font-semibold text-sm leading-tight flex-1 text-gray-800">📦 Hire Returns</div>
-                            </div>
-                            <div className="text-xs text-red-600 font-medium mb-1">
-                              {hireDueBack.length} due back
-                            </div>
-                            <div className="text-[10px] text-gray-400">Tap to follow up</div>
-                          </button>
-                        )}
-                        {policyJobs.map((r) => (
-                          <button
-                            key={`policy-${r.id}`}
-                            onClick={() => { if (r.document.pdf_url) window.open(r.document.pdf_url, "_blank", "noopener,noreferrer"); setOpenPolicyJob(r); }}
-                            className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-blue-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
-                          >
-                            <div className="font-semibold text-sm leading-tight text-gray-800 mb-1 break-words">📄 Read: {r.document.title}</div>
-                            <div className="text-xs text-blue-600 font-medium mb-1">👤 {staffById[r.staff_id]?.name || "Staff member"}</div>
-                            <div className="text-[10px] text-gray-400">Tap to open, then tick when read</div>
-                          </button>
-                        ))}
-                        {[
-                          showStaffFollowUp && { key: "staff", lines: orderFollowUps.staff, title: `🧾 Consumables — ${orderFollowUps.staff.length} still to order`, tone: "border-l-amber-500", sub: "text-amber-700" },
-                          showOwnerFollowUp && { key: "owner", lines: orderFollowUps.owner, title: `🧾 Consumables — ${orderFollowUps.owner.length} for ${staffById[consumablesSettings.ownerStaffId]?.name?.split(" ")[0] || "owner"} to order`, tone: "border-l-purple-500", sub: "text-purple-700" },
-                        ].filter(Boolean).map((c) => {
-                          const late = followUpOverdue(c.lines);
-                          return (
-                            <button
-                              key={`followup-${c.key}`}
-                              onClick={() => setFollowUpOpen(c.key)}
-                              className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${late ? "border-l-red-500" : c.tone} text-left bg-white shadow-sm hover:shadow-md transition-shadow`}
-                            >
-                              <div className={`font-semibold text-sm leading-tight mb-1 break-words ${late ? "text-red-700" : "text-gray-800"}`}>
-                                {c.title}{late && <span className="ml-1 text-red-500">⚠️</span>}
-                              </div>
-                              <div className={`text-xs font-medium mb-1 ${late ? "text-red-600" : c.sub}`}>
-                                {[...new Set(c.lines.map((l) => l.supplier_name).filter(Boolean))].join(", ") || "Order"}
-                              </div>
-                              <div className="text-[10px] text-gray-400">Tap to tick what's been ordered</div>
-                            </button>
-                          );
-                        })}
-                        {inductionCards.map((j) => {
-                          const read = j.requests.filter((r) => r.status === "read").length;
-                          if (j.confirm) {
-                            return (
-                              <button
-                                key={`induction-${j.id}`}
-                                onClick={() => setOpenInductionId(j.id)}
-                                className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-green-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
-                              >
-                                <div className="font-semibold text-sm leading-tight text-gray-800 mb-1 break-words">📋 Confirm your induction</div>
-                                <div className="text-xs text-green-700 font-medium mb-1">👤 {staffById[j.staffId]?.name || "Staff member"}</div>
-                                <div className="text-[10px] text-gray-400">Tap to check and confirm</div>
-                              </button>
-                            );
-                          }
-                          return (
-                            <button
-                              key={`induction-${j.id}`}
-                              onClick={() => setOpenInductionId(j.id)}
-                              className="relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 border-l-blue-500 text-left bg-white shadow-sm hover:shadow-md transition-shadow"
-                            >
-                              <div className="font-semibold text-sm leading-tight text-gray-800 mb-1 break-words">📋 {staffById[j.staffId]?.name || "Staff member"}'s induction</div>
-                              <div className="text-xs text-blue-600 font-medium mb-1">{read} of {j.requests.length} policies read</div>
-                              <div className="text-[10px] text-gray-400">Tap to see the policies to read</div>
-                            </button>
-                          );
-                        })}
-                        {monthlyTasks.flatMap((task) => (hasShowFrom(task)
-                          ? (monthCards[task.id] || []).map((period) => ({ task, period }))
-                          : [{ task, period: null }])).map(({ task, period }) => {
-                          const isWeekly = task.frequency === "weekly";
-                          const isDone = period ? false : isWeekly
-                            ? completedTaskIds.has(task.id)
-                            : Boolean(monthlyCompletions[task.id]);
-                          const monthlyComp = monthlyCompletions[task.id];
-                          const assignedStaff = task.assigned_staff_id ? staffById[task.assigned_staff_id] : null;
-                          // Overdue only once the due DAY has fully passed — a task due today isn't overdue.
-                          const todayStr = todayPerth();
-                          const isOnListOverdue = !isDone && (
-                            (task.end_date && task.end_date.slice(0, 10) < todayStr) ||
-                            (task.specific_date && task.specific_date.slice(0, 10) < todayStr) ||
-                            !!period?.overdue // show-from day passed, or a missed month carried over
-                          );
-                          const borderColour = isDone ? "border-l-green-500" : isOnListOverdue ? "border-l-red-500" : "border-l-orange-400";
-                          return (
-                            <button
-                              key={period ? `${task.id}-${period.start}` : task.id}
-                              onClick={() => (period ? handleMonthCardTap(task, period) : handleTaskTap(task))}
-                              className={`relative pl-3 pr-3 py-3 rounded-lg border border-gray-200 border-l-4 ${borderColour} text-left bg-white shadow-sm hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
-                            >
-                              <div className="flex items-start justify-between gap-2 mb-1">
-                                <div className={`font-semibold text-sm leading-tight flex-1 ${isOnListOverdue ? "text-red-700" : "text-gray-800"}`}>
-                                  {task.title}
-                                  {period?.carry && (
-                                    <span className="ml-1.5 align-middle text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-100 text-red-700">
-                                      {monthShort(period.ym)}, overdue
-                                    </span>
-                                  )}
-                                </div>
-                                {isDone && <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-500 text-white text-[10px]">✓</span>}
-                                {isOnListOverdue && !isDone && <span className="shrink-0 text-red-500 text-sm">⚠️</span>}
-                              </div>
-                              {task.assigned_role && (
-                                <div className="text-xs text-blue-600 font-medium mb-1">
-                                  👥 {task.assigned_role} — {onShiftStaff.filter((sh) => staffById[sh.id]?.role === task.assigned_role).map((sh) => sh.name).join(", ") || "None rostered"}
-                                </div>
-                              )}
-                              {task.assigned_staff_ids?.length > 0 && !task.assigned_role && (
-                                <div className="text-xs text-blue-600 font-medium mb-1">
-                                  👥 {task.assigned_staff_ids.map((id) => staffById[id]?.name).filter(Boolean).join(", ")}
-                                </div>
-                              )}
-                              {assignedStaff && !task.assigned_role && !(task.assigned_staff_ids?.length > 0) && (
-                                <div className="text-xs text-blue-600 font-medium mb-1">👤 {assignedStaff.name}</div>
-                              )}
-                              {isChecklistTask(task) && (
-                                <div className="text-[11px] text-blue-700 mb-1">{isTicklistChecklist(task) ? "☑️" : "🧾"} Tap to open the checklist</div>
-                              )}
-                              {task.info && (
-                                <div className="text-xs text-gray-500 leading-snug mb-1 truncate">{task.info}</div>
-                              )}
-                              {task.created_by_staff_id && staffById[task.created_by_staff_id] && (
-                                <div className="text-[10px] text-gray-400 mb-1">Added by {staffById[task.created_by_staff_id].name}</div>
-                              )}
-                              <div className="flex items-center justify-between mt-1">
-                                <div className="text-[10px] text-gray-400">
-                                  {isDone && monthlyComp ? (
-                                    <span className="text-green-600">✓ Done by {monthlyComp.staffName}</span>
-                                  ) : task.end_date ? (
-                                    <span className={isOnListOverdue ? "text-red-500 font-medium" : ""}>Due {new Date(task.end_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}</span>
-                                  ) : task.specific_date ? (
-                                    <span className={isOnListOverdue ? "text-red-500 font-medium" : ""}>Due {new Date(task.specific_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}</span>
-                                  ) : null}
-                                </div>
-                                {task.info && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); setInfoOpenId((prev) => prev === task.id ? null : task.id); }}
-                                    className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-[9px] text-gray-500"
-                                  >i</button>
-                                )}
-                              </div>
-                              {isMonthlyFreq(task.frequency) && !isDone && (
-                                <div className="mt-1.5">
-                                  <span
-                                    role="button"
-                                    tabIndex={0}
-                                    onClick={(e) => { e.stopPropagation(); handleNothingThisMonth(task, period); }}
-                                    className="inline-block px-1.5 py-0.5 rounded border border-gray-300 bg-white text-[10px] text-gray-500 hover:bg-gray-50"
-                                  >
-                                    {period?.carry ? `— Nothing for ${monthShort(period.ym)}` : "— Nothing this month"}
-                                  </span>
-                                </div>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Section Cleans */}
-                  {sectionCleans.length > 0 && (
-                    <div className="border-t pt-4">
-                      {/* This Month / Next Month toggle */}
-                      <div className="flex items-center gap-1 mb-2">
-                        {[
-                          { key: "this", label: "This Month" },
-                          { key: "next", label: "Next Month" },
-                        ].map((tab) => (
-                          <button
-                            key={tab.key}
-                            onClick={() => setCleanMonth(tab.key)}
-                            className={`text-[11px] rounded-full px-3 py-1 border font-medium ${cleanMonth === tab.key ? "bg-gray-700 text-white border-gray-700" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}
-                          >
-                            {tab.label}
-                          </button>
-                        ))}
-                      </div>
-                      {/* Today's sections — rostered staff, incomplete */}
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Section Cleans</div>
-                        <span className="text-[11px] font-semibold text-gray-500">{sectionDone}/{sectionTotal} ({sectionTotal ? Math.round((sectionDone / sectionTotal) * 100) : 0}%)</span>
-                      </div>
-                      <div className="w-full bg-gray-100 rounded-full h-1 mb-2">
-                        <div className="bg-gray-400 h-1 rounded-full transition-all" style={{ width: `${sectionTotal ? Math.round((sectionDone / sectionTotal) * 100) : 0}%` }} />
-                      </div>
-                      {myTodaySections.length > 0 && (
-                        <div className="grid grid-cols-4 gap-1.5 mb-2">
-                          {myTodaySectionsSorted.map((sc) => {
-                            const overdue = sc.isOverdue;
-                            const monthLabel = new Date(sc.month).toLocaleString("en-AU", { month: "long" });
-                            return (
-                            <button
-                              key={sc.id}
-                              onClick={() => handleSectionComplete(sc)}
-                              disabled={completingSection === sc.id}
-                              className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${overdue ? "border-l-red-400 bg-red-50" : "border-l-blue-400 bg-white"} text-left shadow-sm hover:shadow-md transition-shadow`}
-                            >
-                              <div className="font-medium text-[11px] leading-tight text-gray-800 line-clamp-2">{overdue && "⚠️ "}{sc.section?.name}</div>
-                              <div className={`text-[10px] mt-0.5 ${overdue ? "text-red-500" : "text-blue-600"}`}>{sc.section?.staff?.name || "All staff"}</div>
-                              <div className="mt-1 flex items-center justify-between">
-                                {overdue
-                                  ? <span className="text-[9px] px-1 py-0.5 rounded-full bg-red-100 text-red-600">Overdue — {monthLabel}</span>
-                                  : <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">Section</span>
-                                }
-                                {sc.section?.notes && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); setInfoOpenId(`section-${sc.id}`); }}
-                                    className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white text-[9px] text-gray-500"
-                                  >i</button>
-                                )}
-                              </div>
-                            </button>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* Collapsible all sections */}
-                      <button
-                        onClick={() => setSectionCleansExpanded((e) => !e)}
-                        className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-100"
-                      >
-                        <span>{cleanMonth === "next" ? "Next Month" : "Section Cleans"} {sectionDone}/{sectionTotal}</span>
-                        <span>{sectionCleansExpanded ? "▲" : "▼"}</span>
-                      </button>
-
-                      {sectionCleansExpanded && (
-                        <div className="grid grid-cols-4 gap-1.5 mt-2">
-                          {[...activeMonthCleans]
-                            .sort((a, b) => (a.completed_at ? 1 : -1) - (b.completed_at ? 1 : -1))
-                            .map((sc) => {
-                              const isDone = Boolean(sc.completed_at);
-                              const overdue = sc.isOverdue && !isDone;
-                              const completedBy = isDone ? staffById[sc.completed_by_staff_id]?.name : null;
-                              const overdueMonth = overdue ? new Date(sc.month).toLocaleString("en-AU", { month: "long" }) : null;
-                              return (
-                                <button
-                                  key={sc.id}
-                                  onClick={() => handleSectionComplete(sc)}
-                                  disabled={completingSection === sc.id}
-                                  className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${isDone ? "border-l-green-500 bg-white" : overdue ? "border-l-red-400 bg-red-50" : "border-l-blue-400 bg-white"} text-left shadow-sm hover:shadow-md transition-shadow`}
-                                >
-                                  <div className="flex items-start justify-between gap-1">
-                                    <div className="font-medium text-[11px] leading-tight text-gray-800 line-clamp-2 flex-1">{overdue && "⚠️ "}{sc.section?.name}</div>
-                                    {isDone && <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>}
-                                  </div>
-                                  <div className={`text-[10px] mt-0.5 ${overdue ? "text-red-500" : "text-blue-600"}`}>{sc.section?.staff?.name || "All staff"}</div>
-                                  <div className="mt-1 text-[10px] text-gray-400">
-                                    {isDone
-                                      ? <span className="text-green-600">by {completedBy || "staff"}</span>
-                                      : overdue
-                                      ? <span className="text-[9px] px-1 py-0.5 rounded-full bg-red-100 text-red-600">Overdue — {overdueMonth}</span>
-                                      : <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-100 text-blue-700">Section</span>}
-                                  </div>
-                                </button>
-                              );
-                            })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-
-        {/* Staff + Notes column */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-white">
-
-          {/* Staff section */}
-          <div className="border-b shrink-0 px-4 pt-3 pb-3 bg-white">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-gray-700">Today's Staff</h2>
-              
-            </div>
-
-            {/* Staff photos with times */}
-            <div className="flex flex-wrap gap-3">
-              {onShiftStaff.map((s) => {
-                const isSelected = s.id === selectedStaffId;
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setSelectedStaffId(s.id)}
-                    className={`relative flex flex-col items-center p-1.5 rounded-xl border transition-all hover:shadow-md ${isSelected ? "ring-2 ring-green-500 border-green-300" : "border-gray-200"}`}
-                  >
-                    {approvalReminderIds.has(s.id) && (
-                      <span className="absolute -top-1 -right-1 z-10 text-base" title="Approve your timesheet">⚠️</span>
-                    )}
-                    {incidentReviewMap[s.id] && (
+                  <div className="mt-1 flex items-center justify-between">
+                    <span className="text-[10px] text-gray-400">
+                      {overdue ? <span className="text-red-500 font-medium">Overdue</span> : task.due_time ? formatTime(task.due_time) : ""}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className={`text-[9px] px-1 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
                       <span
                         role="button"
                         tabIndex={0}
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const incId = incidentReviewMap[s.id];
-                          await supabase.from("incidents").update({ assigned_seen: true }).eq("id", incId);
-                          setIncidentReviewMap((prev) => {
-                            const next = { ...prev };
-                            delete next[s.id];
-                            return next;
-                          });
-                          router.push("/qspp?tab=incidents");
-                        }}
-                        className="absolute -bottom-1 -left-1 z-10 text-base cursor-pointer"
-                        title="Incident to review"
+                        onClick={(e) => { e.stopPropagation(); setInfoOpenId((prev) => (prev === task.id ? null : task.id)); }}
+                        className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-[9px] text-gray-500"
+                      >i</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            };
+
+            // One job card (My jobs, For anyone, Everyone)
+            // Someone else's task / section clean (another person's, several other people's, or a role the selected
+            // person doesn't have): ask "Did you do it for them?" first. Own jobs, own-role jobs, unassigned jobs and
+            // undoing a done job stay one tap. Checklists, order follow-ups and policy reads don't record anything on
+            // the tap, so they open as before.
+            const whoseJob = (j) => (j.staffIds.length
+              ? j.staffIds.map((id) => firstOf(staffById[id]?.name)).filter(Boolean).join(" / ")
+              : j.role ? `a ${j.role}` : "");
+            const needsCover = (j) => !!selectedStaffId && !j.done && ["task", "monthCard", "clean"].includes(j.action.type)
+              && !(j.action.type !== "clean" && j.checklist) && !j.anyone && !isMine(j, selectedStaffId, roleOf(selectedStaffId));
+            const completeJob = (j, coverFor) => {
+              const a = j.action;
+              if (a.type === "task") handleTaskTap(a.task, coverFor);
+              else if (a.type === "monthCard") handleMonthCardTap(a.task, a.period, coverFor);
+              else if (a.type === "clean") handleSectionComplete(a.sc, coverFor);
+            };
+            const runJob = (j) => {
+              if (infoOpenId) { setInfoOpenId(null); return; }
+              const a = j.action;
+              if (needsCover(j)) {
+                setCoverAsk({ whose: whoseJob(j), forId: j.staffIds.length === 1 ? j.staffIds[0] : null, run: (coverFor) => completeJob(j, coverFor) });
+                return;
+              }
+              if (["task", "monthCard", "clean"].includes(a.type)) completeJob(j, null);
+              else if (a.type === "policy") { if (a.request.document.pdf_url) window.open(a.request.document.pdf_url, "_blank", "noopener,noreferrer"); setOpenPolicyJob(a.request); }
+              else if (a.type === "induction") setOpenInductionId(a.id);
+              else if (a.type === "followUp") setFollowUpOpen(a.which);
+            };
+            const renderJob = (j) => (
+              <button
+                key={j.key}
+                onClick={() => runJob(j)}
+                disabled={j.action.type === "clean" && completingSection === j.action.sc.id}
+                className={`w-full text-left rounded-lg border border-gray-200 border-l-4 px-3 py-2 shadow-sm hover:shadow-md transition-shadow ${j.done ? "border-l-green-500 bg-white opacity-60" : j.overdue ? "border-l-red-500 bg-red-50" : `${CARD_BORDER[j.kind]} bg-white`} ${selectedStaffId ? "active:scale-[0.99]" : ""}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className={`font-semibold text-sm leading-tight break-words ${j.done ? "text-gray-500" : j.overdue ? "text-red-700" : "text-gray-800"}`}>{j.title}</div>
+                  <span className={`shrink-0 text-xs font-semibold whitespace-nowrap ${j.done ? "text-green-600" : j.overdue ? "text-red-600" : "text-gray-500"}`}>{j.status}</span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${TAG_STYLE[j.tagKind]}`}>{j.tag}</span>
+                  {j.detail && <span className="break-words">{j.detail}</span>}
+                  {j.progress && (
+                    <span className="inline-block w-20 h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                      <span className="block h-full bg-teal-500" style={{ width: `${Math.round((j.progress.n / j.progress.of) * 100)}%` }} />
+                    </span>
+                  )}
+                  {j.checklist && !j.done && <span className="text-blue-700">Tap to open</span>}
+                </div>
+                {(j.nothing || j.info) && (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    {j.nothing && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => { e.stopPropagation(); handleNothingThisMonth(j.nothing.task, j.nothing.period); }}
+                        className="inline-block px-1.5 py-0.5 rounded border border-gray-300 bg-white text-[10px] text-gray-500 hover:bg-gray-50"
                       >
-                        📋
+                        {j.nothing.period?.carry ? `— Nothing for ${monthShort(j.nothing.period.ym)}` : "— Nothing this month"}
                       </span>
                     )}
-                    <Avatar
-                      name={s.name}
-                      photoUrl={s.photo_url}
-                      className="w-14 h-14 rounded-full"
-                    />
-                    <span className="text-[11px] mt-1 text-center max-w-[72px] truncate text-gray-700 font-medium">{s.name}</span>
-                    {s.start_time && s.end_time && (
-                      <span className="text-[10px] text-gray-400 text-center">{formatRosterTime(s.start_time)}–{formatRosterTime(s.end_time)}</span>
+                    {j.info && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => { e.stopPropagation(); setInfoOpenId(j.info); }}
+                        className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-[9px] text-gray-500"
+                      >i</span>
                     )}
-                  </button>
-                );
-              })}
-              {onShiftStaff.length === 0 && (
-                <div className="text-xs text-gray-400">No staff rostered today.</div>
-              )}
-            </div>
-
-            {/* Wage approval reminder */}
-            {selectedStaffId && approvalReminderIds.has(selectedStaffId) && (
-              <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                ⚠️ {selectedStaffName}, please confirm your hours for this pay period in Wages before it's finalised.
-              </div>
-            )}
-
-            {/* Staff tip */}
-            <div className="mt-2 text-xs text-gray-400">
-              {selectedStaffId
-                ? <span className="text-green-700 font-medium">✓ {selectedStaffName} selected</span>
-                : "Tap your photo, then tap each task you complete."}
-            </div>
-
-            {/* Off-roster staff selection */}
-            <div className="mt-2">
-              <button
-                onClick={() => setShowOffRoster((o) => !o)}
-                className="text-xs text-blue-600 hover:underline"
-              >
-                Not on roster? Select your name
+                  </div>
+                )}
               </button>
-              {showOffRoster && (
-                <select
-                  value={selectedStaffId || ""}
-                  onChange={(e) => {
-                    setSelectedStaffId(e.target.value ? Number(e.target.value) : null);
-                    setShowOffRoster(false);
-                  }}
-                  className="mt-1 block w-full max-w-xs border rounded-lg px-3 py-2 text-sm"
-                >
-                  <option value="">Select your name…</option>
-                  {staff.filter((s) => s.role !== "Locum").map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-          </div>
+            );
+
+            // Section cleans tile: this month (+ any carried over), tap for the full list
+            const monthCleans = sectionCleans.filter((sc) => sc.isCurrentMonth || sc.isOverdue);
+            const thisMonthCleans = sectionCleans.filter((sc) => sc.isCurrentMonth);
+            const cleansDone = thisMonthCleans.filter((sc) => sc.completed_at).length;
+            const cleansOverdue = monthCleans.filter((sc) => sc.isOverdue).length;
+            const cleanRank = (sc) => (sc.isOverdue ? 0 : !sc.completed_at ? 1 : 2);
+            const activeDeliveries = todayDeliveries.filter((d) => d.status !== "skipped");
+            const deliveredCount = activeDeliveries.filter((d) => d.status === "delivered").length;
+            const nextDelivery = activeDeliveries.find((d) => d.status !== "delivered");
+
+            const selected = selectedStaffId ? staffById[selectedStaffId] : null;
+            const myList = selected ? listFor(selected.id) : [];
+            const myWaiting = waitingCount(myList);
+            const isOnToday = selected && todayRosteredIds.has(selected.id);
+            const comingUp = selected ? comingUpFor({ id: selected.id, role: selected.role, allListTasks, sectionCleans, todayStr, monthStart }) : [];
+
+            return (
+              <>
+                {/* Date + staff strip */}
+                <div className="px-4 pt-3 pb-2 border-b shrink-0 bg-white">
+                  <div className="text-xl font-bold text-gray-800 mb-2">
+                    {new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {onShiftStaff.map((s) => {
+                      const isSelected = s.id === selectedStaffId;
+                      const n = waitingCount(listFor(s.id));
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => tapPerson(s.id)}
+                          className={`relative flex flex-col items-center w-[84px] p-1.5 rounded-xl border bg-white transition-all hover:shadow-md ${isSelected ? "ring-2 ring-green-500 border-green-300" : "border-gray-200"}`}
+                        >
+                          {approvalReminderIds.has(s.id) && (
+                            <span className="absolute -top-1 -left-1 z-10 text-base" title="Approve your timesheet">⚠️</span>
+                          )}
+                          {incidentReviewMap[s.id] && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                const incId = incidentReviewMap[s.id];
+                                await supabase.from("incidents").update({ assigned_seen: true }).eq("id", incId);
+                                setIncidentReviewMap((prev) => {
+                                  const next = { ...prev };
+                                  delete next[s.id];
+                                  return next;
+                                });
+                                router.push("/qspp?tab=incidents");
+                              }}
+                              className="absolute top-9 -left-1 z-10 text-base cursor-pointer"
+                              title="Incident to review"
+                            >
+                              📋
+                            </span>
+                          )}
+                          <span className="relative">
+                            <Avatar name={s.name} photoUrl={s.photo_url} className="w-12 h-12 rounded-full" />
+                            {!loading && (
+                              <span className={`absolute -top-1 -right-2 min-w-[20px] h-5 px-1 inline-flex items-center justify-center rounded-full border-2 border-white text-[10px] font-bold text-white ${n ? "bg-red-500" : "bg-green-500"}`}>
+                                {n || "✓"}
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-[11px] mt-1 text-center max-w-[76px] truncate text-gray-700 font-medium">{s.name}</span>
+                          {s.start_time && s.end_time && (
+                            <span className="text-[10px] text-gray-400 text-center">{formatRosterTime(s.start_time)}–{formatRosterTime(s.end_time)}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                    {onShiftStaff.length === 0 && <div className="text-xs text-gray-400 self-center">No staff rostered today.</div>}
+                    <button
+                      onClick={tapEveryone}
+                      className={`relative flex flex-col items-center w-[84px] p-1.5 rounded-xl border bg-white transition-all hover:shadow-md ${jobsView === "everyone" || !selectedStaffId ? "ring-2 ring-gray-700 border-gray-400" : "border-gray-200"}`}
+                    >
+                      <span className="relative w-12 h-12 rounded-full bg-gray-800 text-white inline-flex items-center justify-center text-xl">
+                        👥
+                        {!loading && (
+                          <span className={`absolute -top-1 -right-2 min-w-[20px] h-5 px-1 inline-flex items-center justify-center rounded-full border-2 border-white text-[10px] font-bold text-white ${everyone.total ? "bg-red-500" : "bg-green-500"}`}>
+                            {everyone.total || "✓"}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[11px] mt-1 text-gray-700 font-medium">Everyone</span>
+                      <span className="text-[10px] text-gray-400">All jobs</span>
+                    </button>
+                  </div>
+
+                  {/* Wage approval reminder */}
+                  {selectedStaffId && approvalReminderIds.has(selectedStaffId) && (
+                    <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      ⚠️ {selectedStaffName}, please confirm your hours for this pay period in Wages before it's finalised.
+                    </div>
+                  )}
+
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="text-gray-400">
+                      {selectedStaffId
+                        ? <span className="text-green-700 font-medium">✓ {selectedStaffName} selected</span>
+                        : "Tap your photo, then tap each task you complete."}
+                    </span>
+                    {/* Off-roster staff selection */}
+                    <button onClick={() => setShowOffRoster((o) => !o)} className="text-blue-600 hover:underline">
+                      Not on roster? Select your name
+                    </button>
+                    {showOffRoster && (
+                      <select
+                        value={selectedStaffId || ""}
+                        onChange={(e) => {
+                          setSelectedStaffId(e.target.value ? Number(e.target.value) : null);
+                          setJobsView("person");
+                          setShowOffRoster(false);
+                        }}
+                        className="block w-full max-w-xs border rounded-lg px-3 py-2 text-sm"
+                      >
+                        <option value="">Select your name…</option>
+                        {staff.filter((x) => x.role !== "Locum").map((x) => (
+                          <option key={x.id} value={x.id}>{x.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3">
+                  {loading ? (
+                    <div className="text-sm text-gray-500 p-4">Loading tasks...</div>
+                  ) : (
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
+
+                      {/* ── Team today ── */}
+                      <section className="bg-white rounded-xl border p-3 space-y-3">
+                        <h2 className="text-base font-bold text-gray-800">Team today</h2>
+
+                        <div>
+                          <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Shared</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                            <button
+                              onClick={() => setShowShoppingList(true)}
+                              className={`pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${shoppingCount ? "border-l-blue-500" : "border-l-gray-300"} text-left bg-white shadow-sm hover:shadow-md`}
+                            >
+                              <div className="font-semibold text-sm text-gray-800">🛒 Shopping list</div>
+                              <div className={`text-xs font-medium ${shoppingCount ? "text-blue-600" : "text-gray-400"}`}>
+                                {shoppingCount ? `${shoppingCount} to buy` : "Nothing to buy"}
+                              </div>
+                              <div className="text-[10px] text-gray-400">Tap to see or add</div>
+                            </button>
+                            <button
+                              onClick={() => activeDeliveries.length && setShowDeliveriesModal(true)}
+                              className={`pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${!activeDeliveries.length ? "border-l-gray-300" : deliveredCount === activeDeliveries.length ? "border-l-green-500" : "border-l-orange-400"} text-left bg-white shadow-sm hover:shadow-md`}
+                            >
+                              <div className="font-semibold text-sm text-gray-800">🚚 Deliveries</div>
+                              <div className={`text-xs font-medium ${activeDeliveries.length ? "text-blue-600" : "text-gray-400"}`}>
+                                {activeDeliveries.length ? `${deliveredCount} of ${activeDeliveries.length} done` : "None today"}
+                              </div>
+                              <div className="text-[10px] text-gray-400 truncate">
+                                {nextDelivery ? `Next: ${nextDelivery.delivery_customers?.name || "—"}` : activeDeliveries.length ? "All delivered ✓" : ""}
+                              </div>
+                            </button>
+                            <button
+                              onClick={() => setSectionCleansExpanded((e) => !e)}
+                              className={`pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${cleansOverdue ? "border-l-red-500" : "border-l-green-500"} text-left bg-white shadow-sm hover:shadow-md ${sectionCleansExpanded ? "ring-2 ring-green-200" : ""}`}
+                            >
+                              <div className="font-semibold text-sm text-gray-800">🧽 Section cleans</div>
+                              <div className="text-xs font-medium text-green-700">
+                                {cleansDone} of {thisMonthCleans.length} this month
+                                {cleansOverdue > 0 && <span className="text-red-600"> · {cleansOverdue} overdue</span>}
+                              </div>
+                              <div className="text-[10px] text-gray-400">{sectionCleansExpanded ? "Tap to close" : "Tap to see all sections"}</div>
+                            </button>
+                            {hireDueBack.length > 0 && (
+                              <button
+                                onClick={() => setShowHireModal(true)}
+                                className="pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 border-l-red-500 text-left bg-white shadow-sm hover:shadow-md"
+                              >
+                                <div className="font-semibold text-sm text-gray-800">📦 Hire Returns</div>
+                                <div className="text-xs text-red-600 font-medium">{hireDueBack.length} due back</div>
+                                <div className="text-[10px] text-gray-400">Tap to follow up</div>
+                              </button>
+                            )}
+                          </div>
+                          {sectionCleansExpanded && (
+                            <div className="mt-2 border rounded-lg divide-y overflow-hidden">
+                              {monthCleans.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">No section cleans this month.</div>}
+                              {[...monthCleans].sort((a, b) => cleanRank(a) - cleanRank(b) || String(a.section?.name || "").localeCompare(String(b.section?.name || ""))).map((sc) => {
+                                const isDone = Boolean(sc.completed_at);
+                                return (
+                                  <button
+                                    key={sc.id}
+                                    onClick={() => {
+                                      const owner = sc.section?.assigned_staff_id ? Number(sc.section.assigned_staff_id) : null;
+                                      if (selectedStaffId && !isDone && owner && owner !== Number(selectedStaffId)) {
+                                        setCoverAsk({ whose: firstOf(staffById[owner]?.name) || "someone else", forId: owner, run: (coverFor) => handleSectionComplete(sc, coverFor) });
+                                        return;
+                                      }
+                                      handleSectionComplete(sc);
+                                    }}
+                                    disabled={completingSection === sc.id}
+                                    className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-50"
+                                  >
+                                    <span className="text-gray-800 min-w-0 truncate">{sc.section?.name} <span className="text-gray-400">· {sc.section?.staff?.name || "All staff"}</span></span>
+                                    <span className={`shrink-0 text-xs font-semibold ${isDone ? "text-green-600" : sc.isOverdue ? "text-red-600" : "text-gray-400"}`}>
+                                      {isDone ? `✓ ${dayMonth(perthDateOf(sc.completed_at))} · ${coverLabel(firstOf(staffById[sc.completed_by_staff_id]?.name) || "staff", staffById[sc.covering_for_staff_id]?.name)}` : sc.isOverdue ? `${monthShort(String(sc.month).slice(0, 7))}, overdue` : "Not yet"}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                              <div className="px-3 py-1.5 text-[10px] text-gray-400">Tap a section to mark it done (tap again to undo).</div>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-baseline justify-between gap-2 mb-1">
+                            <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Daily routines · anyone can do these</div>
+                            <span className="text-[11px] font-semibold text-blue-700">{dailyDone} of {dailyTotal} done</span>
+                          </div>
+                          <div className="w-full bg-gray-100 rounded-full h-1 mb-1.5">
+                            <div className="bg-blue-500 h-1 rounded-full transition-all" style={{ width: `${dailyPct}%` }} />
+                          </div>
+                          {regularTasks.length ? (
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">{regularTasks.map(renderTaskCard)}</div>
+                          ) : <div className="text-xs text-gray-400">No daily routines today.</div>}
+                        </div>
+
+                        {forAnyone.length > 0 && (
+                          <div>
+                            <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">For anyone</div>
+                            <div className="space-y-1.5">{forAnyone.map(renderJob)}</div>
+                          </div>
+                        )}
+
+                      </section>
+
+                      {/* ── My jobs ── */}
+                      <section className="bg-white rounded-xl border p-3 space-y-3">
+                        {/* Everyone: the default with no photo selected, or the Everyone button (keeps the selected person
+                            as the one completing — covering for someone off today) */}
+                        {jobsView === "everyone" || !selected ? (
+                          <>
+                            <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                              <h2 className="text-base font-bold text-gray-800">Everyone's jobs</h2>
+                              <span className="text-xs text-gray-500">{everyone.total} to do</span>
+                            </div>
+                            {selected ? (
+                              <div className="text-xs rounded-lg px-3 py-2 border bg-green-50 border-green-200 text-green-800">
+                                Completing as <span className="font-semibold">{selected.name}</span>. Covering for someone? Tap their job — it's recorded as you.
+                              </div>
+                            ) : (
+                              <div className="text-xs rounded-lg px-3 py-1.5 border bg-blue-50 border-blue-100 text-blue-800">
+                                Tap your photo to see just your jobs
+                              </div>
+                            )}
+                            {everyone.groups.length === 0 && (
+                              <div className="border-2 border-dashed rounded-xl p-6 text-center text-sm text-gray-500">All done 🎉 Nothing waiting for anyone.</div>
+                            )}
+                            {everyone.groups.map((g) => (
+                              <div key={g.key} className="space-y-1.5">
+                                <div className="flex items-center gap-2 pt-1">
+                                  {g.person
+                                    ? <Avatar name={g.person.name} photoUrl={g.person.photo_url} className="w-7 h-7 rounded-full" />
+                                    : <span className="w-7 h-7 rounded-full bg-gray-800 text-white inline-flex items-center justify-center text-xs">👥</span>}
+                                  <span className="text-sm font-semibold text-gray-800">{g.person ? g.person.name : "For anyone"}</span>
+                                  <span className="text-xs text-gray-400">
+                                    {g.list.length} to do{g.offToday ? " · off today" : ""}
+                                  </span>
+                                </div>
+                                {g.list.map(renderJob)}
+                              </div>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                              <h2 className="text-base font-bold text-gray-800">{firstOf(selected.name)}'s jobs</h2>
+                              <span className="text-xs text-gray-500">{myWaiting} to do{!isOnToday ? " · not on today's roster" : ""}</span>
+                            </div>
+                            {myWaiting === 0 && (
+                              <div className="border-2 border-dashed rounded-xl p-6 text-center">
+                                <div className="text-base font-semibold text-gray-800">All done, {firstOf(selected.name)} 🎉</div>
+                                <div className="text-xs text-gray-500 mt-1">Nothing waiting for you today.</div>
+                              </div>
+                            )}
+                            {myList.length > 0 && <div className="space-y-1.5">{myList.map(renderJob)}</div>}
+                            <div className="border-t pt-2 space-y-1.5">
+                              <button onClick={() => setComingUpOpen((o) => !o)} className="text-sm font-semibold text-blue-600">
+                                Coming up {comingUpOpen ? "▾" : "▸"}
+                              </button>
+                              {comingUpOpen && (
+                                <div className="space-y-1">
+                                  {comingUp.length === 0 && <div className="text-xs text-gray-400 px-2">Nothing else this month or next.</div>}
+                                  {(() => {
+                                    // The rest of this month, then up to 3 from next month — "Show more" for the rest
+                                    const nextStart = addMonthsStr(monthStart, 1);
+                                    const thisMonth = comingUp.filter((c) => c.sort < nextStart);
+                                    const nextMonth = comingUp.filter((c) => c.sort >= nextStart);
+                                    const shown = [...thisMonth, ...(comingUpMore ? nextMonth : nextMonth.slice(0, 3))];
+                                    const hidden = nextMonth.length - (comingUpMore ? nextMonth.length : Math.min(3, nextMonth.length));
+                                    return (
+                                      <>
+                                        {shown.map((c) => (
+                                          <div key={c.key} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded bg-gray-50 text-sm">
+                                            <span className="text-gray-700 min-w-0 break-words">{c.title}</span>
+                                            <span className="shrink-0 text-xs text-gray-500">{c.when}</span>
+                                          </div>
+                                        ))}
+                                        {(hidden > 0 || (comingUpMore && nextMonth.length > 3)) && (
+                                          <button onClick={() => setComingUpMore((m) => !m)} className="px-2 text-xs font-semibold text-blue-600">
+                                            {comingUpMore ? "Show less" : `Show more (${hidden})`}
+                                          </button>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              )}
+                              <div className="flex items-center justify-between text-sm text-gray-500">
+                                <span>Done this month</span>
+                                <span className="font-semibold text-green-700">{doneThisMonth ?? "…"} ✓</span>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </section>
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+
+        {/* Notes column (the Wall) */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-white">
 
           {/* Notes section */}
           <div className="flex-1 overflow-hidden flex flex-col px-4 py-3 min-h-0">
@@ -3176,9 +3177,15 @@ const handleDeliveryTap = async (d) => {
                     })}
                   </div>
                   <div className="px-5 py-4 border-t shrink-0">
-                    <button onClick={() => handleInductionConfirm(openInduction)} disabled={inductionConfirmBusy} className="w-full bg-green-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
-                      {inductionConfirmBusy ? "Saving…" : "These were explained to me and I understand them"}
-                    </button>
+                    {isSelf(openInduction.staffId) ? (
+                      <button onClick={() => handleInductionConfirm(openInduction)} disabled={inductionConfirmBusy} className="w-full bg-green-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
+                        {inductionConfirmBusy ? "Saving…" : "These were explained to me and I understand them"}
+                      </button>
+                    ) : (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                        Only {name.split(" ")[0]} can confirm their induction — tap their photo.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3208,6 +3215,11 @@ const handleDeliveryTap = async (d) => {
                     <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm text-blue-800">
                       For <span className="font-semibold">{staffById[openInduction.staffId]?.name || "this staff member"}</span>
                     </div>
+                    {!isSelf(openInduction.staffId) && toRead.length > 0 && (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                        Only {staffById[openInduction.staffId]?.name?.split(" ")[0] || "they"} can confirm they've read this — tap their photo.
+                      </div>
+                    )}
                     <div>
                       <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Policies to read ({toRead.length})</div>
                       {toRead.length === 0 ? (
@@ -3225,9 +3237,11 @@ const handleDeliveryTap = async (d) => {
                                 ) : (
                                   <span className="flex-1 text-center border border-gray-200 rounded-lg py-2 text-sm text-gray-400 bg-gray-50">Not available yet</span>
                                 )}
-                                <button onClick={() => handleInductionAck(r)} disabled={!!inductionAckId || !r.document.pdf_url} className="flex-[2] bg-blue-600 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-40">
-                                  {inductionAckId === r.id ? "Saving…" : "I have read and understood"}
-                                </button>
+                                {isSelf(openInduction.staffId) && (
+                                  <button onClick={() => handleInductionAck(r)} disabled={!!inductionAckId || !r.document.pdf_url} className="flex-[2] bg-blue-600 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-40">
+                                    {inductionAckId === r.id ? "Saving…" : "I have read and understood"}
+                                  </button>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -3280,9 +3294,15 @@ const handleDeliveryTap = async (d) => {
               ) : (
                 <div className="text-center border border-gray-200 rounded-lg py-2 text-sm text-gray-400 bg-gray-50">Not available yet — the PDF hasn't been uploaded</div>
               )}
-              <button onClick={handlePolicyAck} disabled={policyAckBusy || !openPolicyJob.document.pdf_url} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
-                {policyAckBusy ? "Saving…" : "I have read and understood"}
-              </button>
+              {isSelf(openPolicyJob.staff_id) ? (
+                <button onClick={handlePolicyAck} disabled={policyAckBusy || !openPolicyJob.document.pdf_url} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-40">
+                  {policyAckBusy ? "Saving…" : "I have read and understood"}
+                </button>
+              ) : (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                  Only {staffById[openPolicyJob.staff_id]?.name?.split(" ")[0] || "they"} can confirm they've read this — tap their photo.
+                </div>
+              )}
             </div>
           </div>
         </>,
@@ -3406,6 +3426,35 @@ const handleDeliveryTap = async (d) => {
         </>,
         document.body
       )}
+      {/* "Did you do it for them?" — completing someone else's job on the kiosk */}
+      {coverAsk && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setCoverAsk(null)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setCoverAsk(null)}>
+            <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <div>
+                <div className="text-base font-semibold text-gray-800">
+                  {coverAsk.whose ? `This is ${coverAsk.whose}'s job.` : "This is someone else's job."}
+                </div>
+                <div className="text-sm text-gray-600 mt-1">Did you do it for them? It'll be recorded as done by {selectedStaffName || "you"}.</div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { const { run, forId } = coverAsk; setCoverAsk(null); run(forId); }}
+                  className="flex-1 bg-green-600 text-white rounded-lg py-2.5 text-sm font-semibold"
+                >
+                  Yes, I did it
+                </button>
+                <button onClick={() => setCoverAsk(null)} className="flex-1 border border-gray-300 rounded-lg py-2.5 text-sm font-medium text-gray-700">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
       {/* Info modal */}
       {infoOpenId && !String(infoOpenId).startsWith("section-") && createPortal(
         <>
@@ -3415,13 +3464,13 @@ const handleDeliveryTap = async (d) => {
               <div className="h-1 rounded-t-2xl bg-blue-500" />
               <div className="flex items-center justify-between px-4 py-3">
                 <div className="min-w-0 pr-3">
-                  <div className="truncate font-medium text-gray-900">{tasks.find((t) => t.id === infoOpenId)?.title}</div>
-                  {tasks.find((t) => t.id === infoOpenId)?.due_time && <div className="text-xs text-gray-500">Due {formatTime(tasks.find((t) => t.id === infoOpenId)?.due_time)}</div>}
+                  <div className="truncate font-medium text-gray-900">{[...tasks, ...offRosterTasks].find((t) => t.id === infoOpenId)?.title}</div>
+                  {[...tasks, ...offRosterTasks].find((t) => t.id === infoOpenId)?.due_time && <div className="text-xs text-gray-500">Due {formatTime([...tasks, ...offRosterTasks].find((t) => t.id === infoOpenId)?.due_time)}</div>}
                 </div>
                 <button onClick={() => setInfoOpenId(null)} className="h-10 w-10 inline-flex items-center justify-center rounded-full hover:bg-gray-100">✕</button>
               </div>
               <div className="px-4 pb-4 text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">
-                {String(tasks.find((t) => t.id === infoOpenId)?.info ?? "").trim() || "No notes yet."}
+                {String([...tasks, ...offRosterTasks].find((t) => t.id === infoOpenId)?.info ?? "").trim() || "No notes yet."}
               </div>
             </div>
           </div>

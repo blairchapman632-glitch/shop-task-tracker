@@ -1,5 +1,34 @@
 # Session notes
 
+## 2026-11-01 (pm) — Kiosk home redesign: Team today + My jobs, covering for, policy reads self-only
+
+### Done
+- **Kiosk home redesign** (`pages/index.js`, new `lib/kioskJobs.js`):
+  - **Staff strip** at the top: a red count of jobs waiting on each photo (green ✓ if none), plus a 👥 **Everyone** button with the total.
+  - **Team today**, in this order: Shared tiles (🛒 Shopping list, 🚚 Deliveries "N of M done · Next", 🧽 Section cleans "N of M this month", tap for the full list with ✓ date · who / Not yet / overdue; 📦 Hire returns when due), Daily routines grid with count, "For anyone" (role + unassigned jobs).
+  - **My jobs**: no photo selected = Everyone's jobs (grouped by person, then people "off today" with jobs, then For anyone) under the bar "Tap your photo to see just your jobs". A photo narrows to that person (tap again = back to Everyone). The person's list puts overdue first; jobs done today stay greyed at the bottom (tap to undo); "All done, [name] 🎉".
+  - **Card tags:** Monthly / Weekly / Job / Checklist ("N of M" + bar) / Section clean / Policy / Induction / Order / role name.
+  - **Footer:** "Coming up" (rest of this month + 3 from next month, Show more) and "Done this month N ✓".
+  - Old Today's Jobs and Section Cleans blocks (and the This/Next Month toggle) removed.
+  - Off-today jobs are kept in a separate list, so the leaderboard is unchanged.
+- **Covering for:** tapping someone else's task or section clean (another person's, several people's, or a role you don't have) asks "This is [name]'s job. Did you do it for them?" → recorded as done by the selected person, plus who it was for when it's one person. Shown as "Blair Chapman (for Bridget)" in Activity, "✓ Done by", and the section clean list. Own / own-role / unassigned jobs and undo stay one tap; checklists, order follow-ups and policies don't ask.
+- **Policy reads / induction self-only:** the "I have read and understood" and induction confirm buttons only show when that person's own photo is selected; anyone else sees "Only [name] can confirm they've read this — tap their photo." (also checked in the handlers).
+
+### Schema changes (run by Blair)
+- `2026-11-01_covering_for.sql`: `completions.covering_for_staff_id`, `section_clean_schedule.covering_for_staff_id` (nullable, staff FK).
+
+### New tables (add to RLS pass)
+- None.
+
+### Follow-ups / parked
+- Leaderboard bug (existing, not fixed): points only count tasks on today's kiosk list — a monthly task completed earlier this month has dropped off, so it can score 0.
+- Policy reads / inductions for people not on today aren't loaded, so they don't show under Everyone "off today".
+- Role or multi-person jobs done "for" someone store no specific person (still confirmed).
+- Checklist History doesn't show "for" (each line already records who answered it).
+
+### Not committed
+- Nothing.
+
 ## 2026-11-01 — Tick-list checklists, Pharmacy Claims, per-checklist stock items, Missing documents, training record edit
 
 ### Done
