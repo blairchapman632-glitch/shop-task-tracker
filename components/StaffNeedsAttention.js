@@ -1,4 +1,5 @@
-// Admin → Staff main screen (no one selected): "Needs attention" across reviews, training, certificates and new starters (incl. inductions).
+// Admin → Staff main screen (no one selected): "Needs attention" across reviews, training, certificates, missing documents
+// (employment contract / induction checklist) and new starters (incl. inductions).
 // Reuses the same rules as QSPP → Reviews / Training (lib/performanceReview.js, lib/trainingPlan.js).
 // onOpen(staff, tab, reviewId?) opens that person on the right staff-form tab; onOpenPolicy(docId) opens that document in /qspp.
 import { useEffect, useState } from "react";
@@ -10,13 +11,17 @@ import { inductionProgress, inductionState } from "../lib/induction";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
+const hasChecklistDoc = (docs, staffId) => (docs || []).some((d) => Number(d.staff_id) === Number(staffId) && d.type === "induction_checklist");
+// "Chalkboard new starter": has an accepted electronic contract
+const isChalkboardStarter = (contracts, staffId) => contracts.some((c) => Number(c.staff_id) === Number(staffId) && c.status === "accepted");
+
 // In-progress inductions: "Induction x of y · due [date]" — red overdue, amber within 14 days of due.
-// Only people with a started induction are flagged (existing staff without one never are).
-function inductionAttention(staff, inductions, inductionItems, today) {
+// Skipped when a paper induction checklist has been uploaded, or "No induction required" is ticked.
+function inductionAttention(staff, inductions, inductionItems, today, docs) {
   const items = [];
   for (const ind of inductions) {
     const s = staff.find((x) => Number(x.id) === Number(ind.staff_id));
-    if (!s || s.paper_induction_on_file) continue;
+    if (!s || s.induction_not_required || hasChecklistDoc(docs, s.id)) continue;
     const p = inductionProgress(inductionItems.filter((i) => String(i.induction_id) === String(ind.id)));
     items.push({
       key: `ns-ind-${ind.id}`, staff: s, item: `Induction ${p.done} of ${p.total}`,
@@ -45,6 +50,58 @@ function newStarterAttention(staff, contracts) {
   return items.sort((a, b) => a.sort.localeCompare(b.sort));
 }
 
+// Missing documents (older staff whose paper contract / induction checklist was never uploaded): one line per person.
+//   Employment contract on file: an accepted employment_contracts row, a "signed_contract" document, or the
+//   "No contract required" tick (staff.contract_not_required). Skipped while their newest contract is "issued"
+//   (that's under New starters).
+//   Induction checklist on file: an "induction_checklist" document, a signed-off induction, or the "No induction required"
+//   tick (staff.induction_not_required). Never checked for Chalkboard new starters (accepted contract — they're under New
+//   starters: induction in progress or "Induction not started"). Skipped while an induction
+//   is in progress (under New starters). The "Paper induction on file" tick doesn't count — the file must be uploaded.
+function missingDocsAttention(staff, contracts, inductions, docs) {
+  const items = [];
+  for (const s of staff) {
+    const id = Number(s.id);
+    const myDocs = (docs || []).filter((d) => Number(d.staff_id) === id);
+    const myContracts = contracts.filter((c) => Number(c.staff_id) === id && (c.status === "issued" || c.status === "accepted"))
+      .sort((a, b) => String(b.issued_at || "").localeCompare(String(a.issued_at || "")));
+    const myInductions = inductions.filter((i) => Number(i.staff_id) === id);
+    const missing = [];
+
+    const contractIssued = myContracts[0]?.status === "issued";
+    const contractOnFile = s.contract_not_required === true
+      || myContracts.some((c) => c.status === "accepted")
+      || myDocs.some((d) => d.type === "signed_contract");
+    if (!contractIssued && !contractOnFile) missing.push("Employment contract");
+
+    // In progress, or a Chalkboard new starter -> handled under New starters, not here
+    const skipInductionCheck = myInductions.some((i) => i.status === "in_progress") || myContracts.some((c) => c.status === "accepted");
+    const inductionOnFile = s.induction_not_required === true
+      || myDocs.some((d) => d.type === "induction_checklist") || myInductions.some((i) => i.status === "signed_off");
+    if (!skipInductionCheck && !inductionOnFile) missing.push("Induction checklist");
+
+    if (missing.length) {
+      items.push({ key: `md-${s.id}`, staff: s, item: missing.join(", "), label: "Upload paper copy", state: "not_done", sort: s.name || "" });
+    }
+  }
+  return items.sort((a, b) => a.sort.localeCompare(b.sort));
+}
+
+// Chalkboard new starters (accepted contract) with no induction at all (no staff_inductions row, no uploaded checklist,
+// "No induction required" not ticked): "Induction not started" — neutral before their start date, red from it.
+function inductionNotStartedAttention(staff, contracts, inductions, docs, today) {
+  const items = [];
+  for (const s of staff) {
+    if (!isChalkboardStarter(contracts, s.id) || s.induction_not_required || hasChecklistDoc(docs, s.id)) continue;
+    if (inductions.some((i) => Number(i.staff_id) === Number(s.id))) continue;
+    const start = s.start_date || "";
+    const label = !start ? "No start date" : start > today ? `Starts ${fmtDateShort(start)}` : `Started ${fmtDateShort(start)}`;
+    const state = start && start > today ? "neutral" : "not_done";
+    items.push({ key: `ns-nis-${s.id}`, staff: s, item: "Induction not started", label, state, sort: start || "0000" });
+  }
+  return items.sort((a, b) => a.sort.localeCompare(b.sort));
+}
+
 export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -66,10 +123,11 @@ export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy })
           supabase.from("employment_contracts").select("staff_id, status, issued_at, accepted_at").in("staff_id", ids),
           fetchAllRows(() => supabase.from("policy_read_requests").select(REQUEST_COLUMNS).eq("pharmacy_id", PHARMACY_ID).neq("status", "cancelled")),
           supabase.from("pharmacy_documents").select("id, title").eq("pharmacy_id", PHARMACY_ID).eq("active", true),
-          supabase.from("staff_inductions").select("id, staff_id, due_date").eq("pharmacy_id", PHARMACY_ID).eq("status", "in_progress").in("staff_id", ids),
+          // in_progress -> New starters; signed_off -> counts as the induction checklist being on file (Missing documents)
+          supabase.from("staff_inductions").select("id, staff_id, due_date, status").eq("pharmacy_id", PHARMACY_ID).in("status", ["in_progress", "signed_off"]).in("staff_id", ids),
         ]);
         if (rv.error || ct.error || pd.error || ind.error) throw rv.error || ct.error || pd.error || ind.error;
-        const indIds = (ind.data || []).map((i) => i.id);
+        const indIds = (ind.data || []).filter((i) => i.status === "in_progress").map((i) => i.id);
         const inductionItems = indIds.length
           ? await fetchAllRows(() => supabase.from("staff_induction_items").select("id, induction_id, result").in("induction_id", indIds).order("id"))
           : [];
@@ -98,11 +156,13 @@ export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy })
       },
       { title: "Training", tab: "training", items: t.filter((i) => i.kind === "training") },
       { title: "Certificates", tab: "documents", items: t.filter((i) => i.kind === "certificate") },
+      { title: "Missing documents", tab: "documents", items: missingDocsAttention(active, data.contracts, data.inductions, data.training?.docs) },
       {
         title: "New starters", tab: "newstarter",
         items: [
           ...newStarterAttention(active, data.contracts).map((i) => ({ ...i, state: "due" })),
-          ...inductionAttention(active, data.inductions, data.inductionItems, today),
+          ...inductionAttention(active, data.inductions.filter((i) => i.status === "in_progress"), data.inductionItems, today, data.training?.docs),
+          ...inductionNotStartedAttention(active, data.contracts, data.inductions, data.training?.docs, today),
         ],
       },
       {

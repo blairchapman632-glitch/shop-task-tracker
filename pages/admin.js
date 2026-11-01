@@ -207,7 +207,8 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     can_conduct_reviews: member?.can_conduct_reviews ?? false,
     exclude_from_reviews: member?.exclude_from_reviews ?? false,
     can_sign_inductions: member?.can_sign_inductions ?? false,
-    paper_induction_on_file: member?.paper_induction_on_file ?? false,
+    contract_not_required: member?.contract_not_required ?? false,
+    induction_not_required: member?.induction_not_required ?? false,
     uniforms_supplied: member?.uniforms_supplied ?? "",
     badge_supplied: member?.badge_supplied ?? false,
     keys_supplied: member?.keys_supplied ?? false,
@@ -500,7 +501,8 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
       can_conduct_reviews: form.can_conduct_reviews,
       exclude_from_reviews: form.exclude_from_reviews,
       can_sign_inductions: form.can_sign_inductions,
-      paper_induction_on_file: form.paper_induction_on_file,
+      contract_not_required: !!form.contract_not_required,
+      induction_not_required: !!form.induction_not_required,
       uniforms_supplied: form.uniforms_supplied === "" ? null : Number(form.uniforms_supplied),
       badge_supplied: form.badge_supplied,
       keys_supplied: form.keys_supplied,
@@ -756,7 +758,8 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             { field: "can_conduct_reviews", label: "Can conduct performance reviews", desc: "Appears in the reviewer list when starting a review" },
             ...(form.role !== "Locum" ? [{ field: "can_sign_inductions", label: "Can sign off inductions", desc: "Can tick induction items for new starters in their staff app" }] : []),
             { field: "exclude_from_reviews", label: "Exclude from performance reviews", desc: "Never shown as due for a review" },
-            ...(form.role !== "Locum" ? [{ field: "paper_induction_on_file", label: "Paper induction on file", desc: "Inducted on the paper checklist — no induction in the New starter tab" }] : []),
+            ...(form.role !== "Locum" ? [{ field: "contract_not_required", label: "No contract required", desc: "Turns off the missing employment contract check (e.g. owner)" }] : []),
+            ...(form.role !== "Locum" ? [{ field: "induction_not_required", label: "No induction required", desc: "Turns off the missing induction checklist check (e.g. owner)" }] : []),
           ].map(({ field, label, desc }) => (
             <div key={field} className="flex items-center justify-between">
               <div>
@@ -1398,10 +1401,12 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                 )}
               </div>
 
-              {/* d) Induction (QSPP-4.9-induction-checklist) */}
+              {/* d) Induction (QSPP-4.9-induction-checklist) — not shown at all when "No induction required" is ticked */}
+              {!member?.induction_not_required && (
               <div className="border-t pt-4 space-y-2">
                 <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">4. Induction</div>
-                {member?.paper_induction_on_file ? (
+                {/* An uploaded paper induction checklist (Documents tab) replaces Start induction */}
+                {documents.some((d) => d.type === "induction_checklist") ? (
                   <p className="text-xs text-gray-500">Paper induction on file.</p>
                 ) : (
                   <InductionStep
@@ -1419,6 +1424,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                   />
                 )}
               </div>
+              )}
             </>
           )}
         </div>
