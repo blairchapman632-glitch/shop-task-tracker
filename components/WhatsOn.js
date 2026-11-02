@@ -1,6 +1,6 @@
 // Kiosk "What's on" — the pharmacy calendar (above the Wall). Things that happen, not things to do: no completion.
-// Month grid (Monday first, ‹ ›, today ringed): a dot per category on days with one-day items, a thin bar under
-// every day of a date range. Legend, "Next up" (next 2), tap a day to expand its items inline (tap again to close).
+// Month grid (Monday first, ‹ ›, today = solid blue circle): a dot per category on days with one-day items, very pale
+// shading behind every day of a date range (rounded at its start / end and at week edges). Legend, "Next up" (next 2), tap a day to expand its items inline (tap again to close).
 // Events: any staff member adds (their photo selected), edits / deletes their own; a manager (admin PIN) edits any,
 // uses manager-only categories (Closure) and attaches jobs. Public holidays, birthdays and anniversaries are read
 // live and are read-only. The tapped day is a compact list (3 rows, "+N more") that closes itself after 30 seconds
@@ -15,10 +15,13 @@ import {
   monthGrid, monthLabel, shortDate, longDate, fmtTime, daysBetween, itemsBetween, loadCategories, loadHolidays,
   loadEvents, loadEventJobs, ensureYearlyJobs,
 } from "../lib/calendar";
+import { CARD, CARD_HEAD, CARD_TITLE } from "../lib/kioskStyle";
 
 const WK = ["M", "T", "W", "T", "F", "S", "S"];
 const GREY = "#94a3b8";
 const colourOf = (item) => item.category?.colour || GREY;
+// Range shading: a very pale tint (~6%) of the event's legend colour (Promotion = pale orange, like its dot)
+const tintOf = (item) => `${colourOf(item)}0F`;
 
 export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId, onJobsChanged }) {
   const today = todayPerth();
@@ -122,33 +125,33 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
   const [y, m] = ym.split("-").map(Number);
 
   return (
-    <div className="shrink-0 border-b px-4 pt-1.5 pb-2.5 bg-white" onPointerDown={() => setTapAt(Date.now())}>
-      {/* One compact line: title, then ‹ month › */}
-      <div className="flex items-center justify-between h-8">
-        <h2 className="text-sm font-semibold text-gray-700">What's on</h2>
+    <div className={`${CARD} shrink-0`} onPointerDown={() => setTapAt(Date.now())}>
+      {/* Card header: title, then ‹ month › */}
+      <div className={CARD_HEAD}>
+        <h2 className={CARD_TITLE}>What's on</h2>
         <div className="flex items-center gap-0.5">
           <button aria-label="Previous month" onClick={() => { setYm(addMonthsStr(`${ym}-01`, -1).slice(0, 7)); setSelDay(null); }} className="w-7 h-7 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 leading-none">‹</button>
           <button onClick={() => { setYm(today.slice(0, 7)); setSelDay(null); }} className="min-w-[108px] text-[13px] font-semibold text-gray-800 text-center" title="Back to this month">{monthLabel(ym)}</button>
           <button aria-label="Next month" onClick={() => { setYm(addMonthsStr(`${ym}-01`, 1).slice(0, 7)); setSelDay(null); }} className="w-7 h-7 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 leading-none">›</button>
         </div>
       </div>
-      {error && <p className="text-xs text-red-500 mb-1">{error}</p>}
-
       {/* Natural height (no inner scroll) — the right-hand column scrolls as one */}
-      <div>
+      <div className="px-[18px] pt-2.5 pb-[14px]">
+        {error && <p className="text-xs text-red-500 mb-1">{error}</p>}
         <div className="grid grid-cols-7">
           {WK.map((w, i) => <div key={i} className="text-center text-[11px] leading-4 font-semibold text-gray-400">{w}</div>)}
         </div>
-        {/* Mini calendar: 30px rows, no gaps (range bars run on unbroken). Number in a 20px circle — filled when
-            selected, ringed for today; a dot per category just under it; range bars along the bottom. */}
+        {/* Mini calendar: 30px rows, no gaps (range shading runs on unbroken). Number in a 20px circle — solid blue for
+            today, dark for the selected day; weekends slightly muted; a dot per category just under the number. */}
         <div className="grid grid-cols-7 auto-rows-[30px]">
-          {grid.map((d) => {
+          {grid.map((d, idx) => {
             const inMonth = d.slice(0, 7) === ym;
             const isSel = d === selDay;
             const isToday = d === today;
             const items = onDay(d);
             const dots = [...new Map(items.filter((i) => !i.range).map((i) => [colourOf(i), i])).keys()].slice(0, 4);
-            const bars = items.filter((i) => i.range).slice(0, 2);
+            const shade = items.find((i) => i.range);
+            const weekend = idx % 7 >= 5;
             const [, , dn] = d.split("-").map(Number);
             return (
               <button
@@ -157,7 +160,18 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
                 aria-label={longDate(d)}
                 className="relative h-[30px] flex justify-center pt-px rounded-md hover:bg-gray-50"
               >
-                <span className={`w-5 h-5 rounded-full inline-flex items-center justify-center text-[13px] leading-none ${isSel ? "bg-gray-900 text-white font-bold" : inMonth ? "text-gray-900" : "text-gray-400"} ${isToday && !isSel ? "ring-[1.5px] ring-blue-600 font-bold" : ""}`}>
+                {shade && (() => {
+                  // Rounded at the range's start / end and at the week's edges (Monday / Sunday)
+                  const roundL = shade.start === d || idx % 7 === 0;
+                  const roundR = shade.end === d || idx % 7 === 6;
+                  return (
+                    <span
+                      className="absolute top-[3px] bottom-[3px]"
+                      style={{ background: tintOf(shade), left: roundL ? 2 : 0, right: roundR ? 2 : 0, borderRadius: `${roundL ? 12 : 0}px ${roundR ? 12 : 0}px ${roundR ? 12 : 0}px ${roundL ? 12 : 0}px` }}
+                    />
+                  );
+                })()}
+                <span className={`relative w-5 h-5 rounded-full inline-flex items-center justify-center text-[13px] leading-none ${isToday ? "bg-blue-600 text-white font-bold" : isSel ? "bg-gray-900 text-white font-bold" : !inMonth ? "text-gray-400" : weekend ? "text-gray-500" : "text-gray-900"} ${isToday && isSel ? "ring-2 ring-gray-900 ring-offset-1" : ""}`}>
                   {dn}
                 </span>
                 {dots.length > 0 && (
@@ -165,22 +179,6 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
                     {dots.map((c) => <span key={c} className="w-[5px] h-[5px] rounded-full" style={{ background: c }} />)}
                   </span>
                 )}
-                {bars.map((b, bi) => {
-                  const isStart = b.start === d || d === grid[0];
-                  const isEnd = b.end === d || d === grid[41];
-                  return (
-                    <span
-                      key={b.key}
-                      className="absolute h-[3px]"
-                      style={{
-                        bottom: bi * 4, background: colourOf(b),
-                        left: b.start === d ? 5 : 0, right: b.end === d ? 5 : 0,
-                        borderTopLeftRadius: isStart ? 3 : 0, borderBottomLeftRadius: isStart ? 3 : 0,
-                        borderTopRightRadius: isEnd ? 3 : 0, borderBottomRightRadius: isEnd ? 3 : 0,
-                      }}
-                    />
-                  );
-                })}
               </button>
             );
           })}
@@ -193,8 +191,8 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
           ))}
         </div>
 
-        {/* Next up */}
-        <div className="border-t mt-1.5 pt-1.5">
+        {/* Next up — light grey box */}
+        <div className="mt-2 rounded-lg bg-[#F8FAFC] px-3 py-2">
           <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Next up</div>
           {nextUp.length === 0 && <div className="text-xs text-gray-400">Nothing coming up.</div>}
           {nextUp.map((i) => (

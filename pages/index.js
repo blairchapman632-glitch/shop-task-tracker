@@ -18,8 +18,9 @@ import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview
 import { adminFetch } from "../lib/adminFetch";
 import { ensureSectionYear, perthYear, perthMonthStart } from "../lib/sectionCleans";
 import { hasShowFrom, showFromDate, prevMonthOf, monthShort, periodMonthOfCompletion } from "../lib/taskPeriods";
-import { buildKioskJobs, isMine, jobsFor, waitingCount, anyoneJobs, everyoneGroups, comingUpFor, dayMonth, TAG_STYLE, CARD_BORDER } from "../lib/kioskJobs";
+import { buildKioskJobs, isMine, jobsFor, waitingCount, anyoneJobs, everyoneGroups, comingUpFor, dayMonth, TAG_STYLE } from "../lib/kioskJobs";
 import { fetchAllRows } from "../lib/trainingPlan";
+import { CARD, CARD_HEAD, CARD_TITLE, COUNT_PILL, SECTION_LABEL, HOVER_ONLY, HOVER_SHOW } from "../lib/kioskStyle";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -113,6 +114,7 @@ const roleColour = {
 };
 
 const REACTIONS = ["👍", "❤️", "🙂"];
+
 
 const truncate = (text, max = 180) => {
   const s = String(text || "").trim();
@@ -287,13 +289,13 @@ function ChangePINModal({ staff, onClose }) {
 
 function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardOpen, activityOpen, leadersWeek, leadersMonth, leadersPeriod, setLeadersPeriod, feed, onLogout, onChangePIN, onAddToList }) {
   return (
-    <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
+    <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r border-[#E3E7ED] flex flex-col py-4 px-3 gap-1 shrink-0">
       <div className="text-sm font-bold text-gray-800 px-2 mb-3 leading-tight">
         Byford Pharmacy
       </div>
 
       {/* Nav links */}
-      <NavLink href="/" icon="🏠" label="Home" />
+      <NavLink href="/" icon="🏠" label="Home" active />
       <button
         onClick={onAddToList}
         className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
@@ -313,12 +315,12 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       <NavLink href="/training" icon="📚" label="Training" />
       <NavLink href="/qspp" icon="📁" label="QSPP" />
       <NavLink href="/deliveries" icon="🚚" label="Deliveries" />
-      <div className="border-t my-1" />
+      <div className="border-t border-[#F0F2F5] my-1" />
       <NavLink href="/roster" icon="📅" label="Roster" />
       <NavLink href="/tasks" icon="✅" label="Tasks" />
       <NavLink href="/admin" icon="⚙️" label="Admin" />
 
-      <div className="border-t my-2" />
+      <div className="border-t border-[#F0F2F5] my-2" />
 
       {/* Scrollable middle section */}
       <div className="flex-1 overflow-y-auto min-h-0 space-y-1">
@@ -388,7 +390,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
   );
 }
 
-function NavLink({ href, icon, label, disabled }) {
+function NavLink({ href, icon, label, disabled, active }) {
   if (disabled) {
     return (
       <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-400 cursor-not-allowed">
@@ -398,7 +400,7 @@ function NavLink({ href, icon, label, disabled }) {
     );
   }
   return (
-    <Link href={href} className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100">
+    <Link href={href} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm ${active ? "bg-[#E8EFFE] text-blue-700 font-bold" : "text-gray-700 hover:bg-gray-100"}`}>
       <span>{icon}</span> {label}
     </Link>
   );
@@ -1980,7 +1982,7 @@ const handleDeliveryTap = async (d) => {
 
   // ── Render ──
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-100">
+    <div className="flex h-screen overflow-hidden bg-[#EEF1F5]">
 
       {/* Confetti */}
       {showConfetti && (
@@ -2013,11 +2015,12 @@ const handleDeliveryTap = async (d) => {
       />
 
       {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden gap-4 p-[18px]">
 
         {/* Kiosk home: staff strip, then "Team today" (shared) and "My jobs" (the tapped photo, or Everyone).
             Jobs come from lib/kioskJobs.js — the photo badges, each list and Everyone use the same rules. */}
-        <div className="w-[62%] min-w-[420px] flex flex-col border-r bg-gray-50 overflow-hidden">
+        {/* Widths: Team today 1.3 : Everyone's jobs 1 : right column (What's on + Notes) 0.9 */}
+        <div className="flex-[2.3] min-w-[420px] flex flex-col gap-4 overflow-hidden">
           {(() => {
             const todayStr = todayPerth();
             const monthStart = perthMonthStart();
@@ -2041,28 +2044,31 @@ const handleDeliveryTap = async (d) => {
               const isDone = completedTaskIds.has(task.id);
               const overdue = isOverdue(task, completedTaskIds);
               const badge = getTaskBadge(task);
-              const borderColour = isDone ? "border-l-green-500" : overdue ? "border-l-red-500" : "border-l-blue-400";
+              // Done = pale green, muted text, green tick. Not done = white, dark bold name, empty circle.
               return (
                 <button
                   key={task.id}
                   onClick={() => { if (infoOpenId) { setInfoOpenId(null); return; } handleTaskTap(task); }}
-                  className={`relative pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${borderColour} text-left bg-white shadow-sm hover:shadow-md transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
+                  className={`group relative px-2.5 py-2 rounded-lg border text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${isDone ? "bg-[#F1F8F3] border-[#DCEFE2]" : "bg-white border-[#D5DCE5]"} ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
                 >
-                  <div className="flex items-start justify-between gap-1">
-                    <div className={`font-medium text-[11px] leading-tight break-words line-clamp-2 flex-1 ${isDone ? "text-gray-500" : "text-gray-800"}`}>{task.title}</div>
-                    {isDone && <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className={`text-[11px] leading-tight break-normal flex-1 min-w-0 ${isDone ? "text-[#5E7366] font-normal" : "text-gray-900 font-bold"}`}>{task.title}</div>
+                    {isDone
+                      ? <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>
+                      : <span className="shrink-0 inline-block h-4 w-4 rounded-full border-2 border-gray-300" />}
                   </div>
                   <div className="mt-1 flex items-center justify-between">
                     <span className="text-[10px] text-gray-400">
                       {overdue ? <span className="text-red-500 font-medium">Overdue</span> : task.due_time ? formatTime(task.due_time) : ""}
                     </span>
                     <div className="flex items-center gap-1">
-                      <span className={`text-[9px] px-1 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                      {/* "Daily" is the default — only other frequencies get a chip */}
+                      {badge.label !== "Daily" && <span className="text-[9px] px-1 py-0.5 rounded-full bg-blue-50 text-blue-700">{badge.label}</span>}
                       <span
                         role="button"
                         tabIndex={0}
                         onClick={(e) => { e.stopPropagation(); setInfoOpenId((prev) => (prev === task.id ? null : task.id)); }}
-                        className="h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-[9px] text-gray-500"
+                        className={`h-4 w-4 inline-flex items-center justify-center rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-[9px] text-gray-500 transition-opacity ${HOVER_ONLY}`}
                       >i</span>
                     </div>
                   </div>
@@ -2103,11 +2109,11 @@ const handleDeliveryTap = async (d) => {
                 key={j.key}
                 onClick={() => runJob(j)}
                 disabled={j.action.type === "clean" && completingSection === j.action.sc.id}
-                className={`w-full text-left rounded-lg border border-gray-200 border-l-4 px-3 py-2 shadow-sm hover:shadow-md transition-shadow ${j.done ? "border-l-green-500 bg-white opacity-60" : j.overdue ? "border-l-red-500 bg-red-50" : `${CARD_BORDER[j.kind]} bg-white`} ${selectedStaffId ? "active:scale-[0.99]" : ""}`}
+                className={`w-full text-left rounded-lg px-3 py-2 transition-colors ${j.done ? "bg-[#F8FAFC] opacity-60" : j.overdue ? "bg-red-50 hover:bg-red-100/60" : "bg-[#F8FAFC] hover:bg-gray-100"} ${selectedStaffId ? "active:scale-[0.99]" : ""}`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div className={`font-semibold text-sm leading-tight break-words ${j.done ? "text-gray-500" : j.overdue ? "text-red-700" : "text-gray-800"}`}>{j.title}</div>
-                  <span className={`shrink-0 text-xs font-semibold whitespace-nowrap ${j.done ? "text-green-600" : j.overdue ? "text-red-600" : "text-gray-500"}`}>{j.status}</span>
+                  <div className={`font-medium text-sm leading-tight break-words ${j.done ? "text-gray-500" : j.overdue ? "text-red-700" : "text-gray-900"}`}>{j.title}</div>
+                  <span className={`shrink-0 text-xs whitespace-nowrap ${j.done ? "text-green-600 font-semibold" : j.overdue ? "text-red-600 font-semibold" : "text-gray-400"}`}>{j.status}</span>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500">
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${TAG_STYLE[j.tagKind]}`}>{j.tag}</span>
@@ -2162,9 +2168,9 @@ const handleDeliveryTap = async (d) => {
 
             return (
               <>
-                {/* Date + staff strip */}
-                <div className="px-4 pt-3 pb-2 border-b shrink-0 bg-white">
-                  <div className="text-xl font-bold text-gray-800 mb-2">
+                {/* Top bar card: date + hint + staff strip */}
+                <div className={`${CARD} shrink-0 px-[18px] pt-[14px] pb-3`}>
+                  <div className="text-xl font-bold text-gray-900 mb-2">
                     {new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -2219,7 +2225,7 @@ const handleDeliveryTap = async (d) => {
                     {onShiftStaff.length === 0 && <div className="text-xs text-gray-400 self-center">No staff rostered today.</div>}
                     <button
                       onClick={tapEveryone}
-                      className={`relative flex flex-col items-center w-[84px] p-1.5 rounded-xl border bg-white transition-all hover:shadow-md ${jobsView === "everyone" || !selectedStaffId ? "ring-2 ring-gray-700 border-gray-400" : "border-gray-200"}`}
+                      className={`relative flex flex-col items-center w-[84px] p-1.5 rounded-xl border transition-all hover:shadow-md ${jobsView === "everyone" || !selectedStaffId ? "bg-blue-50 ring-2 ring-blue-600 border-transparent" : "bg-white border-gray-200"}`}
                     >
                       <span className="relative w-12 h-12 rounded-full bg-gray-800 text-white inline-flex items-center justify-center text-xl">
                         👥
@@ -2270,65 +2276,66 @@ const handleDeliveryTap = async (d) => {
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-3">
+                {/* px-1 / -mx-1: room for the cards' shadows inside the scroll area */}
+                <div className="flex-1 overflow-y-auto -mx-1 px-1 pb-1">
                   {loading ? (
                     <div className="text-sm text-gray-500 p-4">Loading tasks...</div>
                   ) : (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-4 items-start">
 
                       {/* ── Team today ── */}
-                      <section className="bg-white rounded-xl border p-3 space-y-3">
-                        <h2 className="text-base font-bold text-gray-800">Team today</h2>
+                      <section className={CARD}>
+                        <div className={CARD_HEAD}><h2 className={CARD_TITLE}>Team today</h2></div>
+                        <div className="px-[18px] py-[14px] space-y-4">
 
                         <div>
-                          <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Shared</div>
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                             <button
                               onClick={() => setShowShoppingList(true)}
-                              className={`pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${shoppingCount ? "border-l-blue-500" : "border-l-gray-300"} text-left bg-white shadow-sm hover:shadow-md`}
+                              className="px-3 py-2 rounded-lg border border-[#E7EAF0] text-left bg-white hover:bg-gray-50"
                             >
-                              <div className="font-semibold text-sm text-gray-800">🛒 Shopping list</div>
-                              <div className={`text-xs font-medium ${shoppingCount ? "text-blue-600" : "text-gray-400"}`}>
+                              <div className="flex items-center gap-1.5 text-[15px] font-semibold leading-tight text-gray-800"><span className="text-[18px] leading-none shrink-0">🛒</span><span>Shopping list</span></div>
+                              <div className={`mt-0.5 text-[13px] font-medium ${shoppingCount ? "text-blue-600" : "text-gray-400"}`}>
                                 {shoppingCount ? `${shoppingCount} to buy` : "Nothing to buy"}
                               </div>
-                              <div className="text-[10px] text-gray-400">Tap to see or add</div>
+                              <div className="text-[11px] text-gray-400">Tap to see or add</div>
                             </button>
                             <button
                               onClick={() => activeDeliveries.length && setShowDeliveriesModal(true)}
-                              className={`pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${!activeDeliveries.length ? "border-l-gray-300" : deliveredCount === activeDeliveries.length ? "border-l-green-500" : "border-l-orange-400"} text-left bg-white shadow-sm hover:shadow-md`}
+                              className="px-3 py-2 rounded-lg border border-[#E7EAF0] text-left bg-white hover:bg-gray-50"
                             >
-                              <div className="font-semibold text-sm text-gray-800">🚚 Deliveries</div>
-                              <div className={`text-xs font-medium ${activeDeliveries.length ? "text-blue-600" : "text-gray-400"}`}>
+                              <div className="flex items-center gap-1.5 text-[15px] font-semibold leading-tight text-gray-800"><span className="text-[18px] leading-none shrink-0">🚚</span><span>Deliveries</span></div>
+                              <div className={`mt-0.5 text-[13px] font-medium ${activeDeliveries.length ? "text-blue-600" : "text-gray-400"}`}>
                                 {activeDeliveries.length ? `${deliveredCount} of ${activeDeliveries.length} done` : "None today"}
                               </div>
-                              <div className="text-[10px] text-gray-400 truncate">
+                              <div className="text-[11px] text-gray-400 truncate">
                                 {nextDelivery ? `Next: ${nextDelivery.delivery_customers?.name || "—"}` : activeDeliveries.length ? "All delivered ✓" : ""}
                               </div>
                             </button>
                             <button
                               onClick={() => setSectionCleansExpanded((e) => !e)}
-                              className={`pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 ${cleansOverdue ? "border-l-red-500" : "border-l-green-500"} text-left bg-white shadow-sm hover:shadow-md ${sectionCleansExpanded ? "ring-2 ring-green-200" : ""}`}
+                              className={`px-3 py-2 rounded-lg border text-left hover:bg-gray-50 ${sectionCleansExpanded ? "border-blue-200 bg-blue-50/40" : "border-[#E7EAF0] bg-white"}`}
                             >
-                              <div className="font-semibold text-sm text-gray-800">🧽 Section cleans</div>
-                              <div className="text-xs font-medium text-green-700">
+                              <div className="flex items-center gap-1.5 text-[15px] font-semibold leading-tight text-gray-800"><span className="text-[18px] leading-none shrink-0">🧽</span><span>Section cleans</span></div>
+                              <div className="mt-0.5 text-[13px] font-medium text-green-700">
                                 {cleansDone} of {thisMonthCleans.length} this month
                                 {cleansOverdue > 0 && <span className="text-red-600"> · {cleansOverdue} overdue</span>}
                               </div>
-                              <div className="text-[10px] text-gray-400">{sectionCleansExpanded ? "Tap to close" : "Tap to see all sections"}</div>
+                              <div className="text-[11px] text-gray-400">{sectionCleansExpanded ? "Tap to close" : "Tap to see all sections"}</div>
                             </button>
                             {hireDueBack.length > 0 && (
                               <button
                                 onClick={() => setShowHireModal(true)}
-                                className="pl-3 pr-2 py-2 rounded-lg border border-gray-200 border-l-4 border-l-red-500 text-left bg-white shadow-sm hover:shadow-md"
+                                className="px-3 py-2 rounded-lg border border-[#E7EAF0] text-left bg-white hover:bg-gray-50"
                               >
-                                <div className="font-semibold text-sm text-gray-800">📦 Hire Returns</div>
-                                <div className="text-xs text-red-600 font-medium">{hireDueBack.length} due back</div>
-                                <div className="text-[10px] text-gray-400">Tap to follow up</div>
+                                <div className="flex items-center gap-1.5 text-[15px] font-semibold leading-tight text-gray-800"><span className="text-[18px] leading-none shrink-0">📦</span><span>Hire Returns</span></div>
+                                <div className="mt-0.5 text-[13px] text-red-600 font-medium">{hireDueBack.length} due back</div>
+                                <div className="text-[11px] text-gray-400">Tap to follow up</div>
                               </button>
                             )}
                           </div>
                           {sectionCleansExpanded && (
-                            <div className="mt-2 border rounded-lg divide-y overflow-hidden">
+                            <div className="mt-2 border border-[#E7EAF0] rounded-lg divide-y divide-[#F0F2F5] overflow-hidden">
                               {monthCleans.length === 0 && <div className="px-3 py-2 text-xs text-gray-400">No section cleans this month.</div>}
                               {[...monthCleans].sort((a, b) => cleanRank(a) - cleanRank(b) || String(a.section?.name || "").localeCompare(String(b.section?.name || ""))).map((sc) => {
                                 const isDone = Boolean(sc.completed_at);
@@ -2359,11 +2366,11 @@ const handleDeliveryTap = async (d) => {
                         </div>
                         <div>
                           <div className="flex items-baseline justify-between gap-2 mb-1">
-                            <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Daily routines · anyone can do these</div>
-                            <span className="text-[11px] font-semibold text-blue-700">{dailyDone} of {dailyTotal} done</span>
+                            <div className={SECTION_LABEL}>Daily routines · anyone can do these</div>
+                            <span className="text-[11px] font-semibold text-gray-600">{dailyDone} of {dailyTotal} done</span>
                           </div>
-                          <div className="w-full bg-gray-100 rounded-full h-1 mb-1.5">
-                            <div className="bg-blue-500 h-1 rounded-full transition-all" style={{ width: `${dailyPct}%` }} />
+                          <div className="w-full bg-[#E5E9EF] rounded-full h-1 mb-2">
+                            <div className="bg-green-500 h-1 rounded-full transition-all" style={{ width: `${dailyPct}%` }} />
                           </div>
                           {regularTasks.length ? (
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">{regularTasks.map(renderTaskCard)}</div>
@@ -2372,30 +2379,32 @@ const handleDeliveryTap = async (d) => {
 
                         {forAnyone.length > 0 && (
                           <div>
-                            <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">For anyone</div>
+                            <div className={`${SECTION_LABEL} mb-1.5`}>For anyone</div>
                             <div className="space-y-1.5">{forAnyone.map(renderJob)}</div>
                           </div>
                         )}
 
+                        </div>
                       </section>
 
                       {/* ── My jobs ── */}
-                      <section className="bg-white rounded-xl border p-3 space-y-3">
+                      <section className={CARD}>
                         {/* Everyone: the default with no photo selected, or the Everyone button (keeps the selected person
                             as the one completing — covering for someone off today) */}
                         {jobsView === "everyone" || !selected ? (
                           <>
-                            <div className="flex items-baseline justify-between gap-2 flex-wrap">
-                              <h2 className="text-base font-bold text-gray-800">Everyone's jobs</h2>
-                              <span className="text-xs text-gray-500">{everyone.total} to do</span>
+                            <div className={CARD_HEAD}>
+                              <h2 className={CARD_TITLE}>Everyone's jobs</h2>
+                              {everyone.total > 0 && <span className={COUNT_PILL}>{everyone.total} to do</span>}
                             </div>
+                            <div className="px-[18px] py-[14px] space-y-3">
                             {selected ? (
                               <div className="text-xs rounded-lg px-3 py-2 border bg-green-50 border-green-200 text-green-800">
-                                Completing as <span className="font-semibold">{selected.name}</span>. Covering for someone? Tap their job — it's recorded as you.
+                                Completing as <span className="font-semibold">{selected.name}</span>. Covering for someone? Tap their job — it's recorded as you.{everyone.groups.some((g) => g.list.some((j) => j.kind === "policy")) && " Tap a policy to open it, then tick when read."}
                               </div>
                             ) : (
                               <div className="text-xs rounded-lg px-3 py-1.5 border bg-blue-50 border-blue-100 text-blue-800">
-                                Tap your photo to see just your jobs
+                                Tap your photo to see just your jobs.{everyone.groups.some((g) => g.list.some((j) => j.kind === "policy")) && " Tap a policy to open it, then tick when read."}
                               </div>
                             )}
                             {everyone.groups.length === 0 && (
@@ -2407,21 +2416,30 @@ const handleDeliveryTap = async (d) => {
                                   {g.person
                                     ? <Avatar name={g.person.name} photoUrl={g.person.photo_url} className="w-7 h-7 rounded-full" />
                                     : <span className="w-7 h-7 rounded-full bg-gray-800 text-white inline-flex items-center justify-center text-xs">👥</span>}
-                                  <span className="text-sm font-semibold text-gray-800">{g.person ? g.person.name : "For anyone"}</span>
+                                  <span className="text-sm font-bold text-gray-900">{g.person ? g.person.name : "For anyone"}</span>
                                   <span className="text-xs text-gray-400">
                                     {g.list.length} to do{g.offToday ? " · off today" : ""}
                                   </span>
                                 </div>
-                                {g.list.map(renderJob)}
+                                {/* Rows indented under the person */}
+                                <div className="pl-9 space-y-1.5">{g.list.map(renderJob)}</div>
                               </div>
                             ))}
+                            </div>
                           </>
                         ) : (
                           <>
-                            <div className="flex items-baseline justify-between gap-2 flex-wrap">
-                              <h2 className="text-base font-bold text-gray-800">{firstOf(selected.name)}'s jobs</h2>
-                              <span className="text-xs text-gray-500">{myWaiting} to do{!isOnToday ? " · not on today's roster" : ""}</span>
+                            <div className={CARD_HEAD}>
+                              <h2 className={CARD_TITLE}>{firstOf(selected.name)}'s jobs{!isOnToday && <span className="ml-2 text-xs font-normal text-gray-400">not on today's roster</span>}</h2>
+                              {myWaiting > 0 && <span className={COUNT_PILL}>{myWaiting} to do</span>}
                             </div>
+                            <div className="px-[18px] py-[14px] space-y-3">
+                            {/* Selected person banner — same green style as "Completing as" in Everyone */}
+                            {myList.some((j) => j.kind === "policy" && !j.done) && (
+                              <div className="text-xs rounded-lg px-3 py-2 border bg-green-50 border-green-200 text-green-800">
+                                Completing as <span className="font-semibold">{selected.name}</span>. Tap a policy to open it, then tick when read.
+                              </div>
+                            )}
                             {myWaiting === 0 && (
                               <div className="border-2 border-dashed rounded-xl p-6 text-center">
                                 <div className="text-base font-semibold text-gray-800">All done, {firstOf(selected.name)} 🎉</div>
@@ -2429,7 +2447,7 @@ const handleDeliveryTap = async (d) => {
                               </div>
                             )}
                             {myList.length > 0 && <div className="space-y-1.5">{myList.map(renderJob)}</div>}
-                            <div className="border-t pt-2 space-y-1.5">
+                            <div className="border-t border-[#F0F2F5] pt-2 space-y-1.5">
                               <button onClick={() => setComingUpOpen((o) => !o)} className="text-sm font-semibold text-blue-600">
                                 Coming up {comingUpOpen ? "▾" : "▸"}
                               </button>
@@ -2466,6 +2484,7 @@ const handleDeliveryTap = async (d) => {
                                 <span className="font-semibold text-green-700">{doneThisMonth ?? "…"} ✓</span>
                               </div>
                             </div>
+                            </div>
                           </>
                         )}
                       </section>
@@ -2479,7 +2498,7 @@ const handleDeliveryTap = async (d) => {
 
         {/* Notes column: "What's on" calendar, then the Wall. Scrolls as one column when it's taller than the screen;
             the Notes list keeps its own scroll, and Notes never squash below ~340px. */}
-        <div className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden bg-white">
+        <div className="flex-[0.9] min-w-[280px] flex flex-col gap-4 overflow-y-auto overflow-x-hidden -mx-1 px-1 pb-1">
           <WhatsOn
             pharmacyId={currentPharmacyId}
             staff={staff}
@@ -2488,35 +2507,38 @@ const handleDeliveryTap = async (d) => {
             onJobsChanged={() => setTasksReloadKey((k) => k + 1)}
           />
 
-          {/* Notes section */}
-          <div className="flex-1 overflow-hidden flex flex-col px-4 py-3 min-h-[340px]">
-            <div className="flex items-center justify-between mb-2 shrink-0">
-              <h2 className="text-sm font-semibold text-gray-700">Notes</h2>
+          {/* Notes card */}
+          <div className={`${CARD} flex-1 overflow-hidden flex flex-col min-h-[340px]`}>
+            <div className={`${CARD_HEAD} shrink-0`}>
+              <h2 className={CARD_TITLE}>Notes</h2>
             </div>
+            <div className="flex-1 overflow-hidden flex flex-col px-[18px] py-[14px] min-h-0">
 
             {/* Note composer */}
-            <div className="flex gap-2 mb-3 shrink-0 items-end">
+            {/* One line (~40px) that grows only when the note runs to more lines (CSS field-sizing) */}
+            <div className="flex gap-2 mb-3 shrink-0 items-center">
               <textarea
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
                 maxLength={500}
-                rows={2}
+                rows={1}
+                style={{ fieldSizing: "content" }}
                 placeholder={selectedStaffName ? `Note from ${selectedStaffName}…` : "Tap your photo, then write a note…"}
-                className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
+                className="flex-1 min-h-[40px] max-h-32 rounded-lg border border-gray-200 px-3 py-2 text-sm leading-5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-300"
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postNote(); } }}
               />
-              <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={postNote}
                   disabled={!noteText.trim() || notesSaving || !selectedStaffId}
-                  className="rounded-lg px-3 py-1.5 text-xs font-medium border border-blue-500 bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  className="h-10 rounded-lg px-4 text-sm font-medium border border-blue-500 bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   {notesSaving ? "..." : "Post"}
                 </button>
                 {selectedStaffId && (
                   <button
                     onClick={() => setShowPollComposer((o) => !o)}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors ${showPollComposer ? "border-purple-600 bg-purple-600 text-white" : "border-purple-300 bg-white text-purple-700 hover:bg-purple-50"}`}
+                    className={`h-10 rounded-lg px-3 text-sm font-medium border transition-colors ${showPollComposer ? "border-blue-300 bg-blue-50 text-blue-700" : "border-gray-300 bg-white text-blue-700 hover:bg-gray-50"}`}
                   >
                     📊 Poll
                   </button>
@@ -2591,7 +2613,7 @@ const handleDeliveryTap = async (d) => {
                     <div
                       key={n.id}
                       ref={(el) => { if (el) noteItemRefs.current[n.id] = el; }}
-                      className={`flex items-start gap-2 rounded-lg ${n.resolved ? "bg-gray-50 border border-gray-200 px-2 py-1.5 border-l-4 border-l-gray-300" : ""}`}
+                      className={`group flex items-start gap-2 py-2.5 ${n.resolved ? "bg-gray-50 px-2 rounded-lg" : ""}`}
                     >
                       <Avatar name={author?.name} photoUrl={author?.photo_url} className="w-8 h-8 rounded-full mt-0.5 shrink-0" />
                       <div className="min-w-0 flex-1">
@@ -2739,7 +2761,7 @@ const handleDeliveryTap = async (d) => {
                         <div className="mt-1 flex items-center gap-1 flex-wrap">
                           <button
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpandedNoteId((prev) => prev === n.id ? null : n.id); }}
-                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${expandedNoteId === n.id ? "border-blue-600 bg-blue-50 text-blue-700" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"}`}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${expandedNoteId === n.id ? "border-blue-600 bg-blue-50 text-blue-700" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"} ${!(repliesByNote[n.id]?.length) && expandedNoteId !== n.id ? HOVER_SHOW : ""}`}
                           >
                             💬 <span>{repliesByNote[n.id]?.length || 0}</span>
                           </button>
@@ -2747,13 +2769,14 @@ const handleDeliveryTap = async (d) => {
                             const counts = reactionsByNote[n.id]?.counts || {};
                             const mine = reactionsByNote[n.id]?.mine || null;
                             const active = mine === rx;
+                            const zero = !(counts[rx] > 0);
                             return (
-                              <button key={rx} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); toggleReaction(n.id, rx); }} className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs ${active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"}`}>
+                              <button key={rx} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); toggleReaction(n.id, rx); }} className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs transition-opacity ${active ? "border-blue-600 bg-blue-50" : "border-gray-200 bg-white"} ${zero ? HOVER_SHOW : ""}`}>
                                 {rx} <span className="tabular-nums text-gray-600">{counts[rx] || 0}</span>
                               </button>
                             );
                           })}
-                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleResolved(n); }} disabled={!selectedStaffId} className={`h-6 inline-flex items-center justify-center rounded-full border px-2 text-[11px] disabled:opacity-40 ${n.resolved ? "border-gray-200 bg-gray-50 text-gray-700" : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"}`}>
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleResolved(n); }} disabled={!selectedStaffId} className={`h-6 inline-flex items-center justify-center rounded-full border px-2 text-[11px] disabled:opacity-40 ${n.resolved ? "border-gray-200 bg-gray-50 text-gray-700" : "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"}`}>
                             {n.resolved ? "Reopen" : "Resolve"}
                           </button>
                           <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePin(n); }} disabled={!selectedStaffId} className={`h-6 w-6 inline-flex items-center justify-center rounded-full disabled:opacity-40 ${n.pinned ? "text-red-600 hover:bg-red-50" : "text-green-600 hover:bg-green-50"}`} title={n.pinned ? "Unpin" : "Pin"}>
@@ -2770,11 +2793,11 @@ const handleDeliveryTap = async (d) => {
 
                 return (
                   <div className="space-y-3">
-                    <ul className="space-y-2">{openNotes.map(renderNote)}</ul>
+                    <ul className="divide-y divide-[#F0F2F5]">{openNotes.map(renderNote)}</ul>
                     {showResolved && (
                       <div>
                         <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowResolved(false); }} className="mb-2 w-full text-xs rounded-md border border-gray-200 px-3 py-2 text-gray-600 hover:bg-gray-50">Hide resolved</button>
-                        <ul className="space-y-2">{resolvedNotes.map(renderNote)}</ul>
+                        <ul className="divide-y divide-[#F0F2F5]">{resolvedNotes.map(renderNote)}</ul>
                       </div>
                     )}
                     {!showResolved && resolvedNotes.length > 0 && (
@@ -2787,6 +2810,7 @@ const handleDeliveryTap = async (d) => {
                   </div>
                 );
               })()}
+            </div>
             </div>
           </div>
         </div>
