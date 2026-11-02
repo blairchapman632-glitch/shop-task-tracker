@@ -16,6 +16,7 @@ import { getLeaveCover } from "../lib/leaveCover";
 import { todayPerth, addMonthsStr } from "../lib/performanceReview";
 import { checkAdminPin } from "../lib/adminPin";
 import { nextDayStr } from "../lib/leaveCalendar";
+import CalendarCategoriesAdmin from "../components/CalendarCategoriesAdmin";
 
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -208,6 +209,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     exclude_from_reviews: member?.exclude_from_reviews ?? false,
     can_sign_inductions: member?.can_sign_inductions ?? false,
     contract_not_required: member?.contract_not_required ?? false,
+    hide_birthday: member?.hide_birthday ?? false,
     induction_not_required: member?.induction_not_required ?? false,
     uniforms_supplied: member?.uniforms_supplied ?? "",
     badge_supplied: member?.badge_supplied ?? false,
@@ -502,6 +504,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
       exclude_from_reviews: form.exclude_from_reviews,
       can_sign_inductions: form.can_sign_inductions,
       contract_not_required: !!form.contract_not_required,
+      hide_birthday: !!form.hide_birthday,
       induction_not_required: !!form.induction_not_required,
       uniforms_supplied: form.uniforms_supplied === "" ? null : Number(form.uniforms_supplied),
       badge_supplied: form.badge_supplied,
@@ -758,6 +761,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             { field: "can_conduct_reviews", label: "Can conduct performance reviews", desc: "Appears in the reviewer list when starting a review" },
             ...(form.role !== "Locum" ? [{ field: "can_sign_inductions", label: "Can sign off inductions", desc: "Can tick induction items for new starters in their staff app" }] : []),
             { field: "exclude_from_reviews", label: "Exclude from performance reviews", desc: "Never shown as due for a review" },
+            ...(form.role !== "Locum" ? [{ field: "hide_birthday", label: "Hide birthday on the calendar", desc: "Their birthday isn't shown on the kiosk What's on calendar" }] : []),
             ...(form.role !== "Locum" ? [{ field: "contract_not_required", label: "No contract required", desc: "Turns off the missing employment contract check (e.g. owner)" }] : []),
             ...(form.role !== "Locum" ? [{ field: "induction_not_required", label: "No induction required", desc: "Turns off the missing induction checklist check (e.g. owner)" }] : []),
           ].map(({ field, label, desc }) => (
@@ -2194,6 +2198,9 @@ function SettingsTab() {
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6 max-w-2xl">
+
+        {/* Kiosk calendar categories */}
+        <CalendarCategoriesAdmin pharmacyId={PHARMACY_ID} />
 
         {/* Staff app link */}
         <div>

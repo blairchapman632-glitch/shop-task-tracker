@@ -7,6 +7,7 @@ import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
 import ConsumablesSheet from "../components/ConsumablesSheet";
 import TicklistSheet from "../components/TicklistSheet";
+import WhatsOn from "../components/WhatsOn";
 import { loadConsumablesSettings, isTicklistChecklist, ORDER_LINE_COLUMNS } from "../lib/consumables";
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
 import { fmtDateShort, perthDateOf, todayPerth, addMonthsStr, addDaysStr } from "../lib/performanceReview";
@@ -622,6 +623,8 @@ export default function HomePage() {
   // On the List jobs due today for people NOT on today (Everyone view), and every active On the List task (Coming up)
   const [offRosterTasks, setOffRosterTasks] = useState([]);
   const [allListTasks, setAllListTasks] = useState([]);
+  // Bumped when the calendar adds / moves / removes jobs from an event, so the job lists reload
+  const [tasksReloadKey, setTasksReloadKey] = useState(0);
   // Kiosk home: which list "My jobs" shows — the selected person's ("person") or everyone's ("everyone")
   const [jobsView, setJobsView] = useState("person");
   const [comingUpOpen, setComingUpOpen] = useState(false);
@@ -936,7 +939,7 @@ export default function HomePage() {
       setLoading(false);
     };
     load();
-  }, [authChecked, currentPharmacyId]);
+  }, [authChecked, currentPharmacyId, tasksReloadKey]);
 // ── Today's deliveries (real rows + projected recurring customers) ──
   const loadTodayDeliveries = async () => {
     if (!currentPharmacyId) return;
@@ -2474,11 +2477,19 @@ const handleDeliveryTap = async (d) => {
           })()}
         </div>
 
-        {/* Notes column (the Wall) */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-white">
+        {/* Notes column: "What's on" calendar, then the Wall. Scrolls as one column when it's taller than the screen;
+            the Notes list keeps its own scroll, and Notes never squash below ~340px. */}
+        <div className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden bg-white">
+          <WhatsOn
+            pharmacyId={currentPharmacyId}
+            staff={staff}
+            staffById={staffById}
+            selectedStaffId={selectedStaffId}
+            onJobsChanged={() => setTasksReloadKey((k) => k + 1)}
+          />
 
           {/* Notes section */}
-          <div className="flex-1 overflow-hidden flex flex-col px-4 py-3 min-h-0">
+          <div className="flex-1 overflow-hidden flex flex-col px-4 py-3 min-h-[340px]">
             <div className="flex items-center justify-between mb-2 shrink-0">
               <h2 className="text-sm font-semibold text-gray-700">Notes</h2>
             </div>

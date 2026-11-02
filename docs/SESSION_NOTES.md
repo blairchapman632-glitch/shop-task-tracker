@@ -1,5 +1,44 @@
 # Session notes
 
+## 2026-11-02 — Kiosk calendar "What's on"
+
+### Done
+- **"What's on" card above the Wall** (`components/WhatsOn.js`, logic in `lib/calendar.js`). Dates and events only — nothing to complete; separate from the roster (roster notes and approved leave not shown).
+  - **Mini calendar:** Monday first, ‹ month ›, 30px rows; today ringed, selected day filled. Dot per category; date ranges as an unbroken bar.
+  - **Legend and Next up:** one-line legend; Next up shows the next 2 items.
+  - **Day panel:** tap a day for a compact inline list (3 rows, "+N more"; dot + title + date range "day N of M" or time; short note; Edit / 🔒 Edit). Small "+ Add". Closes itself after 30s without a tap and is closed on load.
+  - **Column:** the right-hand column (What's on + Notes) scrolls as one; Notes keep a ~340px minimum. Loads only the shown month (+ Next up).
+- **Add / edit sheet** (`components/CalendarEventSheet.js`): title, category chips, one day / date range, optional time, note, repeats yearly. "Adding as [name]"; "Added by" shown when editing; Delete with a built-in confirm.
+  - Any staff member adds (photo selected) and edits / deletes their own.
+  - Manager PIN: edit anyone's event, use manager-only categories (Closure), attach jobs.
+- **Automatic items, read live and read-only:**
+  - public holidays (as Closure);
+  - birthdays (day only, never age; respects `staff.hide_birthday`);
+  - work anniversaries ("Paige — 12 years at Byford Pharmacy").
+  - Active non-locum staff only.
+- **Jobs from events = normal one-off assigned jobs** (tasks, `specific_date`) with the event link.
+  - Due rule: N days before start / start day / end day / day after end, moved off public holidays.
+  - Event moved → not-done jobs move with it. Event deleted → not-done jobs removed; done ones stay.
+  - Yearly events: next occurrence's jobs are created when it's within 2 months (kiosk load); a clash is skipped quietly.
+  - Shown in Tasks → Assigned jobs with "📅 From: [event]".
+- **Admin:** Settings → Calendar categories (name, colour, manager-only, order, active — no delete); staff form "Hide birthday on the calendar" tick.
+
+### Schema changes
+- `2026-11-02_calendar.sql` (run): new `calendar_categories` (5 seeded: Pharmacy event, Promotion, Staff, Supplier / rep, Closure — manager-only) and `calendar_events`; `tasks.event_id` (on delete set null), `event_job_key`, `event_occurrence`, `event_due_rule`, `event_due_days`; `staff.hide_birthday`.
+- `2026-11-02_calendar_jobs_unique.sql`: unique index `tasks_event_job_occurrence_unique` (event_id, event_job_key, event_occurrence where event_id is not null) — **check it has been run**.
+
+### New tables (add to RLS pass)
+- `calendar_categories`, `calendar_events`.
+
+### Follow-ups / parked
+- Stage 2: read-only calendar in /me; "Post to the Wall" when adding an event (optional poll); day-before push reminder.
+- Editing a yearly event's job after this year's copy is done only takes effect once next year's copy is created.
+- Most staff have no date of birth / start date recorded — fill in under Admin → Staff for birthdays and anniversaries.
+- The expanded day panel wasn't screenshot-checked at laptop height (adds ~60–110px; the column scrolls if needed).
+
+### Not committed
+- Nothing.
+
 ## 2026-11-01 (pm) — Kiosk home redesign: Team today + My jobs, covering for, policy reads self-only
 
 ### Done

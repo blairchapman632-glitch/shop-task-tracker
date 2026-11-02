@@ -77,6 +77,8 @@ export default function TasksPage() {
 
   // ── Data ──
   const [tasks, setTasks] = useState([]);
+  // Jobs made from a kiosk calendar event (tasks.event_id): event id -> title, for the "From: …" tag
+  const [eventTitles, setEventTitles] = useState({});
   const [staffOptions, setStaffOptions] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -172,6 +174,13 @@ const handlePinSubmit = async () => {
       loadSections(currentPharmacyId);
     }
   }, [currentPharmacyId]);
+
+  useEffect(() => {
+    const ids = [...new Set(tasks.map((t) => t.event_id).filter(Boolean))];
+    if (!ids.length) { setEventTitles({}); return; }
+    supabase.from("calendar_events").select("id, title").in("id", ids)
+      .then(({ data }) => setEventTitles(Object.fromEntries((data || []).map((e) => [e.id, e.title]))));
+  }, [tasks]);
 
   // ── Filtered tasks ──
   const generalTasks = useMemo(() => tasks.filter((t) =>
@@ -665,6 +674,7 @@ const handleAutoBalance = async (staffId, staffName) => {
         <div className="font-medium text-sm text-gray-800">
           {task.title}
           {task.checklist_type && <span className="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">🧾 Checklist</span>}
+          {task.event_id && <span className="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-100">📅 From: {eventTitles[task.event_id] || "calendar event"}</span>}
         </div>
         {task.info && <div className="text-xs text-gray-400 truncate max-w-[200px]">{task.info}</div>}
       </td>
