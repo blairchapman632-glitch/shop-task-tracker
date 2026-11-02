@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
+import NavIcon from "../components/NavIcon";
 import ConsumablesSheet from "../components/ConsumablesSheet";
 import TicklistSheet from "../components/TicklistSheet";
 import WhatsOn from "../components/WhatsOn";
@@ -295,96 +296,37 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       </div>
 
       {/* Nav links */}
-      <NavLink href="/" icon="🏠" label="Home" active />
-      <button
-        onClick={onAddToList}
-        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
-      >
-        <span>📝</span> Create a Task
+      <NavLink href="/" icon="home" label="Home" active />
+      <button onClick={onAddToList} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-[#374151] hover:bg-gray-100 w-full text-left">
+        <NavIcon name="plusSquare" className="text-[#6B7280]" /> Create a Task
       </button>
-      <button
-        onClick={onViewRoster}
-        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
-      >
-        <span>📋</span> View Roster
+      <button onClick={onViewRoster} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-[#374151] hover:bg-gray-100 w-full text-left">
+        <NavIcon name="calendar" className="text-[#6B7280]" /> View Roster
       </button>
-      <NavLink href="/insights" icon="📊" label="Insights" />
-      <NavLink href="/wages" icon="💰" label="Wages" />
-      <NavLink href="/availability" icon="🗓️" label="Time off" />
-      <NavLink href="/messages" icon="💬" label="Messages" />
-      <NavLink href="/training" icon="📚" label="Training" />
-      <NavLink href="/qspp" icon="📁" label="QSPP" />
-      <NavLink href="/deliveries" icon="🚚" label="Deliveries" />
+      <NavLink href="/insights" icon="barChart" label="Insights" />
+      <NavLink href="/wages" icon="dollar" label="Wages" />
+      <NavLink href="/availability" icon="sun" label="Time off" />
+      <NavLink href="/messages" icon="message" label="Messages" />
+      <NavLink href="/training" icon="graduation" label="Training" />
+      <NavLink href="/qspp" icon="shieldCheck" label="QSPP" />
+      <NavLink href="/deliveries" icon="truck" label="Deliveries" />
       <div className="border-t border-[#F0F2F5] my-1" />
-      <NavLink href="/roster" icon="📅" label="Roster" />
-      <NavLink href="/tasks" icon="✅" label="Tasks" />
-      <NavLink href="/admin" icon="⚙️" label="Admin" />
+      <NavLink href="/roster" icon="calendarGrid" label="Roster" />
+      <NavLink href="/tasks" icon="checkSquare" label="Tasks" />
+      <NavLink href="/admin" icon="settings" label="Admin" />
 
-      <div className="border-t border-[#F0F2F5] my-2" />
+      {/* Leaderboard and Activity are no longer in the sidebar (being retired separately — their data and
+          SidebarSection stay for now). Spacer keeps Change PIN / Logout at the bottom. */}
+      <div className="flex-1" />
 
-      {/* Scrollable middle section */}
-      <div className="flex-1 overflow-y-auto min-h-0 space-y-1">
-
-      {/* Leaderboard */}
-      <SidebarSection
-        label="🏆 Leaderboard"
-        open={leaderboardOpen}
-        onToggle={onViewLeaderboard}
-      >
-        <div className="flex gap-1 mb-2">
-          {["week", "month"].map((p) => (
-            <button
-              key={p}
-              onClick={() => setLeadersPeriod(p)}
-              className={`flex-1 text-[10px] rounded border px-1 py-0.5 ${leadersPeriod === p ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600"}`}
-            >
-              {p === "week" ? "Week" : "Month"}
-            </button>
-          ))}
-        </div>
-        {(leadersPeriod === "week" ? leadersWeek : leadersMonth).slice(0, 5).map((r, i) => (
-          <div key={r.staff_id} className="flex items-center justify-between text-xs py-0.5">
-            <span className="text-gray-500 mr-1">#{i + 1}</span>
-            <span className="flex-1 truncate font-medium text-gray-800">{r.name}</span>
-            <span className="tabular-nums text-gray-600">{r.points}pt</span>
-          </div>
-        ))}
-        {(leadersPeriod === "week" ? leadersWeek : leadersMonth).length === 0 && (
-          <div className="text-xs text-gray-400">No points yet.</div>
-        )}
-      </SidebarSection>
-
-      {/* Activity */}
-      <SidebarSection
-        label="📋 Activity"
-        open={activityOpen}
-        onToggle={onViewActivity}
-      >
-        {feed.length === 0 ? (
-          <div className="text-xs text-gray-400">No activity yet.</div>
-        ) : (
-          feed.slice(0, 8).map((e) => (
-            <div key={e.id} className="text-[11px] text-gray-600 py-0.5 leading-tight">
-              <span className="font-medium text-gray-800">{e.staffName}</span> completed{" "}
-              <span className="font-medium">"{e.taskTitle}"</span> at {e.timeStr}
-            </div>
-          ))
-        )}
-      </SidebarSection>
-
-      </div>{/* end scrollable middle */}
-
-      <button
-        onClick={onChangePIN}
-        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
-      >
-        <span>🔑</span> Change PIN
+      <button onClick={onChangePIN} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-[#374151] hover:bg-gray-100 w-full text-left">
+        <NavIcon name="key" className="text-[#6B7280]" /> Change PIN
       </button>
       <button
         onClick={onLogout}
-        className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-red-600 hover:bg-red-50 w-full text-left mt-2"
+        className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-red-600 hover:bg-red-50 w-full text-left mt-2"
       >
-        <span>🚪</span> Logout
+        <NavIcon name="logOut" /> Logout
       </button>
     </aside>
   );
@@ -393,15 +335,15 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
 function NavLink({ href, icon, label, disabled, active }) {
   if (disabled) {
     return (
-      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-400 cursor-not-allowed">
-        <span>{icon}</span> {label}
+      <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-gray-400 cursor-not-allowed">
+        <NavIcon name={icon} /> {label}
         <span className="ml-auto text-[9px] text-gray-300">Soon</span>
       </div>
     );
   }
   return (
-    <Link href={href} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm ${active ? "bg-[#E8EFFE] text-blue-700 font-bold" : "text-gray-700 hover:bg-gray-100"}`}>
-      <span>{icon}</span> {label}
+    <Link href={href} className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm ${active ? "bg-[#E8EFFE] text-[#2563EB] font-bold" : "text-[#374151] hover:bg-gray-100"}`}>
+      <NavIcon name={icon} className={active ? "text-[#2563EB]" : "text-[#6B7280]"} /> {label}
     </Link>
   );
 }
@@ -2052,13 +1994,16 @@ const handleDeliveryTap = async (d) => {
                   className={`group relative px-2.5 py-2 rounded-lg border text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${isDone ? "bg-[#F1F8F3] border-[#DCEFE2]" : "bg-white border-[#D5DCE5]"} ${selectedStaffId ? "active:scale-[0.98]" : ""}`}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className={`text-[11px] leading-tight break-normal flex-1 min-w-0 ${isDone ? "text-[#5E7366] font-normal" : "text-gray-900 font-bold"}`}>{task.title}</div>
+                    {/* <wbr> after "/" lets "Sweep/Vacuum" wrap there instead of running into the tick */}
+                    <div className={`text-[15px] leading-tight break-normal flex-1 min-w-0 ${isDone ? "text-[#5E7366] font-normal" : "text-gray-900 font-bold"}`}>
+                      {String(task.title || "").split("/").map((part, i, arr) => <React.Fragment key={i}>{part}{i < arr.length - 1 && <>/<wbr /></>}</React.Fragment>)}
+                    </div>
                     {isDone
-                      ? <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>
-                      : <span className="shrink-0 inline-block h-4 w-4 rounded-full border-2 border-gray-300" />}
+                      ? <span className="flex-none inline-flex h-4 w-4 items-center justify-center rounded-full bg-green-500 text-white text-[9px]">✓</span>
+                      : <span className="flex-none inline-block h-4 w-4 rounded-full border-2 border-gray-300" />}
                   </div>
                   <div className="mt-1 flex items-center justify-between">
-                    <span className="text-[10px] text-gray-400">
+                    <span className="text-[13px] text-gray-400">
                       {overdue ? <span className="text-red-500 font-medium">Overdue</span> : task.due_time ? formatTime(task.due_time) : ""}
                     </span>
                     <div className="flex items-center gap-1">
@@ -2112,11 +2057,11 @@ const handleDeliveryTap = async (d) => {
                 className={`w-full text-left rounded-lg px-3 py-2 transition-colors ${j.done ? "bg-[#F8FAFC] opacity-60" : j.overdue ? "bg-red-50 hover:bg-red-100/60" : "bg-[#F8FAFC] hover:bg-gray-100"} ${selectedStaffId ? "active:scale-[0.99]" : ""}`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div className={`font-medium text-sm leading-tight break-words ${j.done ? "text-gray-500" : j.overdue ? "text-red-700" : "text-gray-900"}`}>{j.title}</div>
+                  <div className={`font-medium text-[15px] leading-tight break-words ${j.done ? "text-gray-500" : j.overdue ? "text-red-700" : "text-gray-900"}`}>{j.title}</div>
                   <span className={`shrink-0 text-xs whitespace-nowrap ${j.done ? "text-green-600 font-semibold" : j.overdue ? "text-red-600 font-semibold" : "text-gray-400"}`}>{j.status}</span>
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500">
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${TAG_STYLE[j.tagKind]}`}>{j.tag}</span>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-gray-500">
+                  <span className={`px-1.5 py-0.5 rounded text-[12px] font-semibold uppercase tracking-wide ${TAG_STYLE[j.tagKind]}`}>{j.tag}</span>
                   {j.detail && <span className="break-words">{j.detail}</span>}
                   {j.progress && (
                     <span className="inline-block w-20 h-1.5 rounded-full bg-gray-200 overflow-hidden">
@@ -2281,7 +2226,8 @@ const handleDeliveryTap = async (d) => {
                   {loading ? (
                     <div className="text-sm text-gray-500 p-4">Loading tasks...</div>
                   ) : (
-                    <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-4 items-start">
+                    <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-4 items-start xl:items-stretch xl:min-h-full">
+                      {/* Wide screens: the cards stretch to the bottom of the column so all three columns line up (content top-aligned) */}
 
                       {/* ── Team today ── */}
                       <section className={CARD}>
@@ -2688,7 +2634,7 @@ const handleDeliveryTap = async (d) => {
                           ) : (
                             <div>
                               {n.body && (
-                                <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">
+                                <div className="text-[14px] text-gray-800 whitespace-pre-wrap break-words">
                                   {expandedNoteId === n.id ? n.body : truncate(n.body, 160)}
                                 </div>
                               )}
