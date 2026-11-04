@@ -8,6 +8,7 @@ import {
   getDayAvailability as getDayAvailabilityShared,
 } from "../lib/availability";
 import { nextDayStr } from "../lib/leaveCalendar";
+import { loadShiftSettings, validateShift, shiftHasProblem, shiftProblemText, useShiftCheck, ShiftCheckNotice, SHIFT_SETTINGS_DEFAULTS } from "../lib/shiftCheck";
 import { normalShiftFor, payPeriodFor } from "../lib/weekSchedule";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -202,6 +203,13 @@ export default function RosterPage() {
 
   // Dismissed (resolved) issues
   const [dismissedIssues, setDismissedIssues] = useState(new Set());
+  // Shift-time safeguards (lib/shiftCheck.js) — limits from pharmacy_settings; one save gate per form
+  const [shiftSettings, setShiftSettings] = useState(SHIFT_SETTINGS_DEFAULTS);
+  const addChk = useShiftCheck(shiftSettings);
+  const editChk = useShiftCheck(shiftSettings);
+  const inlineChk = useShiftCheck(shiftSettings);
+  const tplAddChk = useShiftCheck(shiftSettings);
+  const tplEditChk = useShiftCheck(shiftSettings);
 
   // Leave requests
   const [leaveRequests, setLeaveRequests] = useState([]);
@@ -307,6 +315,19 @@ const selectedDayShifts = selectedDate
     for (const s of monthShifts) {
       if (!s.staff_id && !s.staff_name) {
         issues.push({ key: `tbc:${s.id}`, type: "tbc", date: s.shift_date, shift: s, label: `TBC shift — ${s.role}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
+      }
+    }
+
+    // 2b. Odd shift times (finish before start, too long, outside normal hours — lib/shiftCheck.js)
+    for (const s of monthShifts) {
+      const r = validateShift({ start: s.start_time, end: s.end_time, settings: shiftSettings });
+      if (shiftHasProblem(r)) {
+        const name = s.staff?.name || s.staff_name || "TBC";
+        const d = new Date(s.shift_date + "T00:00:00");
+        const day = d.toLocaleDateString("en-AU", { weekday: "short" });
+        const n = d.getDate();
+        const th = n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th";
+        issues.push({ key: `oddshift:${s.id}`, type: "oddshift", date: s.shift_date, shift: s, label: `${name} — ${day} ${n}${th}: ${shiftProblemText(s.start_time, s.end_time, r)}`, sub: `${formatTime(s.start_time)}–${formatTime(s.end_time)}` });
       }
     }
 
@@ -485,6 +506,7 @@ const refreshLeave = useCallback(async () => {
     if (!pharmacyId) return;
     supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", pharmacyId).limit(1)
       .then(({ data }) => setPayrollStart(data?.[0]?.payroll_start_date ? String(data[0].payroll_start_date).slice(0, 10) : null));
+    loadShiftSettings(supabase, pharmacyId).then(setShiftSettings).catch(() => {});
   }, [pharmacyId]);
   const refreshShifts = useCallback(async () => {
     const { data, error } = await fetchAllShifts();
@@ -602,6 +624,7 @@ const refreshLeave = useCallback(async () => {
     const resolvedStaffId = newStaffId === "other" || newStaffId === "" ? null : newStaffId ? Number(newStaffId) : null;
     const resolvedStaffName = newStaffId === "other" ? newStaffName.trim() : null;
     if (!newStart || !newEnd) { alert("Please enter start and end times."); return; }
+    if (!addChk.gate(newStart, newEnd)) return; // finish before start / too long → blocked; warnings → "Save anyway"
     try {
       setSavingShift(true);
       const rosterMonthId = await getRosterMonthId(selectedDate);
@@ -630,6 +653,7 @@ const refreshLeave = useCallback(async () => {
 
   // ── Edit shift ──
   const handleStartEdit = (s) => {
+    editChk.reset();
     setEditingShiftId(s.id);
     setEditStaffId(s.staff_id ? String(s.staff_id) : s.staff_name ? "other" : "");
     setEditStaffName(s.staff_name || "");
@@ -639,6 +663,7 @@ const refreshLeave = useCallback(async () => {
   };
 
   const handleCancelEdit = () => {
+    editChk.reset();
     setEditingShiftId(null);
     setEditStaffId("");
     setEditStaffName("");
@@ -652,6 +677,7 @@ const refreshLeave = useCallback(async () => {
     const resolvedStaffId = editStaffId === "other" ? null : editStaffId ? Number(editStaffId) : null;
     const resolvedStaffName = editStaffId === "other" ? editStaffName.trim() : null;
     if (!resolvedStaffId && !resolvedStaffName) { alert("Please choose or enter a staff member."); return; }
+    if (!editChk.gate(editStart, editEnd)) return;
     try {
       setSavingEdit(true);
       const { error } = await supabase.from("roster_shifts").update({
@@ -1098,6 +1124,7 @@ const refreshLeave = useCallback(async () => {
   // ── Template management ──
   const handleAddTemplate = async () => {
     if (!newTemplateName.trim()) { alert("Please enter a template name."); return; }
+    if (!tplAddChk.gate(newTemplateStart, newTemplateEnd)) return;
     try {
       setSavingTemplate(true);
       const { error } = await supabase.from("shift_templates").insert([{
@@ -1133,6 +1160,7 @@ const refreshLeave = useCallback(async () => {
   };
 
   const handleStartEditTemplate = (t) => {
+    tplEditChk.reset();
     setEditingTemplateId(t.id);
     setEditTemplateName(t.name);
     setEditTemplateRole(t.role);
@@ -1141,6 +1169,7 @@ const refreshLeave = useCallback(async () => {
   };
 
   const handleCancelEditTemplate = () => {
+    tplEditChk.reset();
     setEditingTemplateId(null);
     setEditTemplateName("");
     setEditTemplateRole("pharmacist");
@@ -1150,6 +1179,7 @@ const refreshLeave = useCallback(async () => {
 
   const handleUpdateTemplate = async () => {
     if (!editingTemplateId || !editTemplateName.trim()) { alert("Please enter a name."); return; }
+    if (!tplEditChk.gate(editTemplateStart, editTemplateEnd)) return;
     try {
       setSavingTemplateEdit(true);
       const { error } = await supabase.from("shift_templates").update({
@@ -1701,6 +1731,7 @@ const handleLeaveDecision = async (lr, decision) => {
     const left = Math.min(Math.max(rect.left, 8), window.innerWidth - 240);
 
     const handleSave = async () => {
+      if (!inlineChk.gate(inlineStartRef.current, inlineEndRef.current)) return;
       setSavingInline(true);
       // Locum shifts: time-only edit. Locums aren't in staffOptions, so re-matching
       // would strip staff_id and flip the role — keep the existing booking intact.
@@ -1783,23 +1814,24 @@ const handleLeaveDecision = async (lr, decision) => {
           <div className="flex gap-1.5 mb-2 items-center">
             <input
               type="time"
-              defaultValue={inlineStartRef.current}
+              defaultValue={String(inlineStartRef.current).slice(0, 5)}
               onChange={(e) => { inlineStartRef.current = e.target.value; }}
               className="flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs"
             />
             <span className="text-gray-400 text-xs">–</span>
             <input
               type="time"
-              defaultValue={inlineEndRef.current}
+              defaultValue={String(inlineEndRef.current).slice(0, 5)}
               onChange={(e) => { inlineEndRef.current = e.target.value; }}
               className="flex-1 rounded border border-gray-300 px-1.5 py-1 text-xs"
             />
           </div>
+          <ShiftCheckNotice className="mb-2" check={inlineChk} onUse={(field, v) => { if (field === "start") inlineStartRef.current = v; else inlineEndRef.current = v; inlineChk.reset(); }} />
           <div className="flex gap-1.5">
             <button onClick={handleDelete} className="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50">Delete</button>
-            <button onClick={() => { setInlineEdit(null); setInlineSuggestions([]); }} className="flex-1 px-2 py-1 text-xs border rounded hover:bg-gray-50">Cancel</button>
+            <button onClick={() => { setInlineEdit(null); setInlineSuggestions([]); inlineChk.reset(); }} className="flex-1 px-2 py-1 text-xs border rounded hover:bg-gray-50">Cancel</button>
             <button onClick={handleSave} disabled={savingInline} className="flex-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-              {savingInline ? "..." : "Save"}
+              {savingInline ? "..." : inlineChk.saveLabel("Save")}
             </button>
           </div>
         </div>
@@ -1993,6 +2025,7 @@ const handleLeaveDecision = async (lr, decision) => {
                                   setInlineEdit({ shift: s, rect });
                                   setInlineEditName(s.staff?.name || s.staff_name || "");
                                   inlineStartRef.current = s.start_time?.slice(0, 5) || "";
+                                  inlineChk.reset();
                                   inlineEndRef.current = s.end_time?.slice(0, 5) || "";
                                   setInlineSuggestions([]);
                                 }}
@@ -2101,12 +2134,13 @@ const handleLeaveDecision = async (lr, decision) => {
                                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                               </select>
                               <div className="flex gap-2">
-                                <input type="time" value={editStart} onChange={(e) => setEditStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
-                                <input type="time" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                                <input type="time" value={String(editStart).slice(0, 5)} onChange={(e) => { setEditStart(e.target.value); editChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                                <input type="time" value={String(editEnd).slice(0, 5)} onChange={(e) => { setEditEnd(e.target.value); editChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
                               </div>
+                              <ShiftCheckNotice check={editChk} onUse={(field, v) => { (field === "start" ? setEditStart : setEditEnd)(v); editChk.reset(); }} />
                               <div className="flex gap-2 justify-end">
                                 <button onClick={handleCancelEdit} className="px-2 py-1 text-xs border rounded hover:bg-gray-50">Cancel</button>
-                                <button onClick={handleUpdateShift} disabled={savingEdit} className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">{savingEdit ? "Saving..." : "Save"}</button>
+                                <button onClick={handleUpdateShift} disabled={savingEdit} className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">{savingEdit ? "Saving..." : editChk.saveLabel("Save")}</button>
                               </div>
                             </div>
                           ) : (
@@ -2183,9 +2217,10 @@ const handleLeaveDecision = async (lr, decision) => {
                     {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <div className="flex gap-2">
-                    <input type="time" value={newStart} onChange={(e) => setNewStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
-                    <input type="time" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                    <input type="time" value={newStart} onChange={(e) => { setNewStart(e.target.value); addChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                    <input type="time" value={newEnd} onChange={(e) => { setNewEnd(e.target.value); addChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
                   </div>
+                  <ShiftCheckNotice check={addChk} onUse={(field, v) => { (field === "start" ? setNewStart : setNewEnd)(v); addChk.reset(); }} />
                 </div>
               </div>
 
@@ -2196,7 +2231,7 @@ const handleLeaveDecision = async (lr, decision) => {
                   disabled={savingShift}
                   className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {savingShift ? "Saving..." : "Save shift"}
+                  {savingShift ? "Saving..." : addChk.saveLabel("Save shift")}
                 </button>
               </div>
 
@@ -2351,11 +2386,12 @@ const handleLeaveDecision = async (lr, decision) => {
                       {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                     </select>
                     <div className="flex gap-2">
-                      <input type="time" value={newTemplateStart} onChange={(e) => setNewTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
-                      <input type="time" value={newTemplateEnd} onChange={(e) => setNewTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                      <input type="time" value={newTemplateStart} onChange={(e) => { setNewTemplateStart(e.target.value); tplAddChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                      <input type="time" value={newTemplateEnd} onChange={(e) => { setNewTemplateEnd(e.target.value); tplAddChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
                     </div>
+                    <ShiftCheckNotice check={tplAddChk} onUse={(field, v) => { (field === "start" ? setNewTemplateStart : setNewTemplateEnd)(v); tplAddChk.reset(); }} />
                     <button onClick={handleAddTemplate} disabled={savingTemplate} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-                      {savingTemplate ? "Saving..." : "Add Template"}
+                      {savingTemplate ? "Saving..." : tplAddChk.saveLabel("Add Template")}
                     </button>
                   </div>
                   <div className="border-t pt-3">
@@ -2370,13 +2406,14 @@ const handleLeaveDecision = async (lr, decision) => {
                                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                               </select>
                               <div className="flex gap-2">
-                                <input type="time" value={editTemplateStart} onChange={(e) => setEditTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
-                                <input type="time" value={editTemplateEnd} onChange={(e) => setEditTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                                <input type="time" value={editTemplateStart} onChange={(e) => { setEditTemplateStart(e.target.value); tplEditChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                                <input type="time" value={editTemplateEnd} onChange={(e) => { setEditTemplateEnd(e.target.value); tplEditChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
                               </div>
+                              <ShiftCheckNotice check={tplEditChk} onUse={(field, v) => { (field === "start" ? setEditTemplateStart : setEditTemplateEnd)(v); tplEditChk.reset(); }} />
                               <div className="flex gap-2 justify-end">
                                 <button onClick={handleCancelEditTemplate} className="px-2 py-1 text-xs border rounded hover:bg-gray-100">Cancel</button>
                                 <button onClick={handleUpdateTemplate} disabled={savingTemplateEdit} className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-                                  {savingTemplateEdit ? "Saving..." : "Save"}
+                                  {savingTemplateEdit ? "Saving..." : tplEditChk.saveLabel("Save")}
                                 </button>
                               </div>
                             </div>
@@ -2515,11 +2552,12 @@ const handleLeaveDecision = async (lr, decision) => {
                   {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
                 <div className="flex gap-2">
-                  <input type="time" value={newTemplateStart} onChange={(e) => setNewTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
-                  <input type="time" value={newTemplateEnd} onChange={(e) => setNewTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                  <input type="time" value={newTemplateStart} onChange={(e) => { setNewTemplateStart(e.target.value); tplAddChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
+                  <input type="time" value={newTemplateEnd} onChange={(e) => { setNewTemplateEnd(e.target.value); tplAddChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1.5 text-xs" />
                 </div>
+                <ShiftCheckNotice check={tplAddChk} onUse={(field, v) => { (field === "start" ? setNewTemplateStart : setNewTemplateEnd)(v); tplAddChk.reset(); }} />
                 <button onClick={handleAddTemplate} disabled={savingTemplate} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-                  {savingTemplate ? "Saving..." : "Add Template"}
+                  {savingTemplate ? "Saving..." : tplAddChk.saveLabel("Add Template")}
                 </button>
               </div>
               <div className="border-t pt-3">
@@ -2534,13 +2572,14 @@ const handleLeaveDecision = async (lr, decision) => {
                             {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                           </select>
                           <div className="flex gap-2">
-                            <input type="time" value={editTemplateStart} onChange={(e) => setEditTemplateStart(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
-                            <input type="time" value={editTemplateEnd} onChange={(e) => setEditTemplateEnd(e.target.value)} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                            <input type="time" value={editTemplateStart} onChange={(e) => { setEditTemplateStart(e.target.value); tplEditChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
+                            <input type="time" value={editTemplateEnd} onChange={(e) => { setEditTemplateEnd(e.target.value); tplEditChk.reset(); }} className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs" />
                           </div>
+                          <ShiftCheckNotice check={tplEditChk} onUse={(field, v) => { (field === "start" ? setEditTemplateStart : setEditTemplateEnd)(v); tplEditChk.reset(); }} />
                           <div className="flex gap-2 justify-end">
                             <button onClick={handleCancelEditTemplate} className="px-2 py-1 text-xs border rounded hover:bg-gray-100">Cancel</button>
                             <button onClick={handleUpdateTemplate} disabled={savingTemplateEdit} className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-                              {savingTemplateEdit ? "Saving..." : "Save"}
+                              {savingTemplateEdit ? "Saving..." : tplEditChk.saveLabel("Save")}
                             </button>
                           </div>
                         </div>
@@ -2572,9 +2611,10 @@ const handleLeaveDecision = async (lr, decision) => {
         const issues = allIssues.filter((i) => !dismissedIssues.has(i.key));
         const resolved = allIssues.filter((i) => dismissedIssues.has(i.key));
 
-        const typeLabel = { availability: "Availability conflict", tbc: "TBC shift", ph: "Public holiday", nostaff: "No staff rostered", nopharmacist: "No pharmacist", pharmgap: "Pharmacist cover gap", noopener: "No opener", nocloser: "No closer" };
+        const typeLabel = { availability: "Availability conflict", oddshift: "Odd shift times", tbc: "TBC shift", ph: "Public holiday", nostaff: "No staff rostered", nopharmacist: "No pharmacist", pharmgap: "Pharmacist cover gap", noopener: "No opener", nocloser: "No closer" };
         const typeStyle = {
           availability: "bg-amber-50 border-amber-200 text-amber-800",
+          oddshift: "bg-red-50 border-red-300 text-red-800",
           tbc: "bg-red-50 border-red-200 text-red-700",
           ph: "bg-orange-50 border-orange-200 text-orange-700",
           nostaff: "bg-gray-50 border-gray-300 text-gray-700",
@@ -2583,7 +2623,7 @@ const handleLeaveDecision = async (lr, decision) => {
           noopener: "bg-sky-50 border-sky-200 text-sky-700",
           nocloser: "bg-indigo-50 border-indigo-200 text-indigo-700",
         };
-        const typeIcon = { availability: "⚠️", tbc: "❓", ph: "🏖️", nostaff: "📭", nopharmacist: "💊", pharmgap: "💊", noopener: "🔓", nocloser: "🔒" };
+        const typeIcon = { availability: "⚠️", oddshift: "⏰", tbc: "❓", ph: "🏖️", nostaff: "📭", nopharmacist: "💊", pharmgap: "💊", noopener: "🔓", nocloser: "🔒" };
 
         return (
           <div className="no-print fixed inset-0 z-50 flex">

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import supabase from "../lib/supabaseClient";
 import Sidebar from "../components/Sidebar";
+import { useShiftSettings, useShiftCheck, ShiftCheckNotice, validateShift, shiftHasProblem, shiftProblemText, effectiveEnd } from "../lib/shiftCheck";
 import {
   FORTNIGHT_THRESHOLD,
   toISO,
@@ -198,6 +199,8 @@ function ApproveModal({ row, periodStart, currentUser, isManager, onClose, onApp
 // ─── Edit Shift Modal ─────────────────────────────────────────────────────────
 
 function EditShiftModal({ shift, currentUser, isManager, onClose, onSaved }) {
+  const shiftSettings = useShiftSettings(supabase, PHARMACY_ID);
+  const chk = useShiftCheck(shiftSettings);
   const [noLunch, setNoLunch] = useState(shift.edit?.no_lunch || false);
   const [adjustMins, setAdjustMins] = useState(shift.edit?.adjust_minutes ? String(shift.edit.adjust_minutes) : "");
   const [reason, setReason] = useState(shift.edit?.reason || "");
@@ -214,6 +217,7 @@ function EditShiftModal({ shift, currentUser, isManager, onClose, onSaved }) {
     setError("");
     if (!anyChange) { setError("Tick 'no lunch' or change a time to make an edit."); return; }
     if (timesChanged && !reason.trim()) { setError("A reason is required when changing times."); return; }
+    if (timesChanged && !chk.gate(shift.start, effectiveEnd(shift.end, adjNum))) return; // adjusted shift still sensible?
 
     setSaving(true);
     const payload = {
@@ -263,13 +267,14 @@ function EditShiftModal({ shift, currentUser, isManager, onClose, onSaved }) {
             type="number"
             step="5"
             value={adjustMins}
-            onChange={(e) => setAdjustMins(e.target.value)}
+            onChange={(e) => { setAdjustMins(e.target.value); chk.reset(); }}
             placeholder="0"
             className="w-28 border rounded-lg px-3 py-1.5 text-sm"
           />
           <span className="text-sm text-gray-500">minutes</span>
         </div>
         <p className="text-[11px] text-gray-400 mb-4">e.g. <span className="font-medium">30</span> if stayed late, <span className="font-medium">−30</span> if left early.</p>
+        <ShiftCheckNotice check={chk} className="mb-4" />
 
         <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-4">
           ⓘ Any edits are reviewed by management before pay is finalised.
@@ -283,7 +288,7 @@ function EditShiftModal({ shift, currentUser, isManager, onClose, onSaved }) {
           <button onClick={onClose} className="flex-1 border border-gray-300 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
           {shift.edit && <button onClick={handleRemove} disabled={saving} className="px-3 border border-red-200 text-red-600 rounded-lg py-2 text-sm hover:bg-red-50">Remove</button>}
           <button onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
-            {saving ? "Saving…" : "Save edit"}
+            {saving ? "Saving…" : chk.saveLabel("Save edit")}
           </button>
         </div>
       </div>
@@ -435,6 +440,10 @@ export default function WagesPage() {
   const [expandedKey, setExpandedKey] = useState(null);
   const [editShift, setEditShift] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // Shift-time safeguards: shifts whose effective times look wrong are flagged (numbers unchanged — lib/wageCalc.js)
+  const shiftSettings = useShiftSettings(supabase, PHARMACY_ID);
+  const [exportAsk, setExportAsk] = useState(false); // flagged shifts listed above the table — "Export anyway"
+  useEffect(() => { setExportAsk(false); }, [periodOffset]);
 
   // Load payroll start once unlocked
   useEffect(() => {
@@ -554,7 +563,19 @@ export default function WagesPage() {
 
   const allApproved = rows.filter((r) => r.staffId && !r.isSalary).every((r) => approvals.has(r.staffId));
 
-  const handleExport = async () => {
+  // A shift's flag text (effective times = rostered start → finish + adjustment), or null
+  const flagFor = (sh) => {
+    if (!sh.start || !sh.end || sh.isPublicHoliday || sh.isLeave) return null;
+    const end = effectiveEnd(sh.end, sh.adjustMins);
+    const r = validateShift({ start: sh.start, end, settings: shiftSettings });
+    return shiftHasProblem(r) ? shiftProblemText(sh.start, end, r) : null;
+  };
+  const flaggedShifts = rows.flatMap((r) => (r.shifts || []).map((sh) => ({ r, sh, text: flagFor(sh) })).filter((x) => x.text))
+    .sort((a, b) => a.sh.date.localeCompare(b.sh.date));
+
+  const handleExport = async (anyway = false) => {
+    if (flaggedShifts.length && !anyway) { setExportAsk(true); return; } // list them first — don't block
+    setExportAsk(false);
     setExporting(true);
     try {
       const XLSX = await import("xlsx");
@@ -641,7 +662,7 @@ export default function WagesPage() {
                     <span className="text-xs text-amber-600">Some hours not yet confirmed</span>
                   )}
                   <button
-                    onClick={handleExport}
+                    onClick={() => handleExport(false)}
                     disabled={exporting || rows.length === 0}
                     className="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-40"
                   >
@@ -655,6 +676,23 @@ export default function WagesPage() {
 
         {/* Table */}
         <div className="flex-1 overflow-auto px-6 py-4">
+          {exportAsk && flaggedShifts.length > 0 && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <div className="font-semibold mb-1">{flaggedShifts.length} shift{flaggedShifts.length === 1 ? "" : "s"} in this period {flaggedShifts.length === 1 ? "has" : "have"} times that look wrong:</div>
+              <ul className="space-y-0.5 mb-2">
+                {flaggedShifts.map(({ r, sh, text }) => (
+                  <li key={sh.id}>• {r.name} — {new Date(sh.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })} {String(sh.start).slice(0, 5)}–{String(sh.end).slice(0, 5)}: {text}</li>
+                ))}
+              </ul>
+              <div className="text-xs mb-2">Fix them on the roster (or with Adjust) first, or export as they are.</div>
+              <div className="flex gap-2">
+                <button onClick={() => handleExport(true)} disabled={exporting} className="px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-red-300 text-red-700 hover:bg-red-100 disabled:opacity-40">
+                  {exporting ? "Exporting…" : "Export anyway"}
+                </button>
+                <button onClick={() => setExportAsk(false)} className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50">Cancel</button>
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="text-sm text-gray-400 py-8 text-center">Loading…</div>
           ) : visibleRows.length === 0 ? (
@@ -693,6 +731,7 @@ export default function WagesPage() {
                           {!r.staffId && <span className="ml-1 text-[10px] text-gray-400">(casual)</span>}
                           {r.isSalary && <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 border border-purple-100">Salary</span>}
                           {!r.isSalary && r.shifts.some((sh) => sh.edit) && <span className="ml-1 text-blue-600" title="Has edited shifts">✏️</span>}
+                          {(r.shifts || []).some((sh) => flagFor(sh)) && <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200" title="A shift's times look wrong">⚠ Check times</span>}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-gray-700">{fmt(r.weekday)}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-gray-700">{fmt(r.sat)}</td>
@@ -738,6 +777,7 @@ export default function WagesPage() {
                                     {sh.isSick && sh.isCompassionate && <span className="text-[10px] text-purple-600">🕊️ compassionate{sh.paidSick ? " — paid" : " — unpaid (casual)"}</span>}
                                     {sh.isSick && !sh.isCompassionate && <span className="text-[10px] text-amber-600">🤒 sick/carer's{sh.paidSick ? " — paid" : " — unpaid (casual)"}</span>}
                                     {sh.isLeave && <span className="text-[10px] text-blue-500">🏖️ {sh.leaveType}</span>}
+                                    {flagFor(sh) && <span className="text-[11px] font-semibold text-red-600">⚠ {flagFor(sh)}</span>}
                                     {edited && (
                                       <span className="text-[10px] text-blue-600" title={sh.edit.reason || ""}>
                                         ✏️ edited{sh.edit.no_lunch ? " · no lunch" : ""}{sh.adjustMins ? ` · ${sh.adjustMins > 0 ? "+" : ""}${sh.adjustMins} min` : ""}{sh.edit.reason ? ` — ${sh.edit.reason}` : ""}

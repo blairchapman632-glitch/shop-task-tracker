@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { toISO, buildWageRows, fmt as wageFmt } from "../lib/wageCalc";
+import { useShiftSettings, useShiftCheck, ShiftCheckNotice, validateShift, shiftHasProblem, shiftProblemText, effectiveEnd } from "../lib/shiftCheck";
 import { getShiftConflict, getDayAvailability } from "../lib/availability";
 import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib/leaveCalendar";
 import { fetchMyReview, prepWaiting, MyReviewBanner, MyReviewSection } from "../components/MyReview";
@@ -1693,6 +1694,8 @@ function MessagesTab({ staff }) {
 }
 
 function MeEditShiftModal({ shift, staff, onClose, onSaved }) {
+  const shiftSettings = useShiftSettings(supabase, PHARMACY_ID);
+  const chk = useShiftCheck(shiftSettings);
   const [noLunch, setNoLunch] = useState(shift.edit?.no_lunch || false);
   const [adjustMins, setAdjustMins] = useState(shift.edit?.adjust_minutes ? String(shift.edit.adjust_minutes) : "");
   const [reason, setReason] = useState(shift.edit?.reason || "");
@@ -1707,6 +1710,7 @@ function MeEditShiftModal({ shift, staff, onClose, onSaved }) {
     setError("");
     if (!anyChange) { setError("Tick 'no lunch' or change a time to make an edit."); return; }
     if (timesChanged && !reason.trim()) { setError("A reason is required when changing times."); return; }
+    if (timesChanged && !chk.gate(shift.start, effectiveEnd(shift.end, adjNum))) return; // adjusted shift still sensible?
     setSaving(true);
     const { error: upErr } = await supabase.from("shift_edits").upsert({
       roster_shift_id: shift.id,
@@ -1751,10 +1755,11 @@ function MeEditShiftModal({ shift, staff, onClose, onSaved }) {
 
         <div className="text-xs font-medium text-gray-600 mb-1">Adjust time (optional)</div>
         <div className="flex items-center gap-2 mb-1">
-          <input type="number" step="5" value={adjustMins} onChange={(e) => setAdjustMins(e.target.value)} placeholder="0" className="w-28 border rounded-lg px-3 py-1.5 text-sm" />
+          <input type="number" step="5" value={adjustMins} onChange={(e) => { setAdjustMins(e.target.value); chk.reset(); }} placeholder="0" className="w-28 border rounded-lg px-3 py-1.5 text-sm" />
           <span className="text-sm text-gray-500">minutes</span>
         </div>
         <p className="text-[11px] text-gray-400 mb-4">e.g. <span className="font-medium">30</span> if you stayed late, <span className="font-medium">−30</span> if you left early.</p>
+        <ShiftCheckNotice check={chk} className="mb-4" />
 
         <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-4">
           ⓘ Any edits are reviewed by management before pay is finalised.
@@ -1768,7 +1773,7 @@ function MeEditShiftModal({ shift, staff, onClose, onSaved }) {
           <button onClick={onClose} className="flex-1 border border-gray-300 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
           {shift.edit && <button onClick={handleRemove} disabled={saving} className="px-3 border border-red-200 text-red-600 rounded-lg py-2 text-sm hover:bg-red-50">Remove</button>}
           <button onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
-            {saving ? "Saving…" : "Save edit"}
+            {saving ? "Saving…" : chk.saveLabel("Save edit")}
           </button>
         </div>
       </div>
@@ -2332,6 +2337,8 @@ function WagesTab({ staff }) {
   const [savingNote, setSavingNote] = useState(false);
   const [noteSaved, setNoteSaved] = useState(false);
   const [periodKm, setPeriodKm] = useState(0);
+  const shiftSettings = useShiftSettings(supabase, PHARMACY_ID);
+  const [confirmAsk, setConfirmAsk] = useState(false); // flagged shifts shown — press Confirm again to confirm anyway
 
   useEffect(() => {
     supabase.from("pharmacy_settings").select("payroll_start_date").eq("pharmacy_id", PHARMACY_ID).single()
@@ -2387,13 +2394,26 @@ function WagesTab({ staff }) {
       setNoteRow(noteData || null);
       setNoteText(noteData?.staff_note || "");
       setNoteSaved(false);
+      setConfirmAsk(false);
       setLoading(false);
     };
     load();
   }, [payrollStart, periodOffset, reloadKey, staff.id]);
 
+  // Shifts whose times look wrong (finish before start, too long, outside normal hours) — the wages flag them, the
+  // numbers are unchanged. Effective times = rostered start → finish + any adjustment.
+  const flagFor = (sh) => {
+    if (!sh.start || !sh.end || sh.isPublicHoliday || sh.isLeave) return null;
+    const end = effectiveEnd(sh.end, sh.adjustMins);
+    const r = validateShift({ start: sh.start, end, settings: shiftSettings });
+    return shiftHasProblem(r) ? shiftProblemText(sh.start, end, r) : null;
+  };
+  const flagged = (row?.shifts || []).map((sh) => ({ sh, text: flagFor(sh) })).filter((x) => x.text);
+
   const handleConfirm = async () => {
     if (!period) return;
+    if (flagged.length && !confirmAsk) { setConfirmAsk(true); return; }
+    setConfirmAsk(false);
     setConfirming(true);
     const { error } = await supabase.from("wage_approvals").upsert(
       { staff_id: staff.id, period_start: toISO(period.start), approved_at: new Date().toISOString(), approved_by_staff_id: staff.id, pharmacy_id: PHARMACY_ID },
@@ -2488,10 +2508,12 @@ function WagesTab({ staff }) {
                   {[...row.shifts].sort((a, b) => a.date.localeCompare(b.date)).map((sh) => {
                     const edited = !!sh.edit;
                     const canEdit = !sh.isPublicHoliday && !sh.isSick && !sh.isLeave;
+                    const flag = flagFor(sh);
                     return (
                       <div key={sh.id} className="flex items-center gap-2 text-sm border-b border-gray-50 pb-2 last:border-0">
                         <div className="min-w-0 flex-1">
                           <div className="text-gray-800">{new Date(sh.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })}</div>
+                          {flag && <div className="text-[11px] font-semibold text-red-600">⚠ Check times: {flag}</div>}
                           <div className="text-[11px] text-gray-400">
                             {sh.isPublicHoliday ? "Public holiday" : sh.isLeave ? sh.leaveType : sh.isSick ? "Sick / carer's" : `${String(sh.start).slice(0,5)}–${String(sh.end).slice(0,5)}`}
                             {sh.breakDeducted && !sh.isSick && !sh.isLeave ? " · −30 min lunch" : ""}
@@ -2549,9 +2571,20 @@ function WagesTab({ staff }) {
                 <div className="text-sm font-semibold text-green-700">Hours confirmed for this period.</div>
               </div>
             ) : (
-              <button onClick={handleConfirm} disabled={confirming} className="w-full bg-green-600 text-white rounded-xl py-3 text-sm font-medium disabled:opacity-40">
-                {confirming ? "Confirming…" : "Confirm my hours"}
-              </button>
+              <div className="space-y-2">
+                {confirmAsk && (
+                  <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800 space-y-1">
+                    <div className="font-semibold">Some shift times look wrong:</div>
+                    {flagged.map(({ sh, text }) => (
+                      <div key={sh.id}>• {new Date(sh.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })} — {text}</div>
+                    ))}
+                    <div className="text-xs">Fix it with Adjust or ask the roster manager. If the times are right, press Confirm again.</div>
+                  </div>
+                )}
+                <button onClick={handleConfirm} disabled={confirming} className="w-full bg-green-600 text-white rounded-xl py-3 text-sm font-medium disabled:opacity-40">
+                  {confirming ? "Confirming…" : confirmAsk ? "Confirm anyway" : "Confirm my hours"}
+                </button>
+              </div>
             )
           )}
         </>
@@ -2625,6 +2658,11 @@ function DayEditSheet({ date, ctx, onClose, onChanged }) {
   const [note, setNote] = useState(dayNote || "");
   const [savingNote, setSavingNote] = useState(false);
 
+  // Shift-time safeguards (lib/shiftCheck.js)
+  const shiftSettings = useShiftSettings(supabase, PHARMACY_ID);
+  const addChk = useShiftCheck(shiftSettings);
+  const editChk = useShiftCheck(shiftSettings);
+
   const conflictOf = (s) => getShiftConflict({ shift: s, patterns, overrides, approvedLeave });
 
   const getRosterMonthId = async () => {
@@ -2639,6 +2677,7 @@ function DayEditSheet({ date, ctx, onClose, onChanged }) {
 
   const handleAdd = async () => {
     if (!newStart || !newEnd) { alert("Enter start and end times."); return; }
+    if (!addChk.gate(newStart, newEnd)) return;
     setSavingShift(true);
     try {
       const rosterMonthId = await getRosterMonthId();
@@ -2663,6 +2702,7 @@ function DayEditSheet({ date, ctx, onClose, onChanged }) {
   };
 
   const startEdit = (s) => {
+    editChk.reset();
     setEditingId(s.id);
     setEditStaffId(s.staff_id ? String(s.staff_id) : s.staff_name ? "other" : "");
     setEditStaffName(s.staff_name || "");
@@ -2672,6 +2712,7 @@ function DayEditSheet({ date, ctx, onClose, onChanged }) {
   };
 
   const handleUpdate = async () => {
+    if (!editChk.gate(editStart, editEnd)) return;
     setSavingEdit(true);
     try {
       const { error } = await supabase.from("roster_shifts").update({
@@ -2813,13 +2854,14 @@ function DayEditSheet({ date, ctx, onClose, onChanged }) {
                             {ME_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                           </select>
                           <div className="flex gap-2">
-                            <input type="time" value={editStart} onChange={(e) => setEditStart(e.target.value)} className="flex-1 rounded border px-2 py-2 text-sm" />
-                            <input type="time" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} className="flex-1 rounded border px-2 py-2 text-sm" />
+                            <input type="time" value={editStart} onChange={(e) => { setEditStart(e.target.value); editChk.reset(); }} className="flex-1 rounded border px-2 py-2 text-sm" />
+                            <input type="time" value={editEnd} onChange={(e) => { setEditEnd(e.target.value); editChk.reset(); }} className="flex-1 rounded border px-2 py-2 text-sm" />
                           </div>
+                          <ShiftCheckNotice check={editChk} onUse={(field, v) => { (field === "start" ? setEditStart : setEditEnd)(v); editChk.reset(); }} />
                           <div className="flex gap-2">
                             <button onClick={() => setEditingId(null)} className="flex-1 border rounded py-2 text-sm">Cancel</button>
                             <button onClick={handleUpdate} disabled={savingEdit} className="flex-1 bg-blue-600 text-white rounded py-2 text-sm font-medium disabled:opacity-40">
-                              {savingEdit ? "Saving…" : "Save"}
+                              {savingEdit ? "Saving…" : editChk.saveLabel("Save")}
                             </button>
                           </div>
                         </div>
@@ -2888,11 +2930,12 @@ function DayEditSheet({ date, ctx, onClose, onChanged }) {
                 {ME_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
               <div className="flex gap-2">
-                <input type="time" value={newStart} onChange={(e) => setNewStart(e.target.value)} className="flex-1 rounded border px-2 py-2 text-sm" />
-                <input type="time" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} className="flex-1 rounded border px-2 py-2 text-sm" />
+                <input type="time" value={newStart} onChange={(e) => { setNewStart(e.target.value); addChk.reset(); }} className="flex-1 rounded border px-2 py-2 text-sm" />
+                <input type="time" value={newEnd} onChange={(e) => { setNewEnd(e.target.value); addChk.reset(); }} className="flex-1 rounded border px-2 py-2 text-sm" />
               </div>
+              <ShiftCheckNotice check={addChk} onUse={(field, v) => { (field === "start" ? setNewStart : setNewEnd)(v); addChk.reset(); }} />
               <button onClick={handleAdd} disabled={savingShift} className="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40">
-                {savingShift ? "Saving…" : "Save shift"}
+                {savingShift ? "Saving…" : addChk.saveLabel("Save shift")}
               </button>
             </div>
           </div>

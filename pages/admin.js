@@ -17,6 +17,7 @@ import { todayPerth, addMonthsStr } from "../lib/performanceReview";
 import { checkAdminPin } from "../lib/adminPin";
 import { nextDayStr } from "../lib/leaveCalendar";
 import CalendarCategoriesAdmin from "../components/CalendarCategoriesAdmin";
+import { useShiftSettings, useShiftCheck, ShiftCheckNotice, validateShift, fmt12 } from "../lib/shiftCheck";
 
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -130,7 +131,7 @@ function PinScreen({ onUnlock }) {
 }
 // ─── Day Schedule Grid ────────────────────────────────────────────────────────
 
-function DayScheduleGrid({ schedule, onChange }) {
+function DayScheduleGrid({ schedule, onChange, settings }) {
   return (
     <div className="space-y-2">
       {DAYS.map(({ key, label }) => {
@@ -162,6 +163,14 @@ function DayScheduleGrid({ schedule, onChange }) {
                 />
               </>
             )}
+            {/* Shift-time check for this day (lib/shiftCheck.js) */}
+            {day.active && day.start && day.end && settings && (
+              <ShiftCheckNotice
+                className="flex-1 min-w-0"
+                check={validateShift({ start: day.start, end: day.end, settings })}
+                onUse={(field, v) => onChange({ ...schedule, [key]: { ...day, [field]: v } })}
+              />
+            )}
           </div>
         );
       })}
@@ -175,6 +184,8 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
 
   const isNew = !member?.id;
   const [activeTab, setActiveTab] = useState(initialTab || "profile");
+  const shiftSettings = useShiftSettings(supabase, PHARMACY_ID);
+  const [schedAck, setSchedAck] = useState(null); // regular-schedule warnings seen → next Save goes ahead
   const [reviewToOpen, setReviewToOpen] = useState(null); // set by the Training tab's "Open review" link
   const [form, setForm] = useState({
     name: member?.name || "",
@@ -453,9 +464,35 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     setUploading(false);
   };
 
+  // Regular schedule days with odd times: [{ label, errors, warnings }]
+  const scheduleProblems = () => {
+    if (!showSchedule) return [];
+    const weeks = form.schedule_type === "alternating"
+      ? [["Week A ", form.week_ab_schedule?.a], ["Week B ", form.week_ab_schedule?.b]]
+      : [["", form.weekly_schedule]];
+    const out = [];
+    for (const [prefix, sch] of weeks) {
+      for (const { key, label } of DAYS) {
+        const day = sch?.[key];
+        if (!day?.active || !day.start || !day.end) continue;
+        const r = validateShift({ start: day.start, end: day.end, settings: shiftSettings });
+        if (r.errors.length || r.warnings.length) out.push({ label: `${prefix}${label}`, ...r });
+      }
+    }
+    return out;
+  };
+
   const handleSave = async () => {
     if (!form.name.trim()) { setError("Name is required."); return; }
     if (form.pin && form.pin.length !== 4) { setError("PIN must be 4 digits."); return; }
+    // Regular schedule: errors block the save; warnings need a second Save ("Save anyway")
+    const probs = scheduleProblems();
+    if (probs.some((p) => p.errors.length)) {
+      setError(`Fix the regular schedule first — ${probs.filter((p) => p.errors.length).map((p) => `${p.label}: ${p.errors.join(" ")}`).join("; ")}`);
+      return;
+    }
+    const warnKey = JSON.stringify(probs.map((p) => [p.label, p.warnings]));
+    if (probs.length && schedAck !== warnKey) { setSchedAck(warnKey); setError(""); return; }
 
     // PIN uniqueness — real PINs must be unique within the pharmacy; "0000" is the unset placeholder and may repeat
     if (form.pin && form.pin !== "0000") {
@@ -877,7 +914,8 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             {form.schedule_type === "weekly" && (
               <DayScheduleGrid
                 schedule={form.weekly_schedule}
-                onChange={(s) => set("weekly_schedule", s)}
+                onChange={(s) => { set("weekly_schedule", s); setSchedAck(null); }}
+                settings={shiftSettings}
               />
             )}
 
@@ -887,14 +925,16 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
                   <div className="text-xs font-semibold text-blue-700 mb-2 px-1">Week A <span className="font-normal text-gray-400">(Wed–Tue, first week of pay period)</span></div>
                   <DayScheduleGrid
                     schedule={form.week_ab_schedule.a}
-                    onChange={(s) => set("week_ab_schedule", { ...form.week_ab_schedule, a: s })}
+                    onChange={(s) => { set("week_ab_schedule", { ...form.week_ab_schedule, a: s }); setSchedAck(null); }}
+                    settings={shiftSettings}
                   />
                 </div>
                 <div>
                   <div className="text-xs font-semibold text-purple-700 mb-2 px-1">Week B <span className="font-normal text-gray-400">(Wed–Tue, second week of pay period)</span></div>
                   <DayScheduleGrid
                     schedule={form.week_ab_schedule.b}
-                    onChange={(s) => set("week_ab_schedule", { ...form.week_ab_schedule, b: s })}
+                    onChange={(s) => { set("week_ab_schedule", { ...form.week_ab_schedule, b: s }); setSchedAck(null); }}
+                    settings={shiftSettings}
                   />
                 </div>
                 <div>
@@ -1500,6 +1540,13 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
         )}
 
         {error && <p className="text-sm text-red-500">{error}</p>}
+        {schedAck && scheduleProblems().length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 space-y-0.5">
+            <div className="font-semibold">Check the regular schedule:</div>
+            {scheduleProblems().map((p) => <div key={p.label}>{p.label}: {p.warnings.join(" ")}</div>)}
+            <div className="font-medium">Press Save again to save anyway.</div>
+          </div>
+        )}
       </div>
 
       {activeTab !== "reviews" && <div className="px-5 py-4 border-t shrink-0 space-y-2">
@@ -1548,7 +1595,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             Cancel
           </button>
           <button onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-40">
-            {saving ? "Saving…" : isNew ? "Add Staff" : "Save Changes"}
+            {saving ? "Saving…" : schedAck && scheduleProblems().length > 0 ? "Save anyway" : isNew ? "Add Staff" : "Save Changes"}
           </button>
         </div>
       </div>}
@@ -1591,6 +1638,7 @@ function LocumForm({ member, onSave, onCancel }) {
   const [newBookingStart, setNewBookingStart] = useState("09:00");
   const [newBookingEnd, setNewBookingEnd] = useState("17:00");
   const [savingBooking, setSavingBooking] = useState(false);
+  const bookingChk = useShiftCheck(useShiftSettings(supabase, PHARMACY_ID));
   const [deletingBooking, setDeletingBooking] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [uploadingDoc, setUploadingDoc] = useState(false);
@@ -1693,6 +1741,7 @@ function LocumForm({ member, onSave, onCancel }) {
   const handleAddBooking = async () => {
     if (!member?.id) { setError("Save the locum first before adding bookings."); return; }
     if (!newBookingDate) { setError("Please select a date."); return; }
+    if (!bookingChk.gate(newBookingStart, newBookingEnd)) return;
     setSavingBooking(true);
     setError("");
     try {
@@ -2019,12 +2068,13 @@ function LocumForm({ member, onSave, onCancel }) {
               <div className="text-[11px] font-medium text-gray-500">Add booking</div>
               <input type="date" value={newBookingDate} onChange={(e) => setNewBookingDate(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
               <div className="flex gap-2 items-center">
-                <input type="time" value={newBookingStart} onChange={(e) => setNewBookingStart(e.target.value)} className="flex-1 border rounded-lg px-2 py-1.5 text-sm" />
+                <input type="time" value={newBookingStart} onChange={(e) => { setNewBookingStart(e.target.value); bookingChk.reset(); }} className="flex-1 border rounded-lg px-2 py-1.5 text-sm" />
                 <span className="text-gray-400 text-sm">–</span>
-                <input type="time" value={newBookingEnd} onChange={(e) => setNewBookingEnd(e.target.value)} className="flex-1 border rounded-lg px-2 py-1.5 text-sm" />
+                <input type="time" value={newBookingEnd} onChange={(e) => { setNewBookingEnd(e.target.value); bookingChk.reset(); }} className="flex-1 border rounded-lg px-2 py-1.5 text-sm" />
               </div>
+              <ShiftCheckNotice check={bookingChk} onUse={(field, v) => { (field === "start" ? setNewBookingStart : setNewBookingEnd)(v); bookingChk.reset(); }} />
               <button onClick={handleAddBooking} disabled={savingBooking || !newBookingDate} className="w-full py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40">
-                {savingBooking ? "Adding…" : "+ Add to roster"}
+                {savingBooking ? "Adding…" : bookingChk.saveLabel("+ Add to roster")}
               </button>
             </div>
           </div>
@@ -2157,6 +2207,10 @@ function SettingsTab() {
         hours_friday: form.hours_friday,
         hours_saturday: form.hours_saturday,
         hours_sunday: form.hours_sunday,
+        max_shift_hours: Number(form.max_shift_hours) > 0 ? Number(form.max_shift_hours) : 12,
+        long_shift_mode: form.long_shift_mode === "warn" ? "warn" : "block",
+        shift_earliest_time: form.shift_earliest_time || "07:00",
+        shift_latest_time: form.shift_latest_time || "19:00",
         updated_at: new Date().toISOString(),
       })
       .eq("pharmacy_id", PHARMACY_ID);
@@ -2277,6 +2331,34 @@ function SettingsTab() {
                 />
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Shift safeguards (lib/shiftCheck.js) — checked when shifts are entered, on the roster Issues panel and in Wages */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Shift safeguards</h3>
+          <p className="text-xs text-gray-400 mb-3">Catches typos like 10pm instead of 10am before they reach wages. A finish before the start is always stopped.</p>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-gray-600 w-48 shrink-0">Longest shift</span>
+              <input type="number" min="1" max="24" step="0.5" value={form.max_shift_hours ?? 12} onChange={(e) => set("max_shift_hours", e.target.value)}
+                className="w-20 border rounded-lg px-3 py-1.5 text-sm" />
+              <span className="text-sm text-gray-500">hours</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-gray-600 w-48 shrink-0">A longer shift</span>
+              <select value={form.long_shift_mode || "block"} onChange={(e) => set("long_shift_mode", e.target.value)} className="border rounded-lg px-3 py-1.5 text-sm">
+                <option value="block">Can't be saved</option>
+                <option value="warn">Shows a warning (Save anyway)</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-sm text-gray-600 w-48 shrink-0">Normal hours (warn outside)</span>
+              <input type="time" value={String(form.shift_earliest_time || "07:00").slice(0, 5)} onChange={(e) => set("shift_earliest_time", e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm" />
+              <span className="text-gray-400 text-sm">–</span>
+              <input type="time" value={String(form.shift_latest_time || "19:00").slice(0, 5)} onChange={(e) => set("shift_latest_time", e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm" />
+              <span className="text-xs text-gray-400">{fmt12(form.shift_earliest_time || "07:00")}–{fmt12(form.shift_latest_time || "19:00")}</span>
+            </div>
           </div>
         </div>
 
@@ -2402,6 +2484,9 @@ function LocumsTab() {
   const [editBookingEnd, setEditBookingEnd] = useState("");
   const [editBookingLocumId, setEditBookingLocumId] = useState(""); // "l:<id>" locum | "p:<id>" pharmacist
   const [savingBookingEdit, setSavingBookingEdit] = useState(false);
+  const locumShiftSettings = useShiftSettings(supabase, PHARMACY_ID);
+  const editBookingChk = useShiftCheck(locumShiftSettings);
+  const gapChk = useShiftCheck(locumShiftSettings);
   const [pharmacists, setPharmacists] = useState([]); // active Pharmacist / Intern Pharmacist — can be assigned as cover
   const [editingSlotKey, setEditingSlotKey] = useState(null); // red (unfilled) row whose times are being edited
   const [editSlotStart, setEditSlotStart] = useState("");
@@ -2489,6 +2574,7 @@ function LocumsTab() {
 
   const handleAddGap = async () => {
     if (!newGapDate) return;
+    if (!gapChk.gate(newGapStart, newGapEnd)) return; // a slot's times become the locum shift's times
     setAddingGap(true);
     try {
       const { error } = await supabase.from("locum_gaps").insert([{
@@ -2536,7 +2622,7 @@ function LocumsTab() {
 
   const handleSaveBookingEdit = async () => {
     if (!editingBookingId) return;
-    if (editBookingStart && editBookingEnd && editBookingEnd <= editBookingStart) { alert("End time must be after the start time."); return; }
+    if (!editBookingChk.gate(editBookingStart, editBookingEnd)) return; // inline message instead of a browser alert
     setSavingBookingEdit(true);
     try {
       const patch = { start_time: editBookingStart, end_time: editBookingEnd };
@@ -2832,16 +2918,17 @@ function LocumsTab() {
                   </div>
                   <div>
                     <label className="block text-[10px] font-medium text-gray-500 mb-1">Start</label>
-                    <input type="time" value={newGapStart} onChange={(e) => setNewGapStart(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm" />
+                    <input type="time" value={newGapStart} onChange={(e) => { setNewGapStart(e.target.value); gapChk.reset(); }} className="border rounded-lg px-2 py-1.5 text-sm" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-medium text-gray-500 mb-1">End</label>
-                    <input type="time" value={newGapEnd} onChange={(e) => setNewGapEnd(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm" />
+                    <input type="time" value={newGapEnd} onChange={(e) => { setNewGapEnd(e.target.value); gapChk.reset(); }} className="border rounded-lg px-2 py-1.5 text-sm" />
                   </div>
                   <button onClick={handleAddGap} disabled={addingGap || !newGapDate} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40">
-                    {addingGap ? "Adding…" : "+ Add slot"}
+                    {addingGap ? "Adding…" : gapChk.saveLabel("+ Add slot")}
                   </button>
                 </div>
+                <ShiftCheckNotice className="mt-2" check={gapChk} onUse={(field, v) => { (field === "start" ? setNewGapStart : setNewGapEnd)(v); gapChk.reset(); }} />
                 {loadingCover ? (
                   <div className="text-sm text-gray-400">Loading…</div>
                 ) : allCover.length === 0 ? (
@@ -2859,18 +2946,19 @@ function LocumsTab() {
                         <div className="text-sm text-gray-700 w-48 shrink-0">{fmtAllDate(e.date)}</div>
                         {e.filled && editingBookingId === e.bookingId ? (
                           <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
-                            <input type="time" value={editBookingStart} onChange={(ev) => setEditBookingStart(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0" />
+                            <input type="time" value={String(editBookingStart).slice(0, 5)} onChange={(ev) => { setEditBookingStart(ev.target.value); editBookingChk.reset(); }} className="border rounded px-2 py-1 text-xs shrink-0" />
                             <span className="text-gray-400 text-xs">–</span>
-                            <input type="time" value={editBookingEnd} onChange={(ev) => setEditBookingEnd(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0" />
+                            <input type="time" value={String(editBookingEnd).slice(0, 5)} onChange={(ev) => { setEditBookingEnd(ev.target.value); editBookingChk.reset(); }} className="border rounded px-2 py-1 text-xs shrink-0" />
                             <select value={editBookingLocumId} onChange={(ev) => setEditBookingLocumId(ev.target.value)} className="border rounded px-2 py-1 text-xs shrink-0">
                               <option value="">— cover —</option>
                               {coverOptions(e)}
                             </select>
                             <div className="flex items-center gap-1 shrink-0 ml-auto">
-                              <button onClick={handleSaveBookingEdit} disabled={savingBookingEdit} className="text-xs px-2 py-1 bg-blue-600 text-white rounded disabled:opacity-40">{savingBookingEdit ? "…" : "Save"}</button>
-                              <button onClick={() => setEditingBookingId(null)} className="text-xs px-2 py-1 border rounded">Cancel</button>
+                              <button onClick={handleSaveBookingEdit} disabled={savingBookingEdit} className="text-xs px-2 py-1 bg-blue-600 text-white rounded disabled:opacity-40">{savingBookingEdit ? "…" : editBookingChk.saveLabel("Save")}</button>
+                              <button onClick={() => { setEditingBookingId(null); editBookingChk.reset(); }} className="text-xs px-2 py-1 border rounded">Cancel</button>
                               <button onClick={handleUnassignBooking} disabled={savingBookingEdit} className="text-xs px-2 py-1 border border-red-200 text-red-600 rounded hover:bg-red-50 disabled:opacity-40">Unassign</button>
                             </div>
+                            <ShiftCheckNotice className="basis-full" check={editBookingChk} onUse={(field, v) => { (field === "start" ? setEditBookingStart : setEditBookingEnd)(v); editBookingChk.reset(); }} />
                           </div>
                         ) : !e.filled && editingSlotKey === rowKey ? (
                           <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
