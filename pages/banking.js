@@ -207,11 +207,8 @@ function BankingTab({ manager }) {
   const countedTotal = round2(DENOMINATIONS.reduce((s, d) => s + qty(d) * d.value, 0));
   const countDiff = round2(countedTotal - tickedTotal);
   const coinsOn = showCoins || CNT_COINS.some((d) => qty(d) > 0);
-  // Saved with the deposit: {"100": 2, "50": 10, …} — only denominations with a count; null if nothing was counted
-  const countsJson = () => {
-    const out = Object.fromEntries(DENOMINATIONS.filter((d) => qty(d) > 0).map((d) => [String(d.value), qty(d)]));
-    return Object.keys(out).length ? out : null;
-  };
+  // The counter is only a calculator — the counts are NOT saved with the deposit (notes get swapped, so they'd mislead);
+  // bank_deposits.cash_counts stays in the database, unused.
   const useCounted = () => { setAmountTouched(true); setAmount(countedTotal.toFixed(2)); };
 
   const record = async () => {
@@ -226,7 +223,6 @@ function BankingTab({ manager }) {
     try {
       const { data: dep, error: e1 } = await supabase.from("bank_deposits").insert([{
         pharmacy_id: PHARMACY_ID, deposit_date: depDate, amount: amountNum, note: note.trim() || null, created_by_staff_id: manager.id,
-        cash_counts: countsJson(),
       }]).select("id").single();
       if (e1) throw e1;
       depId = dep.id;
@@ -291,9 +287,6 @@ function BankingTab({ manager }) {
       </div>
     );
   };
-  // A saved deposit's counts, as "$100 × 2 = $200.00" lines
-  const countLines = (counts) => DENOMINATIONS.filter((d) => Number(counts?.[String(d.value)]) > 0)
-    .map((d) => ({ d, n: Number(counts[String(d.value)]), sub: round2(Number(counts[String(d.value)]) * d.value) }));
 
   return (
     <div className="space-y-4">
@@ -426,7 +419,6 @@ function BankingTab({ manager }) {
                 const daysTotal = round2(days.reduce((s, d) => s + Number(d.cash_takings || 0), 0));
                 const dd = round2(Number(dep.amount) - daysTotal);
                 const open = expanded === dep.id;
-                const lines = countLines(dep.cash_counts);
                 return (
                   <div key={dep.id} className="px-4 sm:px-5 py-2.5">
                     <button onClick={() => setExpanded(open ? null : dep.id)} className="w-full flex items-start justify-between gap-3 text-left">
@@ -448,15 +440,6 @@ function BankingTab({ manager }) {
                         {days.map((d) => (
                           <div key={d.id} className="flex justify-between text-sm"><span className="text-gray-700">{dayLabel(d.takings_date)}</span><span className="tabular-nums">{money(d.cash_takings)}</span></div>
                         ))}
-                        {lines.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-[#E7EAF0]">
-                            <div className="text-xs font-semibold text-gray-500 mb-0.5">Cash counted</div>
-                            {lines.map(({ d, n, sub }) => (
-                              <div key={d.value} className="flex justify-between text-xs text-gray-600 tabular-nums"><span>{d.label} × {n}</span><span>{money(sub)}</span></div>
-                            ))}
-                            <div className="flex justify-between text-xs font-semibold text-gray-800 tabular-nums"><span>Total counted</span><span>{money(lines.reduce((s, l) => s + l.sub, 0))}</span></div>
-                          </div>
-                        )}
                         {undoAsk === dep.id ? (
                           <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 space-y-2">
                             <div>Undo this deposit? Its {days.length} day{days.length === 1 ? "" : "s"} go back to "not yet banked".</div>
