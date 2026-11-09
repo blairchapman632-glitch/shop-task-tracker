@@ -29,8 +29,7 @@ Shared libs (single sources of truth — reuse, don't duplicate logic):
 1. **APPROVED PLAN** — if Blair's message starts with `APPROVED PLAN`, the plan has already been agreed (usually planned in a separate Claude chat). **Implement it directly without asking for permission first.** Only stop and ask if:
    - the actual code contradicts an assumption in the plan,
    - the change would alter any wage, leave or pay figures,
-   - it would delete or overwrite existing data,
-   - it needs a database schema change (see Database rules),
+   - it would delete or overwrite existing data (see Database rules),
    - something in the plan is genuinely ambiguous.
 2. **Anything else** — read the relevant code, explain your plan in plain English, and **wait for Blair's OK** before changing code.
 
@@ -46,9 +45,13 @@ Shared libs (single sources of truth — reuse, don't duplicate logic):
 
 ### Database rules (Supabase)
 - Read-only queries to investigate are fine.
-- **Any schema change or data change** (create/alter table, update/delete rows, grants, policies): write the SQL and give it to Blair to run in the Supabase SQL editor. Don't run it yourself.
-- Before any bulk data change, give Blair a backup statement first, e.g. `create table roster_shifts_backup_YYYYMMDD as select * from roster_shifts;`
+- **Schema and data changes: Claude runs them directly against Supabase** — Blair no longer runs SQL himself. Every time:
+  - save a copy of the SQL in `docs/sql/` first,
+  - run it, then check it worked (a SELECT of what changed),
+  - report what changed (tables/columns added, rows affected, before → after where it matters).
+- **Ask Blair first only for anything that deletes or overwrites real data** (delete rows, update existing values, drop/rename columns or tables, bulk fixes). Adding tables, columns, indexes or new rows doesn't need asking. When asking, show the before/after SELECT, and take a backup before running it, e.g. `create table roster_shifts_backup_YYYYMMDD as select * from roster_shifts;`
 - **RLS:** currently OFF on almost all tables (known; fixed later in a dedicated pass). Never batch RLS statements — one table at a time, verified individually. Any new table: note it for the multi-pharmacy RLS pass.
+  - RLS-pass list (new tables, besides those in `docs/SESSION_NOTES.md`): Daily Banking — `banking_payment_types`, `daily_takings`, `daily_takings_tenders`, `cash_counts`, `bank_deposits`, `daily_takings_edits`. New columns on existing tables: `pharmacy_settings` banking fields (float, variance limit, `banking_summary_email`, `banking_start_date`), `banking_payment_types.help_text`, `daily_takings.no_closing_eftpos`. Takings figures are owner-only — RLS must keep them from staff logins. `data/banking-import/` is private and gitignored — never commit it.
 - Every insert into a pharmacy-scoped table must set `pharmacy_id` (nulls fail silently downstream).
 
 ### Product principles

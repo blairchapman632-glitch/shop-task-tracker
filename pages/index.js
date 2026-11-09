@@ -14,6 +14,7 @@ import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
 import { fmtDateShort, perthDateOf, todayPerth, addMonthsStr, addDaysStr } from "../lib/performanceReview";
 import OrderLines from "../components/OrderLines";
 import ShoppingList from "../components/ShoppingList";
+import { missedCounts } from "../lib/bankingData";
 import { syncInductionAuto } from "../lib/inductionAuto";
 import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
 import { adminFetch } from "../lib/adminFetch";
@@ -314,6 +315,7 @@ function Sidebar({ onViewRoster, onViewLeaderboard, onViewActivity, leaderboardO
       <NavLink href="/roster" icon="calendarGrid" label="Roster" />
       <NavLink href="/tasks" icon="checkSquare" label="Tasks" />
       <NavLink href="/admin" icon="settings" label="Admin" />
+      <NavLink href="/banking" icon="bank" label="Banking" />
 
       {/* Leaderboard and Activity are no longer in the sidebar (being retired separately — their data and
           SidebarSection stay for now). Spacer keeps Change PIN / Logout at the bottom. */}
@@ -1358,6 +1360,27 @@ export default function HomePage() {
 
   // 🛒 Shopping list card: number of open items (the modal loads the list itself). Refreshed every minute, after a
   // checklist completes (leadersRefreshKey) and whenever the modal changes something.
+  // 🧮 Till count card (Daily Banking): today's count done or not, and any trading day in the last 7 days with no
+  // confirmed count (lib/bankingData.js missedCounts — same rule as the Banking page banner). Refreshed every minute;
+  // the count itself is on /till-count. Staff see only the dates, never figures.
+  const [tillToday, setTillToday] = useState(null); // daily_takings row for today, or null
+  const [tillMissed, setTillMissed] = useState([]);  // ["YYYY-MM-DD", …]
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    const loadTill = async () => {
+      const today = todayPerth();
+      const [t, missed] = await Promise.all([
+        supabase.from("daily_takings").select("status, confirmed_by_1, confirmed_by_2").eq("pharmacy_id", currentPharmacyId).eq("takings_date", today).maybeSingle(),
+        missedCounts(supabase, currentPharmacyId).catch(() => []),
+      ]);
+      if (!t.error) setTillToday(t.data || null);
+      setTillMissed(missed);
+    };
+    loadTill();
+    const interval = setInterval(loadTill, 60000);
+    return () => clearInterval(interval);
+  }, [currentPharmacyId]);
+
   const [shoppingCount, setShoppingCount] = useState(0);
   const [showShoppingList, setShowShoppingList] = useState(false);
   useEffect(() => {
@@ -2269,6 +2292,26 @@ const handleDeliveryTap = async (d) => {
                               </div>
                               <div className="text-[11px] text-gray-400">{sectionCleansExpanded ? "Tap to close" : "Tap to see all sections"}</div>
                             </button>
+                            {/* 🧮 Till count (Daily Banking) — opens /till-count */}
+                            {(() => {
+                              const done = tillToday && tillToday.status !== "open";
+                              const first = (id) => String(staffById[id]?.name || "").split(" ")[0];
+                              const older = tillMissed.length ? tillMissed.map((d) => new Date(d + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })).join(", ") : null;
+                              return (
+                                <button
+                                  onClick={() => router.push("/till-count")}
+                                  className="px-3 py-2 rounded-lg border border-[#E7EAF0] text-left bg-white hover:bg-gray-50"
+                                >
+                                  <div className="flex items-center gap-1.5 text-[15px] font-semibold leading-tight text-gray-800"><span className="text-[18px] leading-none shrink-0">🧮</span><span>Till count</span></div>
+                                  <div className={`mt-0.5 text-[13px] font-medium ${done ? "text-green-700" : "text-gray-500"}`}>
+                                    {done ? `Done ✓ (${[first(tillToday.confirmed_by_1), first(tillToday.confirmed_by_2)].filter(Boolean).join(", ")})` : "Not done"}
+                                  </div>
+                                  {older
+                                    ? <div className="text-[11px] font-medium text-red-600">⚠ No confirmed count: {older}</div>
+                                    : <div className="text-[11px] text-gray-400">{done ? "Tap to see it" : "Tap to count at till close"}</div>}
+                                </button>
+                              );
+                            })()}
                             {hireDueBack.length > 0 && (
                               <button
                                 onClick={() => setShowHireModal(true)}

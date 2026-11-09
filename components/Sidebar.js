@@ -11,6 +11,7 @@ const LINKS = [
   { key: "requests", href: "/availability", icon: "🗓️", label: "Requests" },
   { key: "qspp", href: "/qspp", icon: "📁", label: "QSPP" },
   { key: "admin", href: "/admin", icon: "⚙️", label: "Admin" },
+  { key: "banking", href: "/banking", icon: "🏦", label: "Banking" },
 ];
 
 export default function Sidebar({ active }) {

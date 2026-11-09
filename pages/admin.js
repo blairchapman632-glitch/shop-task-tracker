@@ -17,6 +17,7 @@ import { todayPerth, addMonthsStr } from "../lib/performanceReview";
 import { checkAdminPin } from "../lib/adminPin";
 import { nextDayStr } from "../lib/leaveCalendar";
 import CalendarCategoriesAdmin from "../components/CalendarCategoriesAdmin";
+import BankingSettingsAdmin from "../components/BankingSettingsAdmin";
 import { useShiftSettings, useShiftCheck, ShiftCheckNotice, validateShift, fmt12 } from "../lib/shiftCheck";
 
 
@@ -2361,6 +2362,9 @@ function SettingsTab() {
             </div>
           </div>
         </div>
+
+        {/* Daily Banking — float, over/under limit, payment types (saves on its own) */}
+        <BankingSettingsAdmin pharmacyId={PHARMACY_ID} />
 
         {/* Payroll */}
         <div>
