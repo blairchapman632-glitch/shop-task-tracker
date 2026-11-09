@@ -368,18 +368,25 @@ export default function TillCountPage() {
   const hasCount = [...Object.values(counts.till || {}), ...Object.values(counts.bag || {})].some((v) => Number(v) > 0)
     || Number(coinTotalIn.till) > 0 || Number(coinTotalIn.bag) > 0;
 
-  // Enter = the next box, in this order (data-nav): Till coins column top to bottom, Bag coins, Notes, Z report, EFTPOS,
-  // reason, then name → PIN for each person. Enter in the last PIN does nothing — staff click Confirm count.
+  // Enter and Tab = the next box, Shift+Tab = the previous one, all in the same order (data-nav), not the table's row
+  // order: Till coins column top to bottom (or its single total box), Bag coins, Notes, Z report, EFTPOS, reason, then
+  // name → PIN for each person. Enter in the last PIN does nothing — staff click Confirm count; Tab from the last PIN
+  // carries on to the Confirm button as normal.
   const onEnter = (e) => {
-    if (e.key !== "Enter" || e.shiftKey) return;
+    const isEnter = e.key === "Enter" && !e.shiftKey;
+    const isTab = e.key === "Tab";
+    if (!isEnter && !isTab) return;
     const n = Number(e.target?.dataset?.nav);
     if (!n) return;
-    e.preventDefault();
     const all = [...e.currentTarget.querySelectorAll("[data-nav]")]
       .filter((x) => !x.disabled && x.offsetParent !== null)
       .sort((a, b) => Number(a.dataset.nav) - Number(b.dataset.nav));
-    const next = all.find((x) => Number(x.dataset.nav) > n);
-    if (next) { next.focus(); if (next.tagName === "INPUT" && next.select) next.select(); }
+    const back = isTab && e.shiftKey;
+    const target = back ? [...all].reverse().find((x) => Number(x.dataset.nav) < n) : all.find((x) => Number(x.dataset.nav) > n);
+    if (!target) { if (isEnter) e.preventDefault(); return; } // Tab past either end: the browser's normal order
+    e.preventDefault();
+    target.focus();
+    if (target.tagName === "INPUT" && target.select) target.select();
   };
 
   // ── Count the cash: one table (rows = denominations; columns = Till coins | Bag coins | Notes) ──
