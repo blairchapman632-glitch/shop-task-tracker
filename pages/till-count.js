@@ -3,8 +3,10 @@
 // notes, the Z report figures, the EFTPOS printouts (Closing EFTPOS = last night's final printout from the right till,
 // kept in the till; Right till + Left till = tonight's readings), then both confirm with their name + PIN.
 // Names and help under each EFTPOS field come from banking_payment_types (name, help_text — Admin → Settings).
-// Closing EFTPOS blank/$0 after a trading day blocks Confirm until "No EFTPOS after the Z close last night" is ticked
-// (daily_takings.no_closing_eftpos). Soft warnings (never block): Closing EFTPOS over 3× its 60-day average; Left till
+// From 9 Nov 2026 staff enter the right till's closing RECEIPT total (whole day, required — reprint the last settlement
+// if there's no receipt); Closing EFTPOS = receipt − the previous Right till reading ($0 is valid). With no earlier
+// reading, Closing EFTPOS is entered directly (also required). daily_takings.no_closing_eftpos is no longer used.
+// Soft warnings (never block): Closing EFTPOS over 3× its 60-day average; Left till
 // higher than Right till when Right is usually higher (80%+ of the last 60 counted days).
 // Staff only ever see the day being entered — no history (that's the owner's, Stage 4). Once confirmed the day locks.
 // Saves as they go (each field when it loses focus); the day stays 'open' until confirmed. The day's row is only
@@ -19,7 +21,7 @@ import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 import { todayPerth, addDaysStr } from "../lib/performanceReview";
 import { longDate } from "../lib/calendar";
-import { openOnWeekday, weekdayOf, previousRightTill, dayLabel } from "../lib/bankingData";
+import { previousRightTill, dayLabel } from "../lib/bankingData";
 import {
   DENOMINATIONS, round2, countTotal, floatSplit, cashVariance, eftposVariance, needsReason, fmtVariance,
   CLOSING_RECEIPT_FROM, closingFromReceipt,
@@ -28,7 +30,6 @@ import {
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
 const HISTORY_DAYS = 60; // counted days the soft EFTPOS warnings compare against
-const HOURS_COLS = "hours_monday, hours_tuesday, hours_wednesday, hours_thursday, hours_friday, hours_saturday, hours_sunday";
 
 const money = (n) => `$${round2(n).toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const num = (v) => (v === "" || v === null || v === undefined ? null : Number(v));
@@ -65,12 +66,9 @@ export default function TillCountPage() {
   const [personErr, setPersonErr] = useState(["", ""]);
   const [confirming, setConfirming] = useState(false);
   const [saveState, setSaveState] = useState(""); // "", "Saving…", "Saved"
-  const [noClosing, setNoClosing] = useState(false);   // "No EFTPOS after the Z close last night" ticked
-  const [prevTrading, setPrevTrading] = useState(false); // the day before was a trading day (open, not a holiday / closed)
   const [hist, setHist] = useState([]);                // last 60 counted days: [{ [payment_type_id]: amount }]
   const [receipt, setReceipt] = useState("");          // closing receipt total (right till, last night) — from 9 Nov 2026
   const [prevRight, setPrevRight] = useState(undefined); // previous Right till reading { date, amount } | null (undefined = looking)
-  const settingsRow = useRef(null);                    // pharmacy_settings (opening hours) for openDay
   const dayRef = useRef(null);
   const creating = useRef(null);
 
@@ -83,7 +81,7 @@ export default function TillCountPage() {
         const [st, ty, se, open] = await Promise.all([
           supabase.from("staff").select("id, name, role, active").eq("pharmacy_id", PHARMACY_ID).order("name"),
           supabase.from("banking_payment_types").select("*").eq("pharmacy_id", PHARMACY_ID).order("sort_order"),
-          supabase.from("pharmacy_settings").select(`banking_float_amount, banking_variance_limit, ${HOURS_COLS}`).eq("pharmacy_id", PHARMACY_ID).maybeSingle(),
+          supabase.from("pharmacy_settings").select("banking_float_amount, banking_variance_limit").eq("pharmacy_id", PHARMACY_ID).maybeSingle(),
           supabase.from("daily_takings").select("takings_date").eq("pharmacy_id", PHARMACY_ID).eq("status", "open")
             .gte("takings_date", addDaysStr(today, -7)).lt("takings_date", today).order("takings_date"),
         ]);
@@ -91,7 +89,6 @@ export default function TillCountPage() {
         if (err) throw err;
         setStaff((st.data || []).filter((s) => s.active !== false && s.role !== "Locum"));
         setTypes(ty.data || []);
-        settingsRow.current = se.data || null;
         setSettings({
           float: se.data?.banking_float_amount != null ? Number(se.data.banking_float_amount) : 300,
           limit: se.data?.banking_variance_limit != null ? Number(se.data.banking_variance_limit) : 5,
@@ -112,14 +109,13 @@ export default function TillCountPage() {
   const openDay = async (d) => {
     setDate(d);
     setOlderOpen(null);
-    loadContext(d).catch(() => { setPrevTrading(false); setHist([]); }); // only warnings — never stops the count
+    loadContext(d).catch(() => setHist([])); // only warnings — never stops the count
     setPrevRight(undefined);
     previousRightTill(supabase, PHARMACY_ID, d).then(setPrevRight).catch(() => setPrevRight(null));
     const { data: row, error: e1 } = await supabase.from("daily_takings").select("*").eq("pharmacy_id", PHARMACY_ID).eq("takings_date", d).maybeSingle();
     if (e1) { setError(e1.message); return; }
     setDay(row || null);
     dayRef.current = row || null;
-    setNoClosing(!!row?.no_closing_eftpos);
     setReceipt(toInput(row?.closing_receipt_total));
     if (!row) return;
     const [cc, tt] = await Promise.all([
@@ -144,17 +140,10 @@ export default function TillCountPage() {
     setReason(row.variance_reason || "");
   };
 
-  // The day before (a trading day? — open per the pharmacy hours, not a public holiday, not marked closed) and the last
-  // 60 counted days' EFTPOS amounts (any source), for the closing-EFTPOS tick and the soft warnings
+  // The last 60 counted days' EFTPOS amounts (any source), for the soft warnings
   const loadContext = async (d) => {
-    const prev = addDaysStr(d, -1);
-    const [hol, prevRow, recent] = await Promise.all([
-      supabase.from("public_holidays").select("date").eq("pharmacy_id", PHARMACY_ID).eq("date", prev).limit(1),
-      supabase.from("daily_takings").select("status").eq("pharmacy_id", PHARMACY_ID).eq("takings_date", prev).maybeSingle(),
-      supabase.from("daily_takings").select("id").eq("pharmacy_id", PHARMACY_ID).eq("status", "confirmed").lt("takings_date", d)
-        .order("takings_date", { ascending: false }).limit(HISTORY_DAYS),
-    ]);
-    setPrevTrading(!(hol.data || []).length && prevRow.data?.status !== "closed" && openOnWeekday(settingsRow.current, weekdayOf(prev)));
+    const recent = await supabase.from("daily_takings").select("id").eq("pharmacy_id", PHARMACY_ID).eq("status", "confirmed").lt("takings_date", d)
+      .order("takings_date", { ascending: false }).limit(HISTORY_DAYS);
     const ids = (recent.data || []).map((r) => r.id);
     if (!ids.length) { setHist([]); return; }
     const { data: tt } = await supabase.from("daily_takings_tenders").select("daily_takings_id, payment_type_id, amount").in("daily_takings_id", ids);
@@ -217,8 +206,6 @@ export default function TillCountPage() {
     const c = v === "" || !prevRight ? null : closingFromReceipt(Number(v), prevRight.amount);
     setTenders((s) => ({ ...s, [tClosing.id]: c === null || c < 0 ? "" : String(c) }));
   };
-  // Blank / $0 after a trading day: Confirm needs the "no closing printout" tick
-  const needClosingTick = !!tClosing && prevTrading && !(amt(tClosing) > 0);
   // Soft warnings against the last 60 counted days (need at least 10 to say what's usual)
   const enoughHist = hist.length >= 10;
   const closingAvg = enoughHist && tClosing ? hist.reduce((s, h) => s + (h[tClosing.id] || 0), 0) / hist.length : 0;
@@ -236,7 +223,7 @@ export default function TillCountPage() {
     counted_cash: counted, float_amount: floatAmt, cash_takings: takings,
     till_coins_total: tillCoins, bag_coins_total: bagCoins, notes_total: notesTotal,
     cash_variance: cashVar, eftpos_variance: eftVar, variance_reason: reason.trim() || null,
-    no_closing_eftpos: needClosingTick && noClosing, updated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     ...(receiptMode ? { closing_receipt_total: receiptNum } : {}),
   });
 
@@ -274,7 +261,10 @@ export default function TillCountPage() {
     if (counted <= 0) { setError("Count the cash first."); return; }
     if (reasonNeeded && !reason.trim()) { setError("Give a reason for the difference."); return; }
     if (receiptNegative) { setError(`Receipt total is less than the right till reading on ${dayLabel(prevRight.date)} — check the receipt.`); return; }
-    if (needClosingTick && !noClosing) { setError("Enter the Closing EFTPOS, or tick “No EFTPOS after the Z close last night”."); return; }
+    // The closing figure is required: the receipt total (or, with no earlier right till reading, Closing EFTPOS itself)
+    if (receiptDay && prevRight === undefined) { setError("Still looking up the last right till reading — try again in a moment."); return; }
+    if (receiptMode && receipt === "") { setError("Enter the closing receipt total (reprint the last settlement if there's no receipt)."); return; }
+    if (tClosing && !receiptMode && amt(tClosing) === null) { setError("Enter the Closing EFTPOS."); return; }
     people.forEach((p, i) => {
       if (!p.staffId) errs[i] = "Pick your name.";
       else if (!/^\d{4}$/.test(p.pin)) errs[i] = "Enter your 4-digit PIN.";
@@ -528,19 +518,6 @@ export default function TillCountPage() {
               return moneyField(t.name, t.help_text || "", tenders[t.id] ?? "", (v) => setTenders((s) => ({ ...s, [t.id]: v })), () => saveTender(t.id), t.id, softWarn[t.id]);
             })}
           </div>
-          {needClosingTick && (
-            <label className={`mt-4 flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer ${noClosing ? "border-gray-200 bg-gray-50" : "border-amber-300 bg-amber-50"}`}>
-              <input type="checkbox" checked={noClosing} onChange={(e) => {
-                const v = e.target.checked;
-                setNoClosing(v);
-                guard((row) => supabase.from("daily_takings").update({ no_closing_eftpos: v }).eq("id", row.id).eq("status", "open").then(({ error: er }) => { if (er) throw er; }));
-              }} className="h-5 w-5 mt-0.5 shrink-0" />
-              <span className="text-sm text-gray-800">
-                <span className="font-semibold">No EFTPOS after the Z close last night (no closing printout)</span>
-                <span className="block text-xs text-gray-500">Closing EFTPOS is blank — tick this if there really was no printout, otherwise enter it above.</span>
-              </span>
-            </label>
-          )}
         </section>
 
         {/* 7. Check */}
