@@ -5,9 +5,9 @@
 // missing / Reopen). Export for Arthur: this month or the financial year (lib/bankingExport.js).
 import { useEffect, useState } from "react";
 import supabase from "../../lib/supabaseClient";
-import { round2, fmtVariance, cashVariance, eftposVariance } from "../../lib/banking";
+import { round2, fmtVariance, cashVariance, eftposVariance, closingFromReceipt } from "../../lib/banking";
 import {
-  loadPeriod, loadPaymentTypes, weeksOfMonth, dayFigures, countsInTotals, columnTypes, dayLabel, WD, MON_LONG,
+  loadPeriod, loadPaymentTypes, weeksOfMonth, dayFigures, countsInTotals, columnTypes, dayLabel, WD, MON_LONG, previousRightTill,
   addMonthsYm, monthStart, monthEnd, fyOf, weekdayOf,
 } from "../../lib/bankingData";
 import { buildBankingWorkbook, exportFileName } from "../../lib/bankingExport";
@@ -254,6 +254,21 @@ export function DayEditor({ pharmacyId, manager, date, day, types, cols, staffNa
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
   const [deposit, setDeposit] = useState(null);
+  // Days counted with the closing RECEIPT total (from 9 Nov 2026): Closing EFTPOS = receipt − previous Right till reading.
+  // Earlier days have no receipt total and just show Closing EFTPOS as entered.
+  const tClosing = types.find((t) => t.key === "eftpos_t3");
+  const receiptMode = !!day && day.closing_receipt_total !== null && day.closing_receipt_total !== undefined && !!tClosing;
+  const [receiptIn, setReceiptIn] = useState(toIn(day?.closing_receipt_total));
+  const [prevRight, setPrevRight] = useState(undefined); // { date, amount } | null
+  useEffect(() => {
+    if (!receiptMode) return;
+    previousRightTill(supabase, pharmacyId, date).then(setPrevRight).catch(() => setPrevRight(null));
+  }, [receiptMode, pharmacyId, date]);
+  const receiptCalc = receiptMode && prevRight && receiptIn !== "" ? closingFromReceipt(receiptIn, prevRight.amount) : null;
+  const onReceipt = (v) => {
+    setReceiptIn(v);
+    if (prevRight && v !== "") setTenders((x) => ({ ...x, [tClosing.id]: String(closingFromReceipt(v, prevRight.amount)) }));
+  };
 
   useEffect(() => {
     if (!day) return;
@@ -278,6 +293,12 @@ export function DayEditor({ pharmacyId, manager, date, day, types, cols, staffNa
     const wasReason = day.variance_reason || null;
     const nowReason = reason.trim() || null;
     if (wasReason !== nowReason) { before.variance_reason = wasReason; after.variance_reason = nowReason; patch.variance_reason = nowReason; }
+    if (receiptMode) {
+      if (receiptCalc !== null && receiptCalc < 0) { setError(`Receipt total is less than the right till reading on ${dayLabel(prevRight.date)} — check the receipt.`); return; }
+      const was = Number(day.closing_receipt_total);
+      const now = toNum(receiptIn);
+      if (was !== now) { before.closing_receipt_total = was; after.closing_receipt_total = now; patch.closing_receipt_total = now; }
+    }
     const tenderChanges = [];
     for (const t of editTypes) {
       const was = Number(day.tenders?.[t.id] || 0);
@@ -387,13 +408,32 @@ export function DayEditor({ pharmacyId, manager, date, day, types, cols, staffNa
                     <input inputMode="decimal" value={form[fl.key]} onChange={(e) => setForm((x) => ({ ...x, [fl.key]: e.target.value.replace(/[^\d.\-]/g, "") }))} className={input} />
                   </label>
                 ))}
-                {editTypes.map((t) => (
-                  <label key={t.id} className="block">
-                    <span className="block text-xs font-semibold text-gray-600 mb-0.5">{t.name}</span>
-                    <input inputMode="decimal" value={tenders[t.id] ?? ""} onChange={(e) => setTenders((x) => ({ ...x, [t.id]: e.target.value.replace(/[^\d.\-]/g, "") }))} className={input} />
-                  </label>
-                ))}
+                {editTypes.map((t) => {
+                  const calc = receiptMode && t.id === tClosing.id;
+                  return (
+                    <label key={t.id} className="block">
+                      <span className="block text-xs font-semibold text-gray-600 mb-0.5">{t.name}{calc ? " (calculated)" : ""}</span>
+                      <input inputMode="decimal" value={tenders[t.id] ?? ""} readOnly={calc}
+                        onChange={(e) => setTenders((x) => ({ ...x, [t.id]: e.target.value.replace(/[^\d.\-]/g, "") }))} className={`${input} ${calc ? "bg-gray-50 text-gray-600" : ""}`} />
+                    </label>
+                  );
+                })}
               </div>
+              {receiptMode && (
+                <div className="rounded-lg bg-[#F8FAFC] border border-[#E7EAF0] px-3 py-2 space-y-1">
+                  <label className="block max-w-[14rem]">
+                    <span className="block text-xs font-semibold text-gray-600 mb-0.5">Closing receipt total (right till)</span>
+                    <input inputMode="decimal" value={receiptIn} onChange={(e) => onReceipt(e.target.value.replace(/[^\d.]/g, ""))} className={input} />
+                  </label>
+                  <p className={`text-xs ${receiptCalc !== null && receiptCalc < 0 ? "text-red-700 font-semibold" : "text-gray-600"}`}>
+                    {prevRight === undefined ? "Looking up the right till reading…"
+                      : !prevRight ? "No earlier right till reading found — Closing EFTPOS can't be recalculated."
+                      : receiptCalc === null ? `Right till reading on ${dayLabel(prevRight.date)}: ${$(prevRight.amount)}`
+                      : receiptCalc < 0 ? `Receipt total is less than the right till reading on ${dayLabel(prevRight.date)} — check the receipt`
+                      : `Receipt total ${$(Number(receiptIn))} − right till reading on ${dayLabel(prevRight.date)} ${$(prevRight.amount)} = Closing EFTPOS ${$(receiptCalc)}`}
+                  </p>
+                </div>
+              )}
               <div className="text-sm text-gray-600">
                 Variances now: Cash {day.cash_variance === null ? "—" : fmtVariance(day.cash_variance)} · EFTPOS {day.eftpos_variance === null ? "—" : fmtVariance(day.eftpos_variance)} (recalculated when you save)
               </div>

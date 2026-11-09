@@ -19,9 +19,10 @@ import Link from "next/link";
 import supabase from "../lib/supabaseClient";
 import { todayPerth, addDaysStr } from "../lib/performanceReview";
 import { longDate } from "../lib/calendar";
-import { openOnWeekday, weekdayOf } from "../lib/bankingData";
+import { openOnWeekday, weekdayOf, previousRightTill, dayLabel } from "../lib/bankingData";
 import {
   DENOMINATIONS, round2, countTotal, floatSplit, cashVariance, eftposVariance, needsReason, fmtVariance,
+  CLOSING_RECEIPT_FROM, closingFromReceipt,
 } from "../lib/banking";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -67,6 +68,8 @@ export default function TillCountPage() {
   const [noClosing, setNoClosing] = useState(false);   // "No EFTPOS after the Z close last night" ticked
   const [prevTrading, setPrevTrading] = useState(false); // the day before was a trading day (open, not a holiday / closed)
   const [hist, setHist] = useState([]);                // last 60 counted days: [{ [payment_type_id]: amount }]
+  const [receipt, setReceipt] = useState("");          // closing receipt total (right till, last night) — from 9 Nov 2026
+  const [prevRight, setPrevRight] = useState(undefined); // previous Right till reading { date, amount } | null (undefined = looking)
   const settingsRow = useRef(null);                    // pharmacy_settings (opening hours) for openDay
   const dayRef = useRef(null);
   const creating = useRef(null);
@@ -110,11 +113,14 @@ export default function TillCountPage() {
     setDate(d);
     setOlderOpen(null);
     loadContext(d).catch(() => { setPrevTrading(false); setHist([]); }); // only warnings — never stops the count
+    setPrevRight(undefined);
+    previousRightTill(supabase, PHARMACY_ID, d).then(setPrevRight).catch(() => setPrevRight(null));
     const { data: row, error: e1 } = await supabase.from("daily_takings").select("*").eq("pharmacy_id", PHARMACY_ID).eq("takings_date", d).maybeSingle();
     if (e1) { setError(e1.message); return; }
     setDay(row || null);
     dayRef.current = row || null;
     setNoClosing(!!row?.no_closing_eftpos);
+    setReceipt(toInput(row?.closing_receipt_total));
     if (!row) return;
     const [cc, tt] = await Promise.all([
       supabase.from("cash_counts").select("location, denomination, quantity").eq("daily_takings_id", row.id),
@@ -199,6 +205,18 @@ export default function TillCountPage() {
   const tRight = eftposTypes.find((t) => t.key === "eftpos_t1");
   const tLeft = eftposTypes.find((t) => t.key === "eftpos_t2");
   const amt = (t) => (t && tenders[t.id] !== undefined && tenders[t.id] !== "" ? Number(tenders[t.id]) : null);
+  // From 9 Nov 2026: staff enter the closing RECEIPT total (whole day); Closing EFTPOS = receipt − previous Right till
+  // reading, kept in the eftpos_t3 tender as before. No earlier reading -> a direct Closing EFTPOS box instead.
+  const receiptDay = !!tClosing && !!date && date >= CLOSING_RECEIPT_FROM;
+  const receiptMode = receiptDay && !!prevRight;
+  const receiptNum = receipt === "" ? null : Number(receipt);
+  const receiptCalc = receiptMode && receiptNum !== null ? closingFromReceipt(receiptNum, prevRight.amount) : null;
+  const receiptNegative = receiptCalc !== null && receiptCalc < 0;
+  const onReceipt = (v) => {
+    setReceipt(v);
+    const c = v === "" || !prevRight ? null : closingFromReceipt(Number(v), prevRight.amount);
+    setTenders((s) => ({ ...s, [tClosing.id]: c === null || c < 0 ? "" : String(c) }));
+  };
   // Blank / $0 after a trading day: Confirm needs the "no closing printout" tick
   const needClosingTick = !!tClosing && prevTrading && !(amt(tClosing) > 0);
   // Soft warnings against the last 60 counted days (need at least 10 to say what's usual)
@@ -219,6 +237,7 @@ export default function TillCountPage() {
     till_coins_total: tillCoins, bag_coins_total: bagCoins, notes_total: notesTotal,
     cash_variance: cashVar, eftpos_variance: eftVar, variance_reason: reason.trim() || null,
     no_closing_eftpos: needClosingTick && noClosing, updated_at: new Date().toISOString(),
+    ...(receiptMode ? { closing_receipt_total: receiptNum } : {}),
   });
 
   const locked = day && day.status !== "open";
@@ -254,6 +273,7 @@ export default function TillCountPage() {
     if (!hasZCash || !hasZEftpos) { setError("Enter the Z report Cash and EFTPOS first."); return; }
     if (counted <= 0) { setError("Count the cash first."); return; }
     if (reasonNeeded && !reason.trim()) { setError("Give a reason for the difference."); return; }
+    if (receiptNegative) { setError(`Receipt total is less than the right till reading on ${dayLabel(prevRight.date)} — check the receipt.`); return; }
     if (needClosingTick && !noClosing) { setError("Enter the Closing EFTPOS, or tick “No EFTPOS after the Z close last night”."); return; }
     people.forEach((p, i) => {
       if (!p.staffId) errs[i] = "Pick your name.";
@@ -477,7 +497,36 @@ export default function TillCountPage() {
         <section className={card}>
           <h2 className="text-base font-bold text-gray-900 mb-3">6. EFTPOS printouts</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {eftposTypes.map((t) => moneyField(t.name, t.help_text || "", tenders[t.id] ?? "", (v) => setTenders((s) => ({ ...s, [t.id]: v })), () => saveTender(t.id), t.id, softWarn[t.id]))}
+            {eftposTypes.map((t) => {
+              if (t.id === tClosing?.id && receiptDay) {
+                if (prevRight === undefined) return <div key={t.id} className="text-sm text-gray-400">Looking up the last right till reading…</div>;
+                if (receiptMode) {
+                  return (
+                    <div key={t.id}>
+                      {moneyField("Closing receipt total (right till, last night)", "The whole-day total on the receipt kept in the till", receipt, onReceipt, () => saveTender(t.id), `${t.id}-r`, receiptNegative ? null : softWarn[t.id])}
+                      {receiptNum !== null && (
+                        receiptNegative ? (
+                          <p className="mt-1 rounded-lg bg-red-50 border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-700">
+                            Receipt total is less than the right till reading on {dayLabel(prevRight.date)} — check the receipt
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-xs text-gray-600">
+                            Receipt total {money(receiptNum)} − right till reading on {dayLabel(prevRight.date)} {money(prevRight.amount)} = <span className="font-semibold text-gray-900">Closing EFTPOS {money(receiptCalc)}</span>
+                          </p>
+                        )
+                      )}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={t.id}>
+                    <p className="text-xs font-medium text-amber-700 mb-1">No earlier right till reading found — enter Closing EFTPOS directly</p>
+                    {moneyField(t.name, t.help_text || "", tenders[t.id] ?? "", (v) => setTenders((s) => ({ ...s, [t.id]: v })), () => saveTender(t.id), t.id, softWarn[t.id])}
+                  </div>
+                );
+              }
+              return moneyField(t.name, t.help_text || "", tenders[t.id] ?? "", (v) => setTenders((s) => ({ ...s, [t.id]: v })), () => saveTender(t.id), t.id, softWarn[t.id]);
+            })}
           </div>
           {needClosingTick && (
             <label className={`mt-4 flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer ${noClosing ? "border-gray-200 bg-gray-50" : "border-amber-300 bg-amber-50"}`}>
