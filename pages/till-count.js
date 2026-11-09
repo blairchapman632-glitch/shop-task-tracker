@@ -364,232 +364,289 @@ export default function TillCountPage() {
     );
   }
 
-  const countRow = (loc, d) => {
+  // Anything counted yet? (the float messages only appear once there is)
+  const hasCount = [...Object.values(counts.till || {}), ...Object.values(counts.bag || {})].some((v) => Number(v) > 0)
+    || Number(coinTotalIn.till) > 0 || Number(coinTotalIn.bag) > 0;
+
+  // Enter = the next box, in this order (data-nav): Till coins column top to bottom, Bag coins, Notes, Z report, EFTPOS,
+  // reason, then name → PIN for each person. Enter in the last PIN does nothing — staff click Confirm count.
+  const onEnter = (e) => {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    const n = Number(e.target?.dataset?.nav);
+    if (!n) return;
+    e.preventDefault();
+    const all = [...e.currentTarget.querySelectorAll("[data-nav]")]
+      .filter((x) => !x.disabled && x.offsetParent !== null)
+      .sort((a, b) => Number(a.dataset.nav) - Number(b.dataset.nav));
+    const next = all.find((x) => Number(x.dataset.nav) > n);
+    if (next) { next.focus(); if (next.tagName === "INPUT" && next.select) next.select(); }
+  };
+
+  // ── Count the cash: one table (rows = denominations; columns = Till coins | Bag coins | Notes) ──
+  const box = "w-[5.5rem] h-10 rounded-lg border border-gray-300 px-2 text-base tabular-nums text-right focus:outline-none focus:ring-2 focus:ring-blue-400";
+  const ROWS = [...NOTES, ...COINS];
+  const COIN_COLS = [{ loc: "till", title: "Till coins", sub: "in the till", nav: 100 }, { loc: "bag", title: "Bag coins", sub: "from the dispensary bag", nav: 200 }];
+  const qtyCell = (loc, d, nav) => {
     const k = String(d.value);
     const sub = round2((Number(counts[loc]?.[k]) || 0) * d.value);
     return (
-      <div key={`${loc}-${k}`} className="grid grid-cols-[3.5rem_minmax(0,1fr)_6rem] items-center gap-3">
-        <span className="text-base font-semibold text-gray-700">{d.label}</span>
+      <div className="flex items-center gap-1.5">
         <input
+          data-nav={nav}
           inputMode="numeric"
           value={counts[loc]?.[k] ?? ""}
           onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 5); setCounts((c) => ({ ...c, [loc]: { ...c[loc], [k]: v } })); }}
           onBlur={() => saveCount(loc, k)}
           placeholder="0"
-          aria-label={`Number of ${d.label}${loc === "bag" ? " in the dispensary bag" : ""}`}
-          className={input}
+          aria-label={`Number of ${d.label}${loc === "bag" ? " in the dispensary bag" : d.kind === "coin" ? " in the till" : " notes"}`}
+          className={box}
         />
-        <span className="text-right tabular-nums text-gray-600">{sub ? money(sub) : "—"}</span>
+        <span className="text-xs tabular-nums text-gray-500 whitespace-nowrap min-w-[4.25rem]">{sub ? `= ${money(sub)}` : ""}</span>
       </div>
     );
   };
-  // A coin section: "Count by coin" (6 quantity fields) or "Total only" (one dollar field)
-  const coinSection = (loc, title, totalLabel, total) => (
-    <section className={card}>
-      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-        <h2 className="text-base font-bold text-gray-900">{title}</h2>
-        <div className="inline-flex bg-gray-100 rounded-lg p-0.5" role="group" aria-label={`${title}: how to count`}>
-          {[{ m: "coin", l: "Count by coin" }, { m: "total", l: "Total only" }].map((o) => (
-            <button
-              key={o.m}
-              type="button"
-              tabIndex={-1}
-              onClick={() => { setCoinMode((c) => ({ ...c, [loc]: o.m })); writeMode(loc, o.m); }}
-              className={`h-9 px-3 rounded-md text-sm ${coinMode[loc] === o.m ? "bg-white font-semibold shadow-sm text-gray-900" : "text-gray-600"}`}
-            >
-              {o.l}
-            </button>
-          ))}
-        </div>
-      </div>
-      {coinMode[loc] === "coin" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">{COINS.map((d) => countRow(loc, d))}</div>
-      ) : (
-        <label className="block max-w-xs">
-          <span className="block text-sm font-semibold text-gray-800 mb-1">{totalLabel}</span>
-          <input inputMode="decimal" value={coinTotalIn[loc]} onChange={(e) => { const v = moneyInput(e.target.value); setCoinTotalIn((t) => ({ ...t, [loc]: v })); }}
-            onBlur={saveFields} placeholder="0.00" className={input} />
-        </label>
-      )}
-      <div className="mt-3 pt-3 border-t flex items-center justify-between text-base">
-        <span className="font-semibold text-gray-800">{loc === "bag" ? "Bag coins" : "Till coins"}</span>
-        <span className="font-bold tabular-nums">{money(total)}</span>
-      </div>
-    </section>
+  const modeSwitch = (loc, title) => (
+    <div className="inline-flex bg-gray-100 rounded-md p-0.5 mt-1" role="group" aria-label={`${title}: how to count`}>
+      {[{ m: "coin", l: "By coin" }, { m: "total", l: "Total only" }].map((o) => (
+        <button key={o.m} type="button" tabIndex={-1}
+          onClick={() => { setCoinMode((c) => ({ ...c, [loc]: o.m })); writeMode(loc, o.m); }}
+          className={`h-7 px-2 rounded text-xs ${coinMode[loc] === o.m ? "bg-white font-semibold shadow-sm text-gray-900" : "text-gray-600"}`}>
+          {o.l}
+        </button>
+      ))}
+    </div>
   );
-  const moneyField = (label, help, value, onChange, onBlur, key, warn) => (
+
+  const moneyField = (label, help, value, onChange, onBlur, key, warn, nav) => (
     <label key={key} className="block">
       <span className="block text-sm font-semibold text-gray-800">{label}</span>
       {help && <span className="block text-xs text-gray-500 mb-1">{help}</span>}
-      <input inputMode="decimal" value={value} onChange={(e) => onChange(moneyInput(e.target.value))} onBlur={onBlur} placeholder="0.00"
+      <input data-nav={nav} inputMode="decimal" value={value} onChange={(e) => onChange(moneyInput(e.target.value))} onBlur={onBlur} placeholder="0.00"
         className={`${input} ${warn ? "border-amber-400" : ""}`} />
       {warn && <span className="block text-xs font-medium text-amber-700 mt-1">⚠ {warn}</span>}
     </label>
   );
+  const errorBox = (cls) => error && <div className={`rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700 ${cls}`}>{error}</div>;
+  const line = (label, value, note) => (
+    <div className="flex justify-between gap-3"><dt className="text-gray-600">{label}{note && <span className="text-xs text-gray-400"> {note}</span>}</dt><dd className="tabular-nums">{value}</dd></div>
+  );
 
   return (
-    <Shell saveState={saveState}>
-      <div className="space-y-4">
+    <Shell saveState={saveState} wide>
+      <div className="space-y-4" onKeyDown={onEnter}>
         <div>
           <h1 className="text-xl font-bold text-gray-900">Till count — {longDate(date)}</h1>
           <p className="text-sm text-gray-500">Two people count together. Everything saves as you go.</p>
         </div>
-        {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">{error}</div>}
+        {errorBox("lg:hidden")}
 
-        {/* 1–3. Count the cash: till coins, dispensary-bag coins, notes */}
-        {coinSection("till", "1. Coins in the till", "Total coins in the till", tillCoins)}
-        {coinSection("bag", "2. Spare coins from the dispensary bag", "Total coins in the bag", bagCoins)}
-        <section className={card}>
-          <h2 className="text-base font-bold text-gray-900 mb-3">3. Notes</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">{NOTES.map((d) => countRow("till", d))}</div>
-          <div className="mt-3 pt-3 border-t flex items-center justify-between text-base">
-            <span className="font-semibold text-gray-800">Notes</span>
-            <span className="font-bold tabular-nums">{money(notesTotal)}</span>
-          </div>
-        </section>
-
-        {/* 4. Float and takings — the app does the rounding */}
-        <section className={card}>
-          <h2 className="text-base font-bold text-gray-900 mb-3">4. Float and takings</h2>
-          <dl className="space-y-1.5 text-base">
-            <div className="flex justify-between"><dt className="text-gray-600">Coins (till + bag)</dt><dd className="tabular-nums">{money(coinsTotal)}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-600">Notes to leave in the till <span className="text-xs text-gray-400">(to the nearest $5)</span></dt><dd className="tabular-nums">{money(split.notesToLeave)}</dd></div>
-            {split.coinsCoverFloat ? <p className="text-sm text-gray-500">Coins already cover the float</p>
-              : split.notesToLeave === 0 ? <p className="text-sm text-gray-500">No notes needed — the coins are within $2.50 of the float</p> : null}
-            <div className="flex justify-between"><dt className="text-gray-600">Float in the till</dt><dd className="tabular-nums">{money(split.floatLeft)}</dd></div>
-          </dl>
-          <div className="mt-3 pt-3 border-t flex items-baseline justify-between">
-            <span className="text-lg font-bold text-gray-900">Cash takings (all other notes)</span>
-            <span className="text-3xl font-bold tabular-nums text-gray-900">{money(takings)}</span>
-          </div>
-          {split.shortOfNotes && (
-            <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm font-medium text-red-700">Not enough notes to make up the float</div>
-          )}
-          <p className="text-xs text-gray-400 mt-2">Total counted {money(counted)}</p>
-        </section>
-        {/* 5. From the Z report */}
-        <section className={card}>
-          <h2 className="text-base font-bold text-gray-900 mb-3">5. From the Z report</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {moneyField("Cash", "Payment Breakdown → Cash", z.z_cash, (v) => setZ((s) => ({ ...s, z_cash: v })), saveFields, "zc")}
-            {moneyField("EFTPOS", "Card Payments → EFTPOS", z.z_eftpos, (v) => setZ((s) => ({ ...s, z_eftpos: v })), saveFields, "ze")}
-            {otherTypes.map((t) => moneyField(t.name, t.help_text || "Other Payments — leave blank if none", tenders[t.id] ?? "", (v) => setTenders((s) => ({ ...s, [t.id]: v })), () => saveTender(t.id), t.id))}
-            <label className="block">
-              <span className="block text-sm font-semibold text-gray-800">Total Customers Served</span>
-              <span className="block text-xs text-gray-500 mb-1">&nbsp;</span>
-              <input inputMode="numeric" value={z.customers} onChange={(e) => setZ((s) => ({ ...s, customers: e.target.value.replace(/\D/g, "") }))} onBlur={saveFields} placeholder="0" className={input} />
-            </label>
-            {moneyField("Total GST Sales", "not GST Collected", z.gst_sales, (v) => setZ((s) => ({ ...s, gst_sales: v })), saveFields, "gst")}
-          </div>
-        </section>
-
-        {/* 6. EFTPOS printouts */}
-        <section className={card}>
-          <h2 className="text-base font-bold text-gray-900 mb-3">6. EFTPOS printouts</h2>
-          {/* Each field spans 3 rows of the parent grid (label + help | input | line underneath) via subgrid, so the
-              three inputs sit level however the help texts wrap */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1">
-            {eftposTypes.map((t) => {
-              const cell = ({ label, help, notice, value, onChange, warn, below }) => (
-                <div key={t.id} className="grid grid-rows-subgrid row-span-3">
-                  <div>
-                    {notice && <p className="text-xs font-medium text-amber-700 mb-1">{notice}</p>}
-                    <label htmlFor={`eftpos-${t.id}`} className="block text-sm font-semibold text-gray-800">{label}</label>
-                    {help && <span className="block text-xs text-gray-500 mb-1">{help}</span>}
-                  </div>
-                  <input id={`eftpos-${t.id}`} inputMode="decimal" value={value} onChange={(e) => onChange(moneyInput(e.target.value))} onBlur={() => saveTender(t.id)}
-                    placeholder="0.00" className={`${input} ${warn ? "border-amber-400" : ""}`} />
-                  <div className="pb-3 sm:pb-0">
-                    {warn && <span className="block text-xs font-medium text-amber-700 mt-1">⚠ {warn}</span>}
-                    {below}
-                  </div>
-                </div>
-              );
-              const direct = (notice) => cell({ label: t.name, help: t.help_text || "", notice, value: tenders[t.id] ?? "", onChange: (v) => setTenders((s) => ({ ...s, [t.id]: v })), warn: softWarn[t.id] });
-              if (t.id === tClosing?.id && receiptDay) {
-                if (prevRight === undefined) return <div key={t.id} className="row-span-3 text-sm text-gray-400">Looking up the last right till reading…</div>;
-                if (!receiptMode) return direct("No earlier right till reading found — enter Closing EFTPOS directly");
-                return cell({
-                  label: "Closing receipt total (right till, last night)",
-                  help: "Whole-day total on the receipt kept in the till — or print the previous settlement",
-                  value: receipt, onChange: onReceipt, warn: receiptNegative ? null : softWarn[t.id],
-                  below: receiptNum === null ? null : receiptNegative ? (
-                    <p className="mt-1 rounded-lg bg-red-50 border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-700">
-                      Receipt total is less than the right till reading on {dayLabel(prevRight.date)} — check the receipt
-                    </p>
-                  ) : (
-                    <p className="mt-1 text-xs text-gray-600">
-                      Receipt total {money(receiptNum)} − right till reading on {dayLabel(prevRight.date)} {money(prevRight.amount)} = <span className="font-semibold text-gray-900">Closing EFTPOS {money(receiptCalc)}</span>
-                    </p>
-                  ),
-                });
-              }
-              return direct(null);
-            })}
-          </div>
-        </section>
-
-        {/* 7. Check */}
-        <section className={card}>
-          <h2 className="text-base font-bold text-gray-900 mb-3">7. Check</h2>
-          <dl className="space-y-1.5 text-lg">
-            <div className="flex justify-between"><dt className="text-gray-700">Cash</dt><dd className={`font-semibold tabular-nums ${varianceCls(cashVar)}`}>{cashVar === null ? "Enter the Z cash" : fmtVariance(cashVar)}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-700">EFTPOS</dt><dd className={`font-semibold tabular-nums ${varianceCls(eftVar)}`}>{eftVar === null ? "Enter the Z EFTPOS" : fmtVariance(eftVar)}</dd></div>
-          </dl>
-          <p className="text-xs text-gray-400 mt-1">Within {money(settings.limit)} either way is fine.</p>
-          {reasonNeeded && (
-            <label className="block mt-3">
-              <span className="block text-sm font-semibold text-red-700">Reason for the difference *</span>
-              <textarea value={reason} onChange={(e) => setReason(e.target.value)} onBlur={saveFields} rows={2} maxLength={500}
-                className="w-full rounded-lg border border-red-300 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-red-300" />
-            </label>
-          )}
-        </section>
-
-        {/* 8. Confirm */}
-        <section className={card}>
-          <h2 className="text-base font-bold text-gray-900 mb-3">8. Confirm</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {[0, 1].map((i) => (
-              <div key={i} className="space-y-2">
-                <div className="text-sm font-semibold text-gray-800">{i === 0 ? "First person" : "Second person"}</div>
-                <select
-                  value={people[i].staffId}
-                  onChange={(e) => { const v = e.target.value; setPeople((ps) => ps.map((p, k) => (k === i ? { ...p, staffId: v } : p))); setPersonErr((es) => es.map((x, k) => (k === i ? "" : x))); }}
-                  className="w-full h-11 rounded-lg border border-gray-300 px-3 text-base bg-white"
-                >
-                  <option value="">Your name…</option>
-                  {staff.filter((s) => i === 0 || String(s.id) !== people[0].staffId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  maxLength={4}
-                  value={people[i].pin}
-                  onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 4); setPeople((ps) => ps.map((p, k) => (k === i ? { ...p, pin: v } : p))); setPersonErr((es) => es.map((x, k) => (k === i ? "" : x))); }}
-                  placeholder="PIN"
-                  style={PIN_STYLE}
-                  className="w-full h-11 rounded-lg border border-gray-300 px-3 text-lg tracking-widest"
-                />
-                {personErr[i] && <p className="text-sm text-red-600">{personErr[i]}</p>}
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_21rem] xl:grid-cols-[minmax(0,1fr)_23rem] lg:gap-5 lg:items-start space-y-4 lg:space-y-0">
+          {/* ── LEFT: the inputs ── */}
+          <div className="space-y-4 min-w-0">
+            {/* 1. Count the cash */}
+            <section className={card}>
+              <h2 className="text-base font-bold text-gray-900 mb-2">1. Count the cash</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="align-bottom">
+                      <th className="w-12" />
+                      {COIN_COLS.map((c) => (
+                        <th key={c.loc} className="text-left font-semibold text-gray-800 pb-2 pr-2">
+                          <div>{c.title} <span className="font-normal text-xs text-gray-400">{c.sub}</span></div>
+                          {modeSwitch(c.loc, c.title)}
+                        </th>
+                      ))}
+                      <th className="text-left font-semibold text-gray-800 pb-2">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ROWS.map((d) => {
+                      const ci = COINS.indexOf(d);
+                      return (
+                        <tr key={d.value} className="border-t border-[#F0F2F5]">
+                          <td className="py-1 pr-2 font-semibold text-gray-700 whitespace-nowrap">{d.label}</td>
+                          {COIN_COLS.map((c) => {
+                            if (d.kind === "note") return <td key={c.loc} />;
+                            if (coinMode[c.loc] === "total") {
+                              return ci === 0 ? (
+                                <td key={c.loc} rowSpan={COINS.length} className="align-top py-1 pr-2">
+                                  <div className="text-xs text-gray-500 mb-1">Total {c.title.toLowerCase()}</div>
+                                  <input data-nav={c.nav} inputMode="decimal" value={coinTotalIn[c.loc]}
+                                    onChange={(e) => { const v = moneyInput(e.target.value); setCoinTotalIn((t) => ({ ...t, [c.loc]: v })); }}
+                                    onBlur={saveFields} placeholder="0.00" aria-label={`Total ${c.title.toLowerCase()}`} className={`${box} w-[6.5rem]`} />
+                                </td>
+                              ) : null;
+                            }
+                            return <td key={c.loc} className="py-1 pr-2">{qtyCell(c.loc, d, c.nav + ci)}</td>;
+                          })}
+                          <td className="py-1">{d.kind === "note" ? qtyCell("till", d, 300 + NOTES.indexOf(d)) : null}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-[#E7EAF0] font-bold">
+                      <td className="pt-2 pr-2 text-gray-700">Total</td>
+                      <td className="pt-2 pr-2 tabular-nums">{money(tillCoins)}</td>
+                      <td className="pt-2 pr-2 tabular-nums">{money(bagCoins)}</td>
+                      <td className="pt-2 tabular-nums">{money(notesTotal)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
-            ))}
+            </section>
+
+            {/* 2. From the Z report */}
+            <section className={card}>
+              <h2 className="text-base font-bold text-gray-900 mb-3">2. From the Z report</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {moneyField("Cash", "Payment Breakdown → Cash", z.z_cash, (v) => setZ((s) => ({ ...s, z_cash: v })), saveFields, "zc", null, 400)}
+                {moneyField("EFTPOS", "Card Payments → EFTPOS", z.z_eftpos, (v) => setZ((s) => ({ ...s, z_eftpos: v })), saveFields, "ze", null, 401)}
+                {otherTypes.map((t, i) => moneyField(t.name, t.help_text || "Other Payments — leave blank if none", tenders[t.id] ?? "", (v) => setTenders((s) => ({ ...s, [t.id]: v })), () => saveTender(t.id), t.id, null, 402 + i))}
+                <label className="block">
+                  <span className="block text-sm font-semibold text-gray-800">Total Customers Served</span>
+                  <span className="block text-xs text-gray-500 mb-1">&nbsp;</span>
+                  <input data-nav={450} inputMode="numeric" value={z.customers} onChange={(e) => setZ((s) => ({ ...s, customers: e.target.value.replace(/\D/g, "") }))} onBlur={saveFields} placeholder="0" className={input} />
+                </label>
+                {moneyField("Total GST Sales", "not GST Collected", z.gst_sales, (v) => setZ((s) => ({ ...s, gst_sales: v })), saveFields, "gst", null, 451)}
+              </div>
+            </section>
+
+            {/* 3. EFTPOS printouts */}
+            <section className={card}>
+              <h2 className="text-base font-bold text-gray-900 mb-3">3. EFTPOS printouts</h2>
+              {/* Each field spans 3 rows of the parent grid (label + help | input | line underneath) via subgrid, so the
+                  three inputs sit level however the help texts wrap */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1">
+                {eftposTypes.map((t, ti) => {
+                  const cell = ({ label, help, notice, value, onChange, warn, below }) => (
+                    <div key={t.id} className="grid grid-rows-subgrid row-span-3">
+                      <div>
+                        {notice && <p className="text-xs font-medium text-amber-700 mb-1">{notice}</p>}
+                        <label htmlFor={`eftpos-${t.id}`} className="block text-sm font-semibold text-gray-800">{label}</label>
+                        {help && <span className="block text-xs text-gray-500 mb-1">{help}</span>}
+                      </div>
+                      <input id={`eftpos-${t.id}`} data-nav={500 + ti} inputMode="decimal" value={value} onChange={(e) => onChange(moneyInput(e.target.value))} onBlur={() => saveTender(t.id)}
+                        placeholder="0.00" className={`${input} ${warn ? "border-amber-400" : ""}`} />
+                      <div className="pb-3 sm:pb-0">
+                        {warn && <span className="block text-xs font-medium text-amber-700 mt-1">⚠ {warn}</span>}
+                        {below}
+                      </div>
+                    </div>
+                  );
+                  const direct = (notice) => cell({ label: t.name, help: t.help_text || "", notice, value: tenders[t.id] ?? "", onChange: (v) => setTenders((s) => ({ ...s, [t.id]: v })), warn: softWarn[t.id] });
+                  if (t.id === tClosing?.id && receiptDay) {
+                    if (prevRight === undefined) return <div key={t.id} className="row-span-3 text-sm text-gray-400">Looking up the last right till reading…</div>;
+                    if (!receiptMode) return direct("No earlier right till reading found — enter Closing EFTPOS directly");
+                    return cell({
+                      label: "Closing receipt total (right till, last night)",
+                      help: "Whole-day total on the receipt kept in the till — or print the previous settlement",
+                      value: receipt, onChange: onReceipt, warn: receiptNegative ? null : softWarn[t.id],
+                      below: receiptNum === null ? null : receiptNegative ? (
+                        <p className="mt-1 rounded-lg bg-red-50 border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-700">
+                          Receipt total is less than the right till reading on {dayLabel(prevRight.date)} — check the receipt
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-xs text-gray-600">
+                          Receipt total {money(receiptNum)} − right till reading on {dayLabel(prevRight.date)} {money(prevRight.amount)} = <span className="font-semibold text-gray-900">Closing EFTPOS {money(receiptCalc)}</span>
+                        </p>
+                      ),
+                    });
+                  }
+                  return direct(null);
+                })}
+              </div>
+            </section>
           </div>
-          <button onClick={confirm} disabled={confirming} className="mt-4 w-full h-12 rounded-lg bg-green-600 text-white text-base font-semibold disabled:opacity-50">
-            {confirming ? "Confirming…" : "Confirm count"}
-          </button>
-          <p className="text-xs text-gray-400 mt-2">Once confirmed the count is locked.</p>
-        </section>
+
+          {/* ── RIGHT: summary, check and confirm (stays on screen on wide screens) ── */}
+          <aside className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+            <div className={`${card} space-y-4`}>
+              <dl className="space-y-1 text-sm">
+                {line("Total counted", money(counted))}
+                {line("Coins (till + bag)", money(coinsTotal))}
+                {hasCount && line("Notes to leave in the till", money(split.notesToLeave), "(to the nearest $5)")}
+                {line("Float in the till", hasCount ? money(split.floatLeft) : "—")}
+              </dl>
+              {hasCount && (split.coinsCoverFloat ? <p className="text-xs text-gray-500 -mt-2">Coins already cover the float</p>
+                : split.notesToLeave === 0 ? <p className="text-xs text-gray-500 -mt-2">No notes needed — the coins are within $2.50 of the float</p> : null)}
+
+              <div className="pt-3 border-t">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-base font-bold text-gray-900">Cash takings</span>
+                  <span className="text-3xl font-bold tabular-nums text-gray-900">{money(takings)}</span>
+                </div>
+                <div className="text-xs text-gray-400 text-right">all other notes</div>
+                {hasCount && split.shortOfNotes && (
+                  <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm font-medium text-red-700">Not enough notes to make up the float</div>
+                )}
+              </div>
+
+              <div className="pt-3 border-t">
+                <dl className="space-y-1 text-base">
+                  <div className="flex justify-between"><dt className="text-gray-700">Cash check</dt><dd className={`font-semibold tabular-nums ${varianceCls(cashVar)}`}>{cashVar === null ? "—" : fmtVariance(cashVar)}</dd></div>
+                  <div className="flex justify-between"><dt className="text-gray-700">EFTPOS check</dt><dd className={`font-semibold tabular-nums ${varianceCls(eftVar)}`}>{eftVar === null ? "—" : fmtVariance(eftVar)}</dd></div>
+                </dl>
+                <p className="text-xs text-gray-400 mt-1">Within {money(settings.limit)} either way is fine.</p>
+                {reasonNeeded && (
+                  <label className="block mt-3">
+                    <span className="block text-sm font-semibold text-red-700">Reason for the difference *</span>
+                    <textarea data-nav={600} value={reason} onChange={(e) => setReason(e.target.value)} onBlur={saveFields} rows={2} maxLength={500}
+                      className="w-full rounded-lg border border-red-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
+                  </label>
+                )}
+              </div>
+
+              <div className="pt-3 border-t space-y-3">
+                {[0, 1].map((i) => (
+                  <div key={i}>
+                    <div className="text-sm font-semibold text-gray-800 mb-1">{i === 0 ? "First person" : "Second person"}</div>
+                    <div className="flex gap-2">
+                      <select
+                        data-nav={700 + i * 2}
+                        value={people[i].staffId}
+                        onChange={(e) => { const v = e.target.value; setPeople((ps) => ps.map((p, k) => (k === i ? { ...p, staffId: v } : p))); setPersonErr((es) => es.map((x, k) => (k === i ? "" : x))); }}
+                        className="flex-1 min-w-0 h-11 rounded-lg border border-gray-300 px-2 text-base bg-white"
+                      >
+                        <option value="">Your name…</option>
+                        {staff.filter((s) => i === 0 || String(s.id) !== people[0].staffId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                      <input
+                        data-nav={701 + i * 2}
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        maxLength={4}
+                        value={people[i].pin}
+                        onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 4); setPeople((ps) => ps.map((p, k) => (k === i ? { ...p, pin: v } : p))); setPersonErr((es) => es.map((x, k) => (k === i ? "" : x))); }}
+                        placeholder="PIN"
+                        aria-label={`${i === 0 ? "First" : "Second"} person's PIN`}
+                        style={PIN_STYLE}
+                        className="w-24 h-11 rounded-lg border border-gray-300 px-3 text-lg tracking-widest"
+                      />
+                    </div>
+                    {personErr[i] && <p className="text-sm text-red-600 mt-1">{personErr[i]}</p>}
+                  </div>
+                ))}
+                {errorBox("hidden lg:block")}
+                <button onClick={confirm} disabled={confirming} className="w-full h-12 rounded-lg bg-green-600 text-white text-base font-semibold disabled:opacity-50">
+                  {confirming ? "Confirming…" : "Confirm count"}
+                </button>
+                <p className="text-xs text-gray-400">Once confirmed the count is locked.</p>
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
     </Shell>
   );
 }
 
-function Shell({ children, saveState }) {
+function Shell({ children, saveState, wide = false }) {
   return (
     <div className="min-h-screen bg-[#EEF1F5]">
-      <div className="max-w-3xl mx-auto px-4 py-5 space-y-4">
+      <div className={`${wide ? "max-w-6xl" : "max-w-3xl"} mx-auto px-4 py-5 space-y-4`}>
         <div className="flex items-center justify-between">
           <Link href="/" className="text-sm text-blue-600 hover:underline">← Back to the kiosk</Link>
           {saveState && <span className="text-xs text-gray-400">{saveState}</span>}
