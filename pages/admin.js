@@ -1501,6 +1501,25 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             />
           </div>
 
+          {/* Resignation letter — the shared staff Documents uploader (locum_documents, type "resignation_letter"; private
+              bucket, signed links). Lives here only — kept off the Documents tab's "Older / other files" list. */}
+          <div>
+            {isNew ? (
+              <>
+                <div className="block text-xs font-medium text-gray-600 mb-1">Resignation letter</div>
+                <p className="text-xs text-gray-400">Save the staff member first to upload a resignation letter.</p>
+              </>
+            ) : (
+              <DocumentSections
+                sections={[{ key: "resignation_letter", kind: "plain", type: "resignation_letter", title: "Resignation letter", required: false }]}
+                docs={documents}
+                actions={docActions}
+                staffName={member.name}
+                showOther={false}
+              />
+            )}
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Exit Interview Date</label>
             <input

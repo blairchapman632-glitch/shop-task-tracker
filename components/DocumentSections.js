@@ -16,8 +16,9 @@ const fmtUploaded = (iso) => (iso ? new Date(iso).toLocaleDateString("en-AU", { 
 // sections: from docSections(); contractNode: element shown for the "contract" section (Admin only)
 // mode: "admin" | "staff" (staff wording; also hides the "older/other files" list)
 // staffName: shown as "Uploaded by <name>" on files the person uploaded themselves from /me (uploaded_via = "me")
-export default function DocumentSections({ sections, docs, actions, contractNode = null, mode = "admin", staffName = "" }) {
-  const unmatched = mode === "admin" ? unmatchedDocs(sections, docs) : [];
+// showOther: false hides the "Older / other files" list (e.g. Admin → Offboarding, which shows only its own section)
+export default function DocumentSections({ sections, docs, actions, contractNode = null, mode = "admin", staffName = "", showOther = true }) {
+  const unmatched = mode === "admin" && showOther ? unmatchedDocs(sections, docs) : [];
   let lastGroup = null;
   return (
     <div className="space-y-4">
