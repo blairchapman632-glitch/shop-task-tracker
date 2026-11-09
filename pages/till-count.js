@@ -17,7 +17,7 @@
 // the source of truth), cash_counts (location 'till' = till coins + notes, 'bag' = dispensary-bag coins), daily_takings_tenders, banking_payment_types; settings banking_float_amount /
 // banking_variance_limit. Money rules in lib/banking.js. Dates are Perth calendar dates as strings.
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import HomeButton from "../components/HomeButton";
 import supabase from "../lib/supabaseClient";
 import { todayPerth, addDaysStr } from "../lib/performanceReview";
 import { longDate } from "../lib/calendar";
@@ -384,7 +384,7 @@ export default function TillCountPage() {
 
   // ── Count the cash: one table (rows = denominations; columns = Till coins | Bag coins | Notes) ──
   const box = "w-[5.5rem] h-10 rounded-lg border border-gray-300 px-2 text-base tabular-nums text-right focus:outline-none focus:ring-2 focus:ring-blue-400";
-  const ROWS = [...NOTES, ...COINS];
+  const ROWS = [...COINS, ...NOTES]; // coins first, then notes (Enter order: Till coins down, Bag coins down, Notes down)
   const COIN_COLS = [{ loc: "till", title: "Till coins", sub: "in the till", nav: 100 }, { loc: "bag", title: "Bag coins", sub: "from the dispensary bag", nav: 200 }];
   const qtyCell = (loc, d, nav) => {
     const k = String(d.value);
@@ -647,9 +647,9 @@ function Shell({ children, saveState, wide = false }) {
   return (
     <div className="min-h-screen bg-[#EEF1F5]">
       <div className={`${wide ? "max-w-6xl" : "max-w-3xl"} mx-auto px-4 py-5 space-y-4`}>
-        <div className="flex items-center justify-between">
-          <Link href="/" className="text-sm text-blue-600 hover:underline">← Back to the kiosk</Link>
-          {saveState && <span className="text-xs text-gray-400">{saveState}</span>}
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-gray-400">{saveState}</span>
+          <HomeButton />
         </div>
         {children}
       </div>

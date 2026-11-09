@@ -7,7 +7,7 @@
 // Insights tab (Stage 6) — components/banking/InsightsTab.js. Missed-count banner (Stage 7) — lib/bankingData.js.
 // Tables: daily_takings, bank_deposits. Money via lib/banking.js; Perth dates as strings.
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import HomeButton from "../components/HomeButton";
 import supabase from "../lib/supabaseClient";
 import ManagerPinModal from "../components/qspp/ManagerPinModal";
 import { todayPerth } from "../lib/performanceReview";
@@ -70,14 +70,16 @@ export default function BankingPage() {
     <div className="min-h-screen bg-[#EEF1F5]">
       <div className={`${tab === "banking" ? "max-w-3xl" : "max-w-6xl"} mx-auto px-4 py-5 space-y-4`}>
         <div className="flex items-center justify-between gap-3">
-          <Link href="/" className="text-sm text-blue-600 hover:underline">← Back to the kiosk</Link>
-          {manager && (
-            <button onClick={() => setManager(null)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-600">
-              🔒 Lock ({manager.name.split(" ")[0]})
-            </button>
-          )}
+          <h1 className="text-xl font-bold text-gray-900">Banking</h1>
+          <div className="flex items-center gap-2">
+            {manager && (
+              <button onClick={() => setManager(null)} className="text-xs px-3 py-2 rounded-lg border border-gray-300 bg-white text-gray-600">
+                🔒 Lock ({manager.name.split(" ")[0]})
+              </button>
+            )}
+            <HomeButton />
+          </div>
         </div>
-        <h1 className="text-xl font-bold text-gray-900">Banking</h1>
         {!manager ? (
           <div className="bg-white rounded-2xl border border-[#E7EAF0] p-6 text-center text-sm text-gray-500">
             Owner only — enter the admin PIN to continue.
