@@ -486,36 +486,45 @@ export default function TillCountPage() {
         {/* 6. EFTPOS printouts */}
         <section className={card}>
           <h2 className="text-base font-bold text-gray-900 mb-3">6. EFTPOS printouts</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Each field spans 3 rows of the parent grid (label + help | input | line underneath) via subgrid, so the
+              three inputs sit level however the help texts wrap */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1">
             {eftposTypes.map((t) => {
-              if (t.id === tClosing?.id && receiptDay) {
-                if (prevRight === undefined) return <div key={t.id} className="text-sm text-gray-400">Looking up the last right till reading…</div>;
-                if (receiptMode) {
-                  return (
-                    <div key={t.id}>
-                      {moneyField("Closing receipt total (right till, last night)", "The whole-day total on the receipt kept in the till", receipt, onReceipt, () => saveTender(t.id), `${t.id}-r`, receiptNegative ? null : softWarn[t.id])}
-                      {receiptNum !== null && (
-                        receiptNegative ? (
-                          <p className="mt-1 rounded-lg bg-red-50 border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-700">
-                            Receipt total is less than the right till reading on {dayLabel(prevRight.date)} — check the receipt
-                          </p>
-                        ) : (
-                          <p className="mt-1 text-xs text-gray-600">
-                            Receipt total {money(receiptNum)} − right till reading on {dayLabel(prevRight.date)} {money(prevRight.amount)} = <span className="font-semibold text-gray-900">Closing EFTPOS {money(receiptCalc)}</span>
-                          </p>
-                        )
-                      )}
-                    </div>
-                  );
-                }
-                return (
-                  <div key={t.id}>
-                    <p className="text-xs font-medium text-amber-700 mb-1">No earlier right till reading found — enter Closing EFTPOS directly</p>
-                    {moneyField(t.name, t.help_text || "", tenders[t.id] ?? "", (v) => setTenders((s) => ({ ...s, [t.id]: v })), () => saveTender(t.id), t.id, softWarn[t.id])}
+              const cell = ({ label, help, notice, value, onChange, warn, below }) => (
+                <div key={t.id} className="grid grid-rows-subgrid row-span-3">
+                  <div>
+                    {notice && <p className="text-xs font-medium text-amber-700 mb-1">{notice}</p>}
+                    <label htmlFor={`eftpos-${t.id}`} className="block text-sm font-semibold text-gray-800">{label}</label>
+                    {help && <span className="block text-xs text-gray-500 mb-1">{help}</span>}
                   </div>
-                );
+                  <input id={`eftpos-${t.id}`} inputMode="decimal" value={value} onChange={(e) => onChange(moneyInput(e.target.value))} onBlur={() => saveTender(t.id)}
+                    placeholder="0.00" className={`${input} ${warn ? "border-amber-400" : ""}`} />
+                  <div className="pb-3 sm:pb-0">
+                    {warn && <span className="block text-xs font-medium text-amber-700 mt-1">⚠ {warn}</span>}
+                    {below}
+                  </div>
+                </div>
+              );
+              const direct = (notice) => cell({ label: t.name, help: t.help_text || "", notice, value: tenders[t.id] ?? "", onChange: (v) => setTenders((s) => ({ ...s, [t.id]: v })), warn: softWarn[t.id] });
+              if (t.id === tClosing?.id && receiptDay) {
+                if (prevRight === undefined) return <div key={t.id} className="row-span-3 text-sm text-gray-400">Looking up the last right till reading…</div>;
+                if (!receiptMode) return direct("No earlier right till reading found — enter Closing EFTPOS directly");
+                return cell({
+                  label: "Closing receipt total (right till, last night)",
+                  help: "Whole-day total on the receipt kept in the till — or print the previous settlement",
+                  value: receipt, onChange: onReceipt, warn: receiptNegative ? null : softWarn[t.id],
+                  below: receiptNum === null ? null : receiptNegative ? (
+                    <p className="mt-1 rounded-lg bg-red-50 border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-700">
+                      Receipt total is less than the right till reading on {dayLabel(prevRight.date)} — check the receipt
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-gray-600">
+                      Receipt total {money(receiptNum)} − right till reading on {dayLabel(prevRight.date)} {money(prevRight.amount)} = <span className="font-semibold text-gray-900">Closing EFTPOS {money(receiptCalc)}</span>
+                    </p>
+                  ),
+                });
               }
-              return moneyField(t.name, t.help_text || "", tenders[t.id] ?? "", (v) => setTenders((s) => ({ ...s, [t.id]: v })), () => saveTender(t.id), t.id, softWarn[t.id]);
+              return direct(null);
             })}
           </div>
         </section>
