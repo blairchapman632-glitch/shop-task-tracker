@@ -1,11 +1,13 @@
 // /qspp — the one QSPP area. No login (shop computers, like the kiosk).
 //   Staff tabs: Library, Incidents & feedback (sub-tabs Incidents | Feedback).
-//   "🔒 Manager" → admin PIN (lib/adminPin) → manager mode: extra tabs (Reviews, Training overview) and manager tools.
+//   "🔒 Manager" → the person's own PIN, if they're ticked "QSPP manager" in Admin (lib/adminPin checkQsppManagerPin)
+//   → manager mode: extra tabs (Reviews, Training overview) and manager tools.
 //   Manager mode lives in memory only: it auto-locks after 10 minutes with no activity, and when leaving or reloading
 //   the page (nothing is stored in the browser).
 // ?tab=incidents opens Incidents & feedback (?tab=feedback opens its Feedback sub-tab). ?doc=<id> (Admin → Needs attention) asks for the manager PIN, then opens
 // that document's side panel. Reviews opens a person in Admin (/admin?staff=…&staffTab=reviews — Admin asks for its PIN).
-// ?incident=<id> / ?feedback=<id> (phone alert, Admin → Needs attention) ask for the manager PIN, then open that entry
+// ?view=incident|feedback&id=<id> (kiosk "follow-up to do" job) opens that entry in the staff view, no PIN.
+// ?incident=<id> / ?feedback=<id> (kiosk job, Admin → Needs attention) ask for the manager PIN, then open that entry
 // (stamps manager_opened_at). Manager mode on Incidents & feedback: "Alerts" card — who the QSPP managers are (warning if
 // nobody's ticked) and "Flag incidents open longer than X days"; the sidebar's QSPP item shows open incidents + feedback.
 import { useEffect, useRef, useState } from "react";
@@ -45,6 +47,7 @@ export default function QsppPage() {
   const [docToOpen, setDocToOpen] = useState(null); // ?doc=<id>
   const [incSub, setIncSub] = useState("incidents"); // incidents | feedback
   const [toOpen, setToOpen] = useState(null);        // { kind: "incident" | "feedback", id } from ?incident= / ?feedback=
+  const [toView, setToView] = useState(null);        // { kind, id } from ?view=incident|feedback&id= (no PIN — follow-up to do)
   const [staleDays, setStaleDays] = useState(null);  // pharmacy_settings.qspp_stale_days (null = off)
   const [managers, setManagers] = useState(null);    // active QSPP managers (alerts go to them)
   const [count, setCount] = useState(null);          // open incidents + open feedback (sidebar, manager mode)
@@ -62,6 +65,14 @@ export default function QsppPage() {
     setToOpen({ kind, id: String(router.query[kind]) });
     setAskPin(true);
   }, [router.query.incident, router.query.feedback]);
+  // The kiosk's "follow-up to do" job: opens the entry in the staff view, no PIN
+  useEffect(() => {
+    const kind = router.query.view;
+    if ((kind !== "incident" && kind !== "feedback") || !router.query.id) return;
+    setTab("incidents");
+    setIncSub(kind === "incident" ? "incidents" : "feedback");
+    setToView({ kind, id: String(router.query.id) });
+  }, [router.query.view, router.query.id]);
 
   // Manager mode: who gets alerts, the stale-days setting, the open count
   const loadManagerInfo = async () => {
@@ -174,10 +185,12 @@ export default function QsppPage() {
               </div>
             </div>
             {incSub === "incidents"
-              ? <StaffIncidents manager={manager} staleDays={staleDays} onChanged={loadManagerInfo}
-                  openId={manager && toOpen?.kind === "incident" ? toOpen.id : null} onOpenedId={() => setToOpen(null)} />
-              : <div className="max-w-3xl mx-auto px-4 py-5"><FeedbackRegister manager={manager} staleDays={staleDays} onChanged={loadManagerInfo}
-                  openId={manager && toOpen?.kind === "feedback" ? toOpen.id : null} onOpenedId={() => setToOpen(null)} /></div>}
+              ? <StaffIncidents manager={manager} staleDays={staleDays} onChanged={() => manager && loadManagerInfo()}
+                  openId={manager && toOpen?.kind === "incident" ? toOpen.id : null} onOpenedId={() => setToOpen(null)}
+                  viewId={toView?.kind === "incident" ? toView.id : null} onViewedId={() => setToView(null)} />
+              : <div className="max-w-3xl mx-auto px-4 py-5"><FeedbackRegister manager={manager} staleDays={staleDays} onChanged={() => manager && loadManagerInfo()}
+                  openId={manager && toOpen?.kind === "feedback" ? toOpen.id : null} onOpenedId={() => setToOpen(null)}
+                  viewId={toView?.kind === "feedback" ? toView.id : null} onViewedId={() => setToView(null)} /></div>}
           </>
         )}
         {manager && tab === "reviews" && <ManagerReviews onOpen={(st, reviewId) => router.push(`/admin?staff=${st.id}&staffTab=reviews${reviewId ? `&review=${reviewId}` : ""}`)} />}
@@ -191,6 +204,7 @@ export default function QsppPage() {
 
       {askPin && (
         <ManagerPinModal
+          kind="qspp"
           onClose={() => { setAskPin(false); setToOpen(null); }}
           onUnlock={(user) => { setManager(user); setAskPin(false); }}
         />
@@ -199,7 +213,8 @@ export default function QsppPage() {
   );
 }
 
-// Manager mode → Incidents & feedback: who gets the phone alerts (staff.is_qspp_manager — ticked in Admin) and the
+// Manager mode → Incidents & feedback: who the QSPP managers are (staff.is_qspp_manager — ticked in Admin; they unlock
+// manager mode and get the kiosk jobs) and the
 // "Flag incidents open longer than X days" setting (pharmacy_settings.qspp_stale_days; empty = off). Saved through
 // /api/qspp/register with the manager PIN.
 function AlertsCard({ managers, staleDays, manager, onSaved }) {
@@ -231,8 +246,8 @@ function AlertsCard({ managers, staleDays, manager, onSaved }) {
           </p>
         ) : (
           <p className="text-sm text-slate-600">
-            <span className="font-semibold text-slate-800">Alerts go to:</span> {managers.map((m) => m.name).join(", ")}
-            <span className="text-xs text-slate-400"> (QSPP managers — ticked in Admin)</span>
+            <span className="font-semibold text-slate-800">QSPP managers:</span> {managers.map((m) => m.name).join(", ")}
+            <span className="text-xs text-slate-400"> (get the kiosk jobs for new incidents and feedback — ticked in Admin)</span>
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">

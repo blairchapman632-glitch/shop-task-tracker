@@ -12,6 +12,7 @@ import { todayPerth } from "../../lib/performanceReview";
 import { buildRegisterPdf, downloadPdf } from "../../lib/registerPdf";
 import { qsppCall } from "../../lib/qsppClient";
 import { reviewStatus } from "../../lib/qspp";
+import FollowUpDone from "./FollowUpDone";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -134,6 +135,7 @@ function FeedbackModal({ item, staffList, manager, onClose, onChanged, onDeleted
   const [respondedDate, setRespondedDate] = useState(item.responded_date || "");
   const [improvement, setImprovement] = useState(item.improvement || "");
   const [closedDate, setClosedDate] = useState(item.closed_date || "");
+  const [assignedToId, setAssignedToId] = useState(item.assigned_to_staff_id ? String(item.assigned_to_staff_id) : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const responseLocked = !isManager && !!item.response;
@@ -161,7 +163,7 @@ function FeedbackModal({ item, staffList, manager, onClose, onChanged, onDeleted
     if (isManager && !loggedOk(v)) { setError("Fill in the fields marked *."); return; }
     const patch = {
       response: response.trim() || null, responded_date: respondedDate || null, improvement: improvement.trim() || null,
-      ...(isManager ? { ...loggedPatch(v), closed_date: closedDate || null } : {}),
+      ...(isManager ? { ...loggedPatch(v), closed_date: closedDate || null, assigned_to_staff_id: assignedToId ? Number(assignedToId) : null } : {}),
     };
     if (await update(patch)) onClose();
   };
@@ -176,7 +178,7 @@ function FeedbackModal({ item, staffList, manager, onClose, onChanged, onDeleted
   };
 
   return (
-    <Modal title="Feedback" onClose={onClose} footer={
+    <Modal title={item.feedback_number ? `Feedback #${item.feedback_number}` : "Feedback"} onClose={onClose} footer={
       <div className="flex items-center gap-3">
         {isManager && <button onClick={remove} className="min-h-[44px] px-1 text-xs font-medium text-red-600 hover:underline">Delete</button>}
         {isManager && <button onClick={() => update({ hidden: !item.hidden })} className="min-h-[44px] px-1 text-xs font-medium text-slate-600 hover:underline">{item.hidden ? "Unhide" : "Hide"}</button>}
@@ -202,9 +204,18 @@ function FeedbackModal({ item, staffList, manager, onClose, onChanged, onDeleted
         <input type="date" value={respondedDate} onChange={(e) => setRespondedDate(e.target.value)} disabled={responseLocked} className={fieldCls(responseLocked)} /></div>
       <div><label className={labelCls}>Improvement made <span className="font-normal text-slate-400">(optional)</span></label>
         <textarea value={improvement} onChange={(e) => setImprovement(e.target.value)} rows={2} disabled={improvementLocked} className={fieldCls(improvementLocked)} /></div>
+      {/* The assigned follow-up: staff press "Follow-up done" (their PIN); the manager sees its state */}
+      <FollowUpDone kind="feedback" row={item} staffName={staffName} readOnly={isManager} onDone={(row) => onChanged(row)} />
       {isManager ? (
-        <div><label className={labelCls}>Closed</label>
-          <input type="date" value={closedDate} onChange={(e) => setClosedDate(e.target.value)} className={fieldCls()} /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={labelCls}>Follow-up assigned to</label>
+            <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className={fieldCls()}>
+              <option value="">No one</option>
+              {staffList.filter((s) => s.active !== false || String(s.id) === assignedToId).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select></div>
+          <div><label className={labelCls}>Closed</label>
+            <input type="date" value={closedDate} onChange={(e) => setClosedDate(e.target.value)} className={fieldCls()} /></div>
+        </div>
       ) : (
         <div className="rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
           <span className="text-xs font-semibold text-slate-500">Status: </span>{item.closed_date ? `Closed ${item.closed_date}` : "Open"}
@@ -218,7 +229,8 @@ function FeedbackModal({ item, staffList, manager, onClose, onChanged, onDeleted
 
 const pill = (cls, text) => <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${cls}`}>{text}</span>;
 
-export default function FeedbackRegister({ manager = null, openId = null, onOpenedId, staleDays = null, onChanged }) {
+// viewId: open this feedback without a PIN (the kiosk's "follow-up to do" job: ?view=feedback&id=)
+export default function FeedbackRegister({ manager = null, openId = null, onOpenedId, viewId = null, onViewedId, staleDays = null, onChanged }) {
   const isManager = !!manager;
   const [items, setItems] = useState(null);
   const [staffList, setStaffList] = useState([]);
@@ -265,6 +277,14 @@ export default function FeedbackRegister({ manager = null, openId = null, onOpen
     onOpenedId?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId, items === null, isManager]);
+  useEffect(() => {
+    if (!viewId || items === null) return;
+    const it = items.find((x) => String(x.id) === String(viewId));
+    if (it) openOne(it);
+    else setError("That feedback wasn't found.");
+    onViewedId?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewId, items === null]);
 
   const term = search.trim().toLowerCase();
   const all = items || [];
@@ -347,7 +367,7 @@ export default function FeedbackRegister({ manager = null, openId = null, onOpen
               <button key={i.id} onClick={() => openOne(i)}
                 className={`w-full text-left bg-white rounded-[14px] border border-[#E5E7EB] px-4 py-3 hover:bg-slate-50 ${i.hidden ? "opacity-60" : ""}`}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-slate-400">{i.received_date} · {labelOf(RECEIVED_VIA, i.received_via)}</span>
+                  <span className="text-xs font-semibold text-slate-400">{i.feedback_number ? `#${i.feedback_number} · ` : ""}{i.received_date} · {labelOf(RECEIVED_VIA, i.received_via)}</span>
                   <span className="flex flex-wrap items-center gap-1">
                     {st?.isNew && pill("bg-blue-600 text-white border-blue-600", "NEW")}
                     {st?.stale && pill("bg-red-50 text-red-700 border-red-200", `Open ${st.days} days`)}

@@ -3,7 +3,8 @@
 // Reuses the same rules as QSPP → Reviews / Training (lib/performanceReview.js, lib/trainingPlan.js).
 // onOpen(staff, tab, reviewId?) opens that person on the right staff-form tab; onOpenPolicy(docId) opens that document in /qspp.
 // Incidents & feedback (lib/qspp.js qsppAttention): "New incident / feedback to review" until first opened in QSPP manager
-// mode, then "Open X days" once past the stale-days setting, until resolved / closed. onOpenQspp(kind, id) -> /qspp.
+// mode, "Follow-up done — ready to resolve", and "Open X days" once past the stale-days setting, until resolved /
+// closed. onOpenQspp(kind, id) -> /qspp.
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
 import { qsppAttention } from "../lib/qspp";
@@ -129,8 +130,8 @@ export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy, o
           // in_progress -> New starters; signed_off -> counts as the induction checklist being on file (Missing documents)
           supabase.from("staff_inductions").select("id, staff_id, due_date, status").eq("pharmacy_id", PHARMACY_ID).in("status", ["in_progress", "signed_off"]).in("staff_id", ids),
           // Open incidents / feedback (hidden ones are left out)
-          supabase.from("incidents").select("id, report_number, created_at, incident_date, date_resolved, hidden, manager_opened_at").eq("pharmacy_id", PHARMACY_ID).is("date_resolved", null).eq("hidden", false),
-          supabase.from("feedback").select("id, feedback_type, created_at, received_date, closed_date, hidden, manager_opened_at").eq("pharmacy_id", PHARMACY_ID).is("closed_date", null).eq("hidden", false),
+          supabase.from("incidents").select("id, report_number, created_at, incident_date, date_resolved, hidden, manager_opened_at, follow_up_done_at").eq("pharmacy_id", PHARMACY_ID).is("date_resolved", null).eq("hidden", false),
+          supabase.from("feedback").select("id, feedback_number, feedback_type, created_at, received_date, closed_date, hidden, manager_opened_at, follow_up_done_at").eq("pharmacy_id", PHARMACY_ID).is("closed_date", null).eq("hidden", false),
           supabase.from("pharmacy_settings").select("qspp_stale_days").eq("pharmacy_id", PHARMACY_ID).maybeSingle(),
         ]);
         if (rv.error || ct.error || pd.error || ind.error || inc.error || fb.error) throw rv.error || ct.error || pd.error || ind.error || inc.error || fb.error;

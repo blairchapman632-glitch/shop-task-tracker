@@ -1,5 +1,37 @@
 # Session notes
 
+## 2026-11-12 (2) — QSPP: kiosk jobs instead of push, Follow-up done, feedback to staff "Given by"
+
+### Done
+- **QSPP manager mode now unlocks with the "QSPP manager" switch** (each person's own PIN, active staff only); the save route re-checks the same switch. Admin, Banking and the kiosk calendar stay on "Can access admin". Paige was already ticked — Blair and Paige are the QSPP managers.
+- **Kiosk jobs instead of the phone push** (worked out live from the records, like policy reads; numbers only, shown to people rostered on today; tag "QSPP"):
+  - each QSPP manager (not whoever logged it): "Incident #10: new incident to review" / "Feedback #4: new feedback to review" → /qspp asks for their PIN, opens it; clears for everyone once opened in manager mode.
+  - the assigned person: "Incident #10: follow-up to do" → opens the incident (no PIN); moves with a reassignment.
+  - each QSPP manager: "Incident #10: follow-up done, ready to resolve" (also in Needs attention) — clears on resolve or reassign.
+- **Phone push for incidents / feedback removed** (other pushes unchanged). **Kiosk clipboard icon removed** (and its loading code; `assigned_seen` column left in place).
+- **Follow-up done:** the assigned person adds a required note and enters their own PIN; records who + when, then locked. Reassigning clears it. A manager can still resolve without it. Same for feedback, which now has "Follow-up assigned to" (manager mode) and numbers ("Feedback #1" onwards).
+- **Feedback to staff "Given by"** = the person in manager mode when it's recorded; shown beside the date/how and in the Incident Register PDF ("Staff told … by …").
+- **Staff view:** feedback to staff, third parties and open disclosure are never shown outside manager mode — the server's staff list and staff-save replies leave them out; the staff PDF drops that column. Staff still see quality improvements and clinical / non-clinical, read-only.
+- Tested the full flow against the real database (incident #10, two temporary staff — all deleted). Feedback rules tested on sample data so Feedback #1 stays free.
+
+### Schema changes
+- `feedback.feedback_number` (integer, default from new sequence `feedback_number_seq`)
+- `feedback.assigned_to_staff_id` (bigint → staff, on delete set null)
+- `incidents.follow_up_done_note`, `incidents.follow_up_done_by_staff_id`, `incidents.follow_up_done_at`
+- `feedback.follow_up_done_note`, `feedback.follow_up_done_by_staff_id`, `feedback.follow_up_done_at`
+- `incidents.staff_feedback_by_staff_id` (bigint → staff, on delete set null)
+- (run by Blair from the Claude chat; copy in `docs/sql/qspp_kiosk_jobs_2026-11-12.sql`)
+
+### New tables (add to RLS pass)
+- None. RLS-pass note for `incidents` / `feedback` updated: the staff view no longer gets the manager-only sections, but while RLS is off they can still be read directly with the public key.
+
+### Follow-ups / parked
+- RLS on `incidents` / `feedback` (one table at a time).
+- Incident numbers: test incidents used #9 and #10 — the next real incident is #11.
+
+### Not committed
+- Nothing (committed and pushed).
+
 ## 2026-11-12 — QSPP incidents & feedback: manager alerts + manager-only review
 
 ### Done

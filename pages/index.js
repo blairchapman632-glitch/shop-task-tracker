@@ -11,6 +11,7 @@ import TicklistSheet from "../components/TicklistSheet";
 import WhatsOn from "../components/WhatsOn";
 import { loadConsumablesSettings, isTicklistChecklist, ORDER_LINE_COLUMNS } from "../lib/consumables";
 import { REQUEST_COLUMNS, acknowledgeRequest } from "../lib/policyReads";
+import { qsppKioskJobs } from "../lib/qspp";
 import { fmtDateShort, perthDateOf, todayPerth, addMonthsStr, addDaysStr } from "../lib/performanceReview";
 import OrderLines from "../components/OrderLines";
 import ShoppingList from "../components/ShoppingList";
@@ -630,8 +631,8 @@ export default function HomePage() {
   const [approvalReminderIds, setApprovalReminderIds] = useState(new Set());
   const [unreadByStaff, setUnreadByStaff] = useState({}); // staffId -> unread message count
   const [leaveUpdateIds, setLeaveUpdateIds] = useState(new Set()); // staff with unseen leave status changes
-  const [incidentReviewMap, setIncidentReviewMap] = useState({}); // staffId -> incident id to review
   const [policyJobs, setPolicyJobs] = useState([]);          // outstanding policy reads for staff rostered on today
+  const [qsppJobs, setQsppJobs] = useState([]);              // QSPP incident / feedback jobs (lib/qspp.js qsppKioskJobs)
   const [openPolicyJob, setOpenPolicyJob] = useState(null);  // policy card tapped (shows the "I have read and understood" panel)
   const [policyAckBusy, setPolicyAckBusy] = useState(false);
   // Monthly On the List tasks with a show-from day: taskId -> open months [{ ym, start: "YYYY-MM-01", overdue, carry }]
@@ -1056,30 +1057,6 @@ export default function HomePage() {
     loadUnread();
   }, [authChecked, currentPharmacyId]);
 
-  // ── Incidents assigned to a staff member, not yet resolved, not yet opened by them ──
-  useEffect(() => {
-    if (!authChecked || !currentPharmacyId) return;
-    const loadIncidentReview = async () => {
-      try {
-        const { data } = await supabase
-          .from("incidents")
-          .select("id, assigned_to_staff_id")
-          .eq("pharmacy_id", currentPharmacyId)
-          .is("date_resolved", null)
-          .eq("assigned_seen", false)
-          .not("assigned_to_staff_id", "is", null);
-        const map = {};
-        for (const inc of data || []) {
-          if (!map[inc.assigned_to_staff_id]) map[inc.assigned_to_staff_id] = inc.id;
-        }
-        setIncidentReviewMap(map);
-      } catch (err) {
-        console.error("Incident review load failed:", err);
-      }
-    };
-    loadIncidentReview();
-  }, [authChecked, currentPharmacyId]);
-
   // ── Leave request status updates (status changed, not yet seen by staff) ──
   useEffect(() => {
     if (!authChecked || !currentPharmacyId) return;
@@ -1240,6 +1217,25 @@ export default function HomePage() {
       });
     return () => { cancelled = true; };
   }, [todayRosteredIds, currentPharmacyId, staff, policyTick]);
+
+  // QSPP jobs: worked out live from open incidents / feedback (numbers + statuses only — no patient details are loaded)
+  // and the active QSPP managers. Re-checked every minute with the policy jobs.
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    let cancelled = false;
+    Promise.all([
+      supabase.from("incidents").select("id, report_number, reporter_staff_id, date_resolved, hidden, manager_opened_at, assigned_to_staff_id, follow_up_done_at")
+        .eq("pharmacy_id", currentPharmacyId).is("date_resolved", null).eq("hidden", false),
+      supabase.from("feedback").select("id, feedback_number, logged_by_staff_id, closed_date, hidden, manager_opened_at, assigned_to_staff_id, follow_up_done_at")
+        .eq("pharmacy_id", currentPharmacyId).is("closed_date", null).eq("hidden", false),
+      supabase.from("staff").select("id").eq("pharmacy_id", currentPharmacyId).eq("is_qspp_manager", true).eq("active", true),
+    ]).then(([inc, fb, mg]) => {
+      if (cancelled) return;
+      if (inc.error || fb.error || mg.error) { console.error("[qspp jobs]", inc.error || fb.error || mg.error); setQsppJobs([]); return; }
+      setQsppJobs(qsppKioskJobs({ incidents: inc.data || [], feedback: fb.data || [], managerIds: (mg.data || []).map((m) => m.id) }));
+    });
+    return () => { cancelled = true; };
+  }, [currentPharmacyId, policyTick]);
 
   // Induction card: one per rostered-on staff member with an in-progress induction and at least one policy still to read.
   // Same rules as policy cards (no task rows, not in the progress count, no leaderboard).
@@ -1992,7 +1988,7 @@ const handleDeliveryTap = async (d) => {
             const jobs = loading ? [] : buildKioskJobs({
               tasks, offRosterTasks, monthCards, completedTaskIds, monthlyCompletions, staffById,
               rosteredIds: new Set([...todayRosteredIds].map(Number)), sectionCleans, policyJobs, inductionCards,
-              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart,
+              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart, qsppJobs,
             });
             const roleOf = (id) => staffById[id]?.role || null;
             const listFor = (id) => jobsFor(jobs, id, roleOf(id));
@@ -2071,6 +2067,7 @@ const handleDeliveryTap = async (d) => {
               else if (a.type === "policy") { if (a.request.document.pdf_url) window.open(a.request.document.pdf_url, "_blank", "noopener,noreferrer"); setOpenPolicyJob(a.request); }
               else if (a.type === "induction") setOpenInductionId(a.id);
               else if (a.type === "followUp") setFollowUpOpen(a.which);
+              else if (a.type === "qspp") router.push(a.url); // /qspp asks for the PIN where it's manager-only
             };
             const renderJob = (j) => (
               <button
@@ -2153,27 +2150,6 @@ const handleDeliveryTap = async (d) => {
                         >
                           {approvalReminderIds.has(s.id) && (
                             <span className="absolute -top-1 -left-1 z-10 text-base" title="Approve your timesheet">⚠️</span>
-                          )}
-                          {incidentReviewMap[s.id] && (
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                const incId = incidentReviewMap[s.id];
-                                await supabase.from("incidents").update({ assigned_seen: true }).eq("id", incId);
-                                setIncidentReviewMap((prev) => {
-                                  const next = { ...prev };
-                                  delete next[s.id];
-                                  return next;
-                                });
-                                router.push("/qspp?tab=incidents");
-                              }}
-                              className="absolute top-9 -left-1 z-10 text-base cursor-pointer"
-                              title="Incident to review"
-                            >
-                              📋
-                            </span>
                           )}
                           <span className="relative">
                             <Avatar name={s.name} photoUrl={s.photo_url} className="w-12 h-12 rounded-full" />

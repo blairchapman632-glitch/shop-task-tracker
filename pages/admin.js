@@ -797,7 +797,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             { field: "can_access_wages", label: "Can access wages", desc: "PIN unlocks the full wages table for all staff" },
             { field: "no_lunch_deduction", label: "Never deduct lunch break", desc: "Skip the 30-min lunch deduction on all shifts and public holidays" },
             { field: "is_roster_manager", label: "Roster manager", desc: "Receives push notifications for leave requests and availability changes" },
-            ...(form.role !== "Locum" ? [{ field: "is_qspp_manager", label: "QSPP manager", desc: "Gets a phone alert when an incident or feedback is logged" }] : []),
+            ...(form.role !== "Locum" ? [{ field: "is_qspp_manager", label: "QSPP manager", desc: "PIN unlocks QSPP manager mode; gets kiosk jobs for new incidents and feedback" }] : []),
             { field: "is_driver", label: "Delivery driver", desc: "Sees the Deliveries tab on their phone app" },
             { field: "can_conduct_reviews", label: "Can conduct performance reviews", desc: "Appears in the reviewer list when starting a review" },
             ...(form.role !== "Locum" ? [{ field: "can_sign_inductions", label: "Can sign off inductions", desc: "Can tick induction items for new starters in their staff app" }] : []),

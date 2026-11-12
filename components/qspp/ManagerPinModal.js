@@ -1,13 +1,16 @@
-// /qspp "🔒 Manager" — enter the admin PIN (same as Admin) to unlock manager mode. onUnlock({ id, name, pin })
+// "🔒 Manager" PIN prompt — each person enters their OWN staff PIN. onUnlock({ id, name, pin })
+//   /qspp: kind="qspp" — the "QSPP manager" switch (lib/adminPin.js checkQsppManagerPin).
+//   /banking: default — "Can access admin" (checkAdminPin).
 // The PIN is passed back (memory only, never stored) so manager saves can be re-checked on the server
-// (/api/qspp/register). Also used by /banking.
+// (/api/qspp/register).
 import { useState } from "react";
 import supabase from "../../lib/supabaseClient";
-import { checkAdminPin } from "../../lib/adminPin";
+import { checkAdminPin, checkQsppManagerPin } from "../../lib/adminPin";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
-export default function ManagerPinModal({ onUnlock, onClose }) {
+export default function ManagerPinModal({ onUnlock, onClose, kind = "admin" }) {
+  const qspp = kind === "qspp";
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
@@ -16,9 +19,9 @@ export default function ManagerPinModal({ onUnlock, onClose }) {
     if (pin.length !== 4 || checking) return;
     setChecking(true);
     setError("");
-    const user = await checkAdminPin(supabase, PHARMACY_ID, pin);
+    const user = await (qspp ? checkQsppManagerPin : checkAdminPin)(supabase, PHARMACY_ID, pin);
     setChecking(false);
-    if (!user) { setError("Incorrect PIN or no admin access."); setPin(""); return; }
+    if (!user) { setError(qspp ? "Incorrect PIN, or not a QSPP manager." : "Incorrect PIN or no admin access."); setPin(""); return; }
     onUnlock({ ...user, pin });
   };
 
@@ -27,7 +30,7 @@ export default function ManagerPinModal({ onUnlock, onClose }) {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
         <div className="text-2xl mb-1">🔒</div>
         <h2 className="text-lg font-semibold text-gray-800">Manager mode</h2>
-        <p className="text-sm text-gray-500 mb-5">Enter your admin PIN</p>
+        <p className="text-sm text-gray-500 mb-5">{qspp ? "Enter your PIN (QSPP managers)" : "Enter your admin PIN"}</p>
         <input
           type="text"
           inputMode="numeric"

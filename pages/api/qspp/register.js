@@ -1,24 +1,30 @@
 // QSPP incidents & feedback — every save goes through here (no login: /qspp is used on the shop computers).
 //   POST { action, kind: "incident" | "feedback", ... }
-//     report / log          { fields, pin? }   anyone; manager fields only with a valid manager PIN. Pushes a phone alert
-//                                              to every active QSPP manager (staff.is_qspp_manager) except whoever logged it.
+//     list                  { }                 the staff view: incidents (not hidden) WITHOUT the manager-only sections
+//                                              (third parties, open disclosure, feedback to staff — lib/qspp.js staffViewOf)
+//     report / log          { fields, pin? }   anyone; manager fields only with a valid manager PIN. The QSPP managers'
+//                                              kiosk jobs are worked out live from the records (no push any more).
 //     staff-update          { id, patch }       anyone: incident -> action taken / actioned by / follow-up, only while the
 //                                              incident is open and not yet actioned; feedback -> response, date
 //                                              responded, improvement, each only while still empty.
-//     manager-update        { id, patch, pin }  QSPP manager mode: the review section, close / reopen, hide.
+//     follow-up-done        { id, note, pin }   the person the follow-up is assigned to (their own PIN): a short note
+//                                              (required) -> follow_up_done_note / _by / _at, then locked.
+//     manager-update        { id, patch, pin }  QSPP manager mode: the review section, close / reopen, hide. Reassigning
+//                                              the follow-up clears "Follow-up done"; recording feedback to staff sets
+//                                              "Given by" to the person in manager mode.
 //     manager-open          { id, pin }         first opened in manager mode -> manager_opened_at (clears Needs attention)
 //     delete                { id, pin }
 //   POST { action: "settings", pin, qspp_stale_days }   "Flag incidents open longer than X days" (null = off)
 //   -> { row } / { settings }
-// The manager PIN is re-checked here on every manager request (lib/adminPin.js: a staff PIN with can_access_admin).
-// NOTE: while RLS is off on incidents / feedback the tables can still be written directly with the public key — closing
-// that is part of the RLS pass (CLAUDE.md).
+// The manager PIN is re-checked here on every manager request (lib/adminPin.js checkQsppManagerPin: the person's own
+// PIN, ticked "QSPP manager"). Replies to staff (no PIN) never include the manager-only sections.
+// NOTE: while RLS is off on incidents / feedback the tables can still be read and written directly with the public key —
+// closing that is part of the RLS pass (CLAUDE.md).
 import supabaseAdmin from "../../../lib/supabaseAdmin";
-import { checkAdminPin } from "../../../lib/adminPin";
-import { sendPushToStaff } from "../../../lib/pushServer";
+import { checkQsppManagerPin } from "../../../lib/adminPin";
 import {
   INCIDENT_REPORT_FIELDS, INCIDENT_STAFF_FIELDS, INCIDENT_MANAGER_FIELDS,
-  FEEDBACK_LOG_FIELDS, FEEDBACK_STAFF_FIELDS, FEEDBACK_MANAGER_FIELDS, pick,
+  FEEDBACK_LOG_FIELDS, FEEDBACK_STAFF_FIELDS, FEEDBACK_MANAGER_FIELDS, pick, staffViewOf, isOpen,
 } from "../../../lib/qspp";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
@@ -26,8 +32,8 @@ const TABLE = { incident: "incidents", feedback: "feedback" };
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
 async function requireManager(db, pin) {
-  const user = await checkAdminPin(db, PHARMACY_ID, pin);
-  if (!user) throw httpError(403, "Manager PIN needed — unlock 🔒 Manager again.");
+  const user = await checkQsppManagerPin(db, PHARMACY_ID, pin);
+  if (!user) throw httpError(403, "QSPP manager PIN needed — unlock 🔒 Manager again.");
   return user;
 }
 
@@ -43,21 +49,6 @@ async function save(db, kind, id, patch) {
     .eq("id", id).eq("pharmacy_id", PHARMACY_ID).select().single();
   if (error) throw error;
   return data;
-}
-
-// Phone alert to the QSPP managers (never patient names or details)
-async function alertManagers(db, kind, row) {
-  const byId = kind === "incident" ? row.reporter_staff_id : row.logged_by_staff_id;
-  const { data: managers, error } = await db.from("staff").select("id")
-    .eq("pharmacy_id", PHARMACY_ID).eq("is_qspp_manager", true).eq("active", true);
-  if (error) throw error;
-  const ids = (managers || []).map((m) => m.id).filter((id) => Number(id) !== Number(byId));
-  if (!ids.length) return 0;
-  const { data: who } = await db.from("staff").select("name").eq("id", byId).maybeSingle();
-  const first = String(who?.name || "").split(" ")[0] || "a staff member";
-  return sendPushToStaff(db, ids, kind === "incident"
-    ? { title: "QSPP", body: `New incident #${row.report_number} reported by ${first}`, url: `/qspp?tab=incidents&incident=${row.id}` }
-    : { title: "QSPP", body: `New feedback logged by ${first}`, url: `/qspp?tab=feedback&feedback=${row.id}` });
 }
 
 // Lock rules for staff saves: only what's still allowed, or a clear message
@@ -92,6 +83,14 @@ export default async function handler(req, res) {
     const kind = b.kind;
     if (!TABLE[kind]) throw httpError(400, "Unknown register.");
 
+    // The staff view (no PIN): hidden entries left out, manager-only sections stripped
+    if (b.action === "list") {
+      const order = kind === "incident" ? "incident_date" : "received_date";
+      const { data, error } = await db.from(TABLE[kind]).select("*").eq("pharmacy_id", PHARMACY_ID).eq("hidden", false).order(order, { ascending: false });
+      if (error) throw error;
+      return res.status(200).json({ rows: (data || []).map((r) => staffViewOf(kind, r)) });
+    }
+
     if (b.action === "report" || b.action === "log") {
       const manager = b.pin ? await requireManager(db, b.pin) : null;
       const allowed = kind === "incident"
@@ -102,22 +101,47 @@ export default async function handler(req, res) {
       if (kind === "feedback" && (!fields.logged_by_staff_id || !fields.received_date || !String(fields.details || "").trim())) throw httpError(400, "Fill in the fields marked *.");
       const { data: row, error } = await db.from(TABLE[kind]).insert([{ ...fields, pharmacy_id: PHARMACY_ID }]).select().single();
       if (error) throw error;
-      let alerted = 0;
-      try { alerted = await alertManagers(db, kind, row); } catch (e) { console.error("[qspp] push failed", e); } // never lose the report over a push
-      return res.status(200).json({ row, alerted });
+      return res.status(200).json({ row: manager ? row : staffViewOf(kind, row) });
     }
 
     const row = await loadRow(db, kind, b.id);
 
     if (b.action === "staff-update") {
       const patch = staffPatch(kind, row, b.patch || {});
-      if (!Object.keys(patch).length) return res.status(200).json({ row });
-      return res.status(200).json({ row: await save(db, kind, row.id, patch) });
+      if (!Object.keys(patch).length) return res.status(200).json({ row: staffViewOf(kind, row) });
+      return res.status(200).json({ row: staffViewOf(kind, await save(db, kind, row.id, patch)) });
+    }
+
+    if (b.action === "follow-up-done") {
+      if (!isOpen(kind, row)) throw httpError(403, `This ${kind} is already ${kind === "incident" ? "resolved" : "closed"}.`);
+      if (!row.assigned_to_staff_id) throw httpError(403, "No follow-up is assigned.");
+      if (row.follow_up_done_at) throw httpError(409, "Follow-up done has already been recorded.");
+      const note = String(b.note || "").trim();
+      if (!note) throw httpError(400, "Add a short note saying what was done.");
+      // Only the assigned person, with their own PIN
+      const { data: who } = await db.from("staff").select("id").eq("id", row.assigned_to_staff_id).eq("pharmacy_id", PHARMACY_ID)
+        .eq("active", true).eq("pin", String(b.pin || "")).maybeSingle();
+      if (!/^\d{4}$/.test(String(b.pin || "")) || !who) throw httpError(403, "Incorrect PIN — only the person the follow-up is assigned to can mark it done.");
+      const { data, error } = await db.from(TABLE[kind]).update({
+        follow_up_done_note: note, follow_up_done_by_staff_id: Number(who.id), follow_up_done_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }).eq("id", row.id).is("follow_up_done_at", null).select().maybeSingle();
+      if (error) throw error;
+      if (!data) throw httpError(409, "Follow-up done has already been recorded.");
+      return res.status(200).json({ row: staffViewOf(kind, data) });
     }
 
     if (b.action === "manager-update") {
-      await requireManager(db, b.pin);
+      const manager = await requireManager(db, b.pin);
       const patch = pick(b.patch || {}, kind === "incident" ? INCIDENT_MANAGER_FIELDS : FEEDBACK_MANAGER_FIELDS);
+      // Reassigned -> the new person's job; any "Follow-up done" (and its ready-to-resolve job) is cleared
+      if ("assigned_to_staff_id" in patch && Number(patch.assigned_to_staff_id || 0) !== Number(row.assigned_to_staff_id || 0)) {
+        Object.assign(patch, { follow_up_done_note: null, follow_up_done_by_staff_id: null, follow_up_done_at: null });
+      }
+      // Feedback to staff: "Given by" = whoever is in manager mode when it's first recorded (or its date changes)
+      if (kind === "incident" && "staff_feedback_date" in patch) {
+        if (!patch.staff_feedback_date) patch.staff_feedback_by_staff_id = null;
+        else if (patch.staff_feedback_date !== row.staff_feedback_date || !row.staff_feedback_by_staff_id) patch.staff_feedback_by_staff_id = Number(manager.id);
+      }
       return res.status(200).json({ row: await save(db, kind, row.id, patch) });
     }
 

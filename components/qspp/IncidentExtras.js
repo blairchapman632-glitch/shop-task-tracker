@@ -1,7 +1,6 @@
 // /qspp → Incidents: the extra incident sections (QSPP 1.2 / 2.7 / 4.7) shared by the staff and manager editors:
 //   Clinical / non-clinical · Reported to third parties (several) · Open disclosure · Feedback to staff.
-// Staff (no PIN): fill what's still empty — sections already saved are read-only (like incident actions), and saved
-// third-party reports can't be removed. Manager mode: everything editable.
+// Used in QSPP manager mode only now (staff never see third parties, open disclosure or feedback to staff).
 import { useState } from "react";
 import { todayPerth } from "../../lib/performanceReview";
 
@@ -45,7 +44,8 @@ export const disclosureSummary = (inc, staffName) => (inc.patient_harmed === tru
   : inc.patient_harmed === false ? "No patient harm" : "");
 
 // saved: the incident as saved (staff lock what's already filled); manager: everything editable
-export default function IncidentExtras({ value, onChange, staffList, saved = null, manager = false }) {
+// givenBy: name shown as "Given by <name>" beside feedback to staff (the person in QSPP manager mode records it)
+export default function IncidentExtras({ value, onChange, staffList, saved = null, manager = false, givenBy = "" }) {
   const [newReport, setNewReport] = useState({ to: "", date: todayPerth(), notes: "" });
   const set = (patch) => onChange({ ...value, ...patch });
   const s = saved || {};
@@ -148,7 +148,10 @@ export default function IncidentExtras({ value, onChange, staffList, saved = nul
       </div>
 
       <div className={section}>
-        <div className="text-xs font-semibold text-slate-500">Feedback to staff</div>
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="text-xs font-semibold text-slate-500">Feedback to staff</div>
+          {value.staff_feedback_date && givenBy && <div className="text-xs text-slate-600">Given by <span className="font-semibold">{givenBy}</span></div>}
+        </div>
         <div className="grid grid-cols-[9rem_1fr] gap-2">
           <input type="date" value={value.staff_feedback_date} disabled={lock.staffFeedback} onChange={(e) => set({ staff_feedback_date: e.target.value })} className={field(lock.staffFeedback)} />
           <input value={value.staff_feedback_how} disabled={lock.staffFeedback} onChange={(e) => set({ staff_feedback_how: e.target.value })}

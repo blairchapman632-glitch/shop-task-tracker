@@ -18,17 +18,16 @@ import { buildRegisterPdf, downloadPdf } from "../../lib/registerPdf";
 import { todayPerth } from "../../lib/performanceReview";
 import { qsppCall } from "../../lib/qsppClient";
 import { reviewStatus } from "../../lib/qspp";
+import FollowUpDone from "./FollowUpDone";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
-// The manager review section, read-only for staff — only the parts that have been filled in
+// The manager review section, read-only for staff — only the parts that have been filled in. Third parties, open
+// disclosure and feedback to staff are never shown to staff (the server leaves them out of the staff list).
 function ReviewReadOnly({ incident, staffName }) {
   const rows = [
     ["Quality improvements", incident.quality_improvement],
     ["Clinical / non-clinical", clinicalLabel(incident.clinical_type)],
-    ["Reported to third parties", thirdPartySummary(incident)],
-    ["Open disclosure", [disclosureSummary(incident, staffName), incident.patient_harmed ? incident.disclosure_notes : ""].filter(Boolean).join(" — ")],
-    ["Feedback to staff", incident.staff_feedback_date ? `${incident.staff_feedback_date}${incident.staff_feedback_how ? ` · ${incident.staff_feedback_how}` : ""}` : ""],
     ["Follow-up assigned to", incident.assigned_to_staff_id ? staffName(incident.assigned_to_staff_id) : ""],
     ["Date resolved", incident.date_resolved],
   ].filter(([, v]) => v);
@@ -47,7 +46,7 @@ function ReviewReadOnly({ incident, staffName }) {
 }
 
 // Staff: action taken / actioned by / follow-up on an open incident, until it's actioned
-function EditIncidentModal({ incident, staffList, onClose, onSaved }) {
+function EditIncidentModal({ incident, staffList, onClose, onSaved, onRowChanged }) {
   const resolved = !!incident.date_resolved;
   const actionLocked = resolved || !!incident.actioned_by_staff_id;
   const [actionNeeded, setActionNeeded] = useState(incident.action_needed || "");
@@ -109,6 +108,8 @@ function EditIncidentModal({ incident, staffList, onClose, onSaved }) {
             <textarea value={followUpRequired} onChange={(e) => setFollowUpRequired(e.target.value)} rows={2} placeholder="Anything still needing to happen" disabled={actionLocked} className={field} />
           </div>
           {!resolved && actionLocked && <p className="text-[11px] text-slate-400">The action is recorded — a manager can change it (🔒 Manager).</p>}
+
+          <FollowUpDone kind="incident" row={incident} staffName={staffName} onDone={onRowChanged} />
 
           <ReviewReadOnly incident={incident} staffName={staffName} />
 
@@ -324,7 +325,7 @@ function ReportIncidentForm({ staffList, manager, onClose, onSaved }) {
 }
 
 // Manager mode: every field (incl. the review section, reassign, close / reopen), Hide / Unhide, Delete
-function ManagerIncidentModal({ incident, staffList, onClose, onUpdate, onDelete }) {
+function ManagerIncidentModal({ incident, staffList, manager, onClose, onUpdate, onDelete }) {
   const [actionNeeded, setActionNeeded] = useState(incident.action_needed || "");
   const [actionedById, setActionedById] = useState(incident.actioned_by_staff_id || "");
   const [qualityImprovement, setQualityImprovement] = useState(incident.quality_improvement || "");
@@ -334,7 +335,12 @@ function ManagerIncidentModal({ incident, staffList, onClose, onUpdate, onDelete
   const [extras, setExtras] = useState(extrasFrom(incident));
   const [saving, setSaving] = useState(false);
 
-  const reporterName = staffList.find((s) => Number(s.id) === Number(incident.reporter_staff_id))?.name || "Unknown";
+  const staffName = (id) => staffList.find((s) => Number(s.id) === Number(id))?.name || "";
+  const reporterName = staffName(incident.reporter_staff_id) || "Unknown";
+  // Given by: as saved, or the person in manager mode once a date is entered (the server records it on save)
+  const givenBy = extras.staff_feedback_date
+    ? (incident.staff_feedback_by_staff_id && extras.staff_feedback_date === incident.staff_feedback_date ? staffName(incident.staff_feedback_by_staff_id) : manager?.name || "")
+    : "";
   const field = "w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#BFDBFE]";
   const label = "block text-xs font-semibold text-slate-500 mb-1";
 
@@ -390,7 +396,9 @@ function ManagerIncidentModal({ incident, staffList, onClose, onUpdate, onDelete
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide pt-2 border-t">Manager review</div>
           <div><label className={label}>Quality improvements</label>
             <textarea value={qualityImprovement} onChange={(e) => setQualityImprovement(e.target.value)} rows={2} className={field} /></div>
-          <IncidentExtras value={extras} onChange={setExtras} staffList={staffList} manager />
+          <IncidentExtras value={extras} onChange={setExtras} staffList={staffList} manager givenBy={givenBy} />
+          {/* The saved follow-up's state (assigned / done note); reassigning below clears "Follow-up done" */}
+          <FollowUpDone kind="incident" row={incident} staffName={staffName} readOnly />
           <div className="grid grid-cols-2 gap-3">
             <div><label className={label}>Follow-up assigned to</label>
               <select value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)} className={field}>
@@ -416,7 +424,8 @@ function ManagerIncidentModal({ incident, staffList, onClose, onUpdate, onDelete
   );
 }
 
-export default function StaffIncidents({ manager = null, openId = null, onOpenedId, staleDays = null, onChanged }) {
+// viewId: open this incident in the staff view without a PIN (the kiosk's "follow-up to do" job: ?view=incident&id=)
+export default function StaffIncidents({ manager = null, openId = null, onOpenedId, viewId = null, onViewedId, staleDays = null, onChanged }) {
   const isManager = !!manager;
   const [incidents, setIncidents] = useState([]);
   const [incidentsLoading, setIncidentsLoading] = useState(true);
@@ -429,13 +438,18 @@ export default function StaffIncidents({ manager = null, openId = null, onOpened
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState("");
 
-  // Staff never see hidden incidents; manager mode loads them too (shown with "Show hidden")
+  // Staff: the server's staff list (no hidden incidents, no third parties / open disclosure / feedback to staff).
+  // Manager mode: everything, hidden ones too (shown with "Show hidden").
   const refreshIncidents = async () => {
-    let q = supabase.from("incidents").select("*").eq("pharmacy_id", PHARMACY_ID);
-    if (!isManager) q = q.eq("hidden", false);
-    const { data: inc } = await q.order("incident_date", { ascending: false });
-    setIncidents(inc || []);
-    return inc || [];
+    let inc = [];
+    if (isManager) {
+      const { data } = await supabase.from("incidents").select("*").eq("pharmacy_id", PHARMACY_ID).order("incident_date", { ascending: false });
+      inc = data || [];
+    } else {
+      try { inc = (await qsppCall({ action: "list", kind: "incident" })).rows || []; } catch (err) { setNotice(err.message); }
+    }
+    setIncidents(inc);
+    return inc;
   };
 
   useEffect(() => {
@@ -480,6 +494,16 @@ export default function StaffIncidents({ manager = null, openId = null, onOpened
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId, incidentsLoading, isManager]);
 
+  // ?view=incident&id=<id>: open it (staff view, or the manager editor if manager mode is already on)
+  useEffect(() => {
+    if (!viewId || incidentsLoading) return;
+    const inc = incidents.find((i) => String(i.id) === String(viewId));
+    if (inc) openOne(inc);
+    else setNotice("That incident wasn't found.");
+    onViewedId?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewId, incidentsLoading]);
+
   const staffName = (id) => staffList.find((s) => Number(s.id) === Number(id))?.name || "";
   const term = search.trim().toLowerCase();
   const visible = incidents
@@ -496,13 +520,14 @@ export default function StaffIncidents({ manager = null, openId = null, onOpened
         heading: "Incident Register", pharmacyName: ps?.name || "", generatedOn: todayPerth(), generatedBy: manager?.name || "",
         filterLabel: [statusFilter === "all" ? "All incidents" : statusFilter === "open" ? "Open" : "Resolved", term ? `search "${search.trim()}"` : "", isManager && showHidden ? "incl. hidden" : ""].filter(Boolean).join(", "),
         itemWord: "incident",
+        // Third parties / disclosure / staff told: manager mode only
         columns: [
           { key: "no", label: "#", w: 32 },
           { key: "date", label: "Date", w: 62 },
           { key: "type", label: "Type", w: 62 },
-          { key: "what", label: "What happened", w: 205 },
-          { key: "action", label: "Action / improvement", w: 175 },
-          { key: "reported", label: "Third parties / disclosure / staff told", w: 160 },
+          { key: "what", label: "What happened", w: isManager ? 205 : 285 },
+          { key: "action", label: "Action / improvement", w: isManager ? 175 : 255 },
+          ...(isManager ? [{ key: "reported", label: "Third parties / disclosure / staff told", w: 160 }] : []),
           { key: "status", label: "Status", w: 73 },
         ],
         rows: visible.map((i) => ({
@@ -512,7 +537,7 @@ export default function StaffIncidents({ manager = null, openId = null, onOpened
           what: i.nature_of_incident || "",
           action: [i.action_needed, i.quality_improvement ? `Improvement: ${i.quality_improvement}` : ""].filter(Boolean).join(" — "),
           reported: [thirdPartySummary(i) ? `Reported: ${thirdPartySummary(i)}` : "", disclosureSummary(i, staffName),
-            i.staff_feedback_date ? `Staff told ${i.staff_feedback_date}${i.staff_feedback_how ? ` (${i.staff_feedback_how})` : ""}` : ""].filter(Boolean).join(" · "),
+            i.staff_feedback_date ? `Staff told ${i.staff_feedback_date}${i.staff_feedback_how ? ` (${i.staff_feedback_how})` : ""}${i.staff_feedback_by_staff_id && staffName(i.staff_feedback_by_staff_id) ? ` by ${staffName(i.staff_feedback_by_staff_id)}` : ""}` : ""].filter(Boolean).join(" · "),
           status: i.date_resolved ? `Resolved ${i.date_resolved}` : "Open",
           _red: i.date_resolved ? [] : ["status"],
         })),
@@ -633,6 +658,7 @@ export default function StaffIncidents({ manager = null, openId = null, onOpened
           key={openIncident.id}
           incident={openIncident}
           staffList={staffList}
+          manager={manager}
           onClose={() => setOpenIncident(null)}
           onUpdate={handleUpdate}
           onDelete={handleDelete}
@@ -647,6 +673,7 @@ export default function StaffIncidents({ manager = null, openId = null, onOpened
             replaceRow(row);
             setOpenIncident(null);
           }}
+          onRowChanged={(row) => { replaceRow(row); setOpenIncident(row); }}
         />
       ))}
     </div>
