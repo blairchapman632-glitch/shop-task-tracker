@@ -5,6 +5,9 @@
 //   the page (nothing is stored in the browser).
 // ?tab=incidents opens Incidents & feedback (?tab=feedback opens its Feedback sub-tab). ?doc=<id> (Admin → Needs attention) asks for the manager PIN, then opens
 // that document's side panel. Reviews opens a person in Admin (/admin?staff=…&staffTab=reviews — Admin asks for its PIN).
+// ?incident=<id> / ?feedback=<id> (phone alert, Admin → Needs attention) ask for the manager PIN, then open that entry
+// (stamps manager_opened_at). Manager mode on Incidents & feedback: "Alerts" card — who the QSPP managers are (warning if
+// nobody's ticked) and "Flag incidents open longer than X days"; the sidebar's QSPP item shows open incidents + feedback.
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
@@ -17,6 +20,8 @@ import supabase from "../lib/supabaseClient";
 import { ReviewsOverview } from "../components/PerformanceReviews";
 import TrainingAdminTab from "../components/TrainingAdmin";
 import OtherTrainingAdmin from "../components/qspp/OtherTrainingAdmin";
+import { openCount } from "../lib/qspp";
+import { qsppCall } from "../lib/qsppClient";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -39,11 +44,38 @@ export default function QsppPage() {
   const lastActivity = useRef(Date.now());
   const [docToOpen, setDocToOpen] = useState(null); // ?doc=<id>
   const [incSub, setIncSub] = useState("incidents"); // incidents | feedback
+  const [toOpen, setToOpen] = useState(null);        // { kind: "incident" | "feedback", id } from ?incident= / ?feedback=
+  const [staleDays, setStaleDays] = useState(null);  // pharmacy_settings.qspp_stale_days (null = off)
+  const [managers, setManagers] = useState(null);    // active QSPP managers (alerts go to them)
+  const [count, setCount] = useState(null);          // open incidents + open feedback (sidebar, manager mode)
 
   useEffect(() => {
     if (router.query.tab === "incidents") setTab("incidents");
     if (router.query.tab === "feedback") { setTab("incidents"); setIncSub("feedback"); }
   }, [router.query.tab]);
+  // A phone alert / Needs attention link: the PIN first, then that entry opens
+  useEffect(() => {
+    const kind = router.query.incident ? "incident" : router.query.feedback ? "feedback" : null;
+    if (!kind) return;
+    setTab("incidents");
+    setIncSub(kind === "incident" ? "incidents" : "feedback");
+    setToOpen({ kind, id: String(router.query[kind]) });
+    setAskPin(true);
+  }, [router.query.incident, router.query.feedback]);
+
+  // Manager mode: who gets alerts, the stale-days setting, the open count
+  const loadManagerInfo = async () => {
+    const [{ data: ps }, { data: mg }, { data: inc }, { data: fb }] = await Promise.all([
+      supabase.from("pharmacy_settings").select("qspp_stale_days").eq("pharmacy_id", PHARMACY_ID).maybeSingle(),
+      supabase.from("staff").select("id, name").eq("pharmacy_id", PHARMACY_ID).eq("is_qspp_manager", true).eq("active", true).order("name"),
+      supabase.from("incidents").select("date_resolved, hidden").eq("pharmacy_id", PHARMACY_ID),
+      supabase.from("feedback").select("closed_date, hidden").eq("pharmacy_id", PHARMACY_ID),
+    ]);
+    setStaleDays(ps?.qspp_stale_days ?? null);
+    setManagers(mg || []);
+    setCount(openCount(inc || [], fb || []));
+  };
+  useEffect(() => { if (manager) loadManagerInfo(); else setCount(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [manager]);
   useEffect(() => {
     if (!router.query.doc) return;
     setDocToOpen(String(router.query.doc));
@@ -85,7 +117,7 @@ export default function QsppPage() {
   return (
     <div className="flex min-h-screen bg-[#F8FAFC]">
       <div className="hidden md:block sticky top-0 h-screen shrink-0">
-        <Sidebar active="qspp" />
+        <Sidebar active="qspp" badges={manager && count ? { qspp: count } : undefined} />
       </div>
 
       <main className="flex-1 min-w-0">
@@ -128,6 +160,9 @@ export default function QsppPage() {
         {tab === "library" && <Library manager={manager} openDocId={docToOpen} onOpenedDoc={() => setDocToOpen(null)} />}
         {tab === "incidents" && (
           <>
+            {manager && managers && (
+              <AlertsCard managers={managers} staleDays={staleDays} manager={manager} onSaved={(v) => setStaleDays(v)} />
+            )}
             <div className="max-w-3xl mx-auto px-4">
               <div className="inline-flex p-1 rounded-[12px] bg-white border border-[#E5E7EB]">
                 {[{ k: "incidents", l: "Incidents" }, { k: "feedback", l: "Feedback" }].map((o) => (
@@ -139,8 +174,10 @@ export default function QsppPage() {
               </div>
             </div>
             {incSub === "incidents"
-              ? <StaffIncidents manager={manager} />
-              : <div className="max-w-3xl mx-auto px-4 py-5"><FeedbackRegister manager={manager} /></div>}
+              ? <StaffIncidents manager={manager} staleDays={staleDays} onChanged={loadManagerInfo}
+                  openId={manager && toOpen?.kind === "incident" ? toOpen.id : null} onOpenedId={() => setToOpen(null)} />
+              : <div className="max-w-3xl mx-auto px-4 py-5"><FeedbackRegister manager={manager} staleDays={staleDays} onChanged={loadManagerInfo}
+                  openId={manager && toOpen?.kind === "feedback" ? toOpen.id : null} onOpenedId={() => setToOpen(null)} /></div>}
           </>
         )}
         {manager && tab === "reviews" && <ManagerReviews onOpen={(st, reviewId) => router.push(`/admin?staff=${st.id}&staffTab=reviews${reviewId ? `&review=${reviewId}` : ""}`)} />}
@@ -154,10 +191,64 @@ export default function QsppPage() {
 
       {askPin && (
         <ManagerPinModal
-          onClose={() => setAskPin(false)}
+          onClose={() => { setAskPin(false); setToOpen(null); }}
           onUnlock={(user) => { setManager(user); setAskPin(false); }}
         />
       )}
+    </div>
+  );
+}
+
+// Manager mode → Incidents & feedback: who gets the phone alerts (staff.is_qspp_manager — ticked in Admin) and the
+// "Flag incidents open longer than X days" setting (pharmacy_settings.qspp_stale_days; empty = off). Saved through
+// /api/qspp/register with the manager PIN.
+function AlertsCard({ managers, staleDays, manager, onSaved }) {
+  const [days, setDays] = useState(staleDays == null ? "" : String(staleDays));
+  const [on, setOn] = useState(staleDays != null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const changed = on !== (staleDays != null) || (on && String(staleDays ?? "") !== days);
+  const save = async () => {
+    if (on && !(Number(days) >= 1)) { setMsg("Enter a number of days (1 or more)."); return; }
+    setSaving(true);
+    setMsg("");
+    try {
+      const { settings } = await qsppCall({ action: "settings", pin: manager.pin, qspp_stale_days: on ? Number(days) : null });
+      onSaved(settings.qspp_stale_days ?? null);
+      setMsg("Saved");
+    } catch (err) {
+      setMsg(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="max-w-3xl mx-auto px-4 mb-3">
+      <div className="bg-white rounded-[14px] border border-[#E5E7EB] px-4 py-3 space-y-2">
+        {managers.length === 0 ? (
+          <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm font-medium text-red-700">
+            ⚠ No QSPP managers set, so nobody is alerted to new incidents. Tick “QSPP manager” on a staff profile in Admin.
+          </p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            <span className="font-semibold text-slate-800">Alerts go to:</span> {managers.map((m) => m.name).join(", ")}
+            <span className="text-xs text-slate-400"> (QSPP managers — ticked in Admin)</span>
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+          <label className="inline-flex items-center gap-2">
+            <input type="checkbox" checked={on} onChange={(e) => { setOn(e.target.checked); if (e.target.checked && !days) setDays("14"); setMsg(""); }} className="h-4 w-4" />
+            Flag incidents open longer than
+          </label>
+          <input type="number" min="1" value={days} disabled={!on} onChange={(e) => { setDays(e.target.value.replace(/\D/g, "")); setMsg(""); }}
+            className="w-16 h-9 rounded-lg border border-slate-200 px-2 text-sm text-right disabled:bg-slate-50 disabled:text-slate-400" />
+          <span>days</span>
+          {changed && (
+            <button onClick={save} disabled={saving} className="h-9 px-3 rounded-lg text-sm font-semibold text-white bg-[#1D4ED8] disabled:opacity-40">{saving ? "Saving…" : "Save"}</button>
+          )}
+          {msg && <span className={`text-xs ${msg === "Saved" ? "text-green-700" : "text-red-600"}`}>{msg}</span>}
+        </div>
+      </div>
     </div>
   );
 }

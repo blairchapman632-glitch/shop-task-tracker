@@ -1,4 +1,6 @@
-// /qspp "🔒 Manager" — enter the admin PIN (same as Admin) to unlock manager mode. onUnlock({ id, name })
+// /qspp "🔒 Manager" — enter the admin PIN (same as Admin) to unlock manager mode. onUnlock({ id, name, pin })
+// The PIN is passed back (memory only, never stored) so manager saves can be re-checked on the server
+// (/api/qspp/register). Also used by /banking.
 import { useState } from "react";
 import supabase from "../../lib/supabaseClient";
 import { checkAdminPin } from "../../lib/adminPin";
@@ -17,7 +19,7 @@ export default function ManagerPinModal({ onUnlock, onClose }) {
     const user = await checkAdminPin(supabase, PHARMACY_ID, pin);
     setChecking(false);
     if (!user) { setError("Incorrect PIN or no admin access."); setPin(""); return; }
-    onUnlock(user);
+    onUnlock({ ...user, pin });
   };
 
   return (

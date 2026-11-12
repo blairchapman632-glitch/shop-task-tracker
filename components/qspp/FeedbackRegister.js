@@ -1,12 +1,17 @@
 // /qspp → Incidents & feedback → Feedback: the feedback register (QSPP 2.1 / 2.2 / 3.2 / 3.3). Table: feedback.
-//   Staff (no PIN): Log feedback; open one to add the follow-up (response given + date responded, improvement made) —
-//   locked once filled, like incident actions.
+// Every save goes through /api/qspp/register (lib/qsppClient.js); field lists in lib/qspp.js.
+//   Staff (no PIN): Log feedback; open one to add the follow-up notes (response given + date responded, improvement
+//   made) — each locked once filled.
 //   Manager mode: edit every field, mark Closed (date), Hide / Unhide, Delete; hidden ones listed with "Show hidden".
+//   Opening one stamps manager_opened_at (clears "New feedback to review"); badges NEW / "Open X days".
 //   List newest first; filters All / Negative / Positive / Open; search; Export PDF of what's showing (lib/registerPdf).
+//   openId: open this feedback once it's loaded (?feedback=<id> — /qspp asks for the manager PIN first).
 import { useEffect, useState } from "react";
 import supabase from "../../lib/supabaseClient";
 import { todayPerth } from "../../lib/performanceReview";
 import { buildRegisterPdf, downloadPdf } from "../../lib/registerPdf";
+import { qsppCall } from "../../lib/qsppClient";
+import { reviewStatus } from "../../lib/qspp";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -96,10 +101,14 @@ function LogFeedbackModal({ staffList, onClose, onSaved }) {
     if (!loggedOk(v)) { setError("Fill in the fields marked *."); return; }
     setSaving(true);
     setError("");
-    const { error: err } = await supabase.from("feedback").insert([{ pharmacy_id: PHARMACY_ID, ...loggedPatch(v) }]);
-    setSaving(false);
-    if (err) { setError(err.message); return; }
-    onSaved();
+    try {
+      await qsppCall({ action: "log", kind: "feedback", fields: loggedPatch(v) }); // alerts the QSPP managers
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <Modal title="Log feedback" onClose={onClose} footer={
@@ -115,7 +124,8 @@ function LogFeedbackModal({ staffList, onClose, onSaved }) {
 }
 
 // Staff: read the feedback, add the follow-up (locked once filled). Manager: every field + closed, hide, delete.
-function FeedbackModal({ item, staffList, isManager, onClose, onChanged, onDeleted }) {
+function FeedbackModal({ item, staffList, manager, onClose, onChanged, onDeleted }) {
+  const isManager = !!manager;
   const [v, setV] = useState({
     received_date: item.received_date || "", logged_by_staff_id: item.logged_by_staff_id ? String(item.logged_by_staff_id) : "",
     feedback_type: item.feedback_type, category: item.category, received_via: item.received_via, details: item.details || "", contact: item.contact || "",
@@ -130,14 +140,22 @@ function FeedbackModal({ item, staffList, isManager, onClose, onChanged, onDelet
   const improvementLocked = !isManager && !!item.improvement;
   const staffName = (id) => staffList.find((s) => Number(s.id) === Number(id))?.name || "";
 
+  // Manager: every field (PIN re-checked on the server). Staff: the follow-up notes still empty.
   const update = async (patch) => {
     setSaving(true);
     setError("");
-    const { data, error: err } = await supabase.from("feedback").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", item.id).select().single();
-    setSaving(false);
-    if (err) { setError(err.message); return null; }
-    onChanged(data);
-    return data;
+    try {
+      const { row } = await qsppCall(isManager
+        ? { action: "manager-update", kind: "feedback", id: item.id, patch, pin: manager.pin }
+        : { action: "staff-update", kind: "feedback", id: item.id, patch });
+      onChanged(row);
+      return row;
+    } catch (err) {
+      setError(err.message);
+      return null;
+    } finally {
+      setSaving(false);
+    }
   };
   const save = async () => {
     if (isManager && !loggedOk(v)) { setError("Fill in the fields marked *."); return; }
@@ -149,9 +167,12 @@ function FeedbackModal({ item, staffList, isManager, onClose, onChanged, onDelet
   };
   const remove = async () => {
     if (!window.confirm("Delete this feedback permanently? This cannot be undone.")) return;
-    const { error: err } = await supabase.from("feedback").delete().eq("id", item.id);
-    if (err) { setError(err.message); return; }
-    onDeleted(item.id);
+    try {
+      await qsppCall({ action: "delete", kind: "feedback", id: item.id, pin: manager.pin });
+      onDeleted(item.id);
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (
@@ -197,7 +218,7 @@ function FeedbackModal({ item, staffList, isManager, onClose, onChanged, onDelet
 
 const pill = (cls, text) => <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${cls}`}>{text}</span>;
 
-export default function FeedbackRegister({ manager = null }) {
+export default function FeedbackRegister({ manager = null, openId = null, onOpenedId, staleDays = null, onChanged }) {
   const isManager = !!manager;
   const [items, setItems] = useState(null);
   const [staffList, setStaffList] = useState([]);
@@ -222,6 +243,28 @@ export default function FeedbackRegister({ manager = null }) {
       .then(({ data }) => setStaffList(data || []));
   }, []);
   useEffect(() => { setOpenItem(null); load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [isManager]);
+
+  const replaceRow = (row) => { setItems((prev) => (prev || []).map((x) => (x.id === row.id ? row : x))); onChanged?.(); };
+  // First opened in manager mode -> manager_opened_at (clears "New feedback to review")
+  const openOne = async (it) => {
+    setOpenItem(it);
+    if (!isManager || it.manager_opened_at) return;
+    try {
+      const { row } = await qsppCall({ action: "manager-open", kind: "feedback", id: it.id, pin: manager.pin });
+      replaceRow(row);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  // ?feedback=<id>: open it once loaded (manager mode)
+  useEffect(() => {
+    if (!openId || items === null || !isManager) return;
+    const it = items.find((x) => String(x.id) === String(openId));
+    if (it) openOne(it);
+    else setError("That feedback wasn't found.");
+    onOpenedId?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId, items === null, isManager]);
 
   const term = search.trim().toLowerCase();
   const all = items || [];
@@ -300,12 +343,14 @@ export default function FeedbackRegister({ manager = null }) {
         : visible.length === 0 ? <p className="text-sm text-slate-400 px-1 py-12 text-center">{all.length ? "No feedback matches." : "No feedback logged yet."}</p>
         : (
           <div className="space-y-2">
-            {visible.map((i) => (
-              <button key={i.id} onClick={() => setOpenItem(i)}
+            {visible.map((i) => { const st = isManager ? reviewStatus("feedback", i, staleDays) : null; return (
+              <button key={i.id} onClick={() => openOne(i)}
                 className={`w-full text-left bg-white rounded-[14px] border border-[#E5E7EB] px-4 py-3 hover:bg-slate-50 ${i.hidden ? "opacity-60" : ""}`}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-slate-400">{i.received_date} · {labelOf(RECEIVED_VIA, i.received_via)}</span>
                   <span className="flex flex-wrap items-center gap-1">
+                    {st?.isNew && pill("bg-blue-600 text-white border-blue-600", "NEW")}
+                    {st?.stale && pill("bg-red-50 text-red-700 border-red-200", `Open ${st.days} days`)}
                     {i.hidden && pill("bg-slate-100 text-slate-500 border-slate-200", "Hidden")}
                     {i.feedback_type === "negative" ? pill("bg-red-50 text-red-700 border-red-200", "Negative") : pill("bg-green-50 text-green-700 border-green-200", "Positive")}
                     {pill("bg-slate-100 text-slate-600 border-slate-200", labelOf(FEEDBACK_CATEGORIES, i.category))}
@@ -315,20 +360,20 @@ export default function FeedbackRegister({ manager = null }) {
                 <p className="text-sm text-slate-700 mt-1.5 line-clamp-2">{i.details}</p>
                 {i.response && <div className="mt-1.5 text-[11px] text-[#475569]">Responded {i.responded_date || ""}</div>}
               </button>
-            ))}
+            ); })}
           </div>
         )}
 
-      {logging && <LogFeedbackModal staffList={staffList} onClose={() => setLogging(false)} onSaved={async () => { setLogging(false); await load(); }} />}
+      {logging && <LogFeedbackModal staffList={staffList} onClose={() => setLogging(false)} onSaved={async () => { setLogging(false); await load(); onChanged?.(); }} />}
       {openItem && (
         <FeedbackModal
           key={openItem.id}
           item={openItem}
           staffList={staffList}
-          isManager={isManager}
+          manager={manager}
           onClose={() => setOpenItem(null)}
-          onChanged={(row) => { setItems((prev) => prev.map((x) => (x.id === row.id ? row : x))); setOpenItem(row); }}
-          onDeleted={(id) => { setItems((prev) => prev.filter((x) => x.id !== id)); setOpenItem(null); }}
+          onChanged={(row) => { replaceRow(row); setOpenItem(row); }}
+          onDeleted={(id) => { setItems((prev) => prev.filter((x) => x.id !== id)); setOpenItem(null); onChanged?.(); }}
         />
       )}
     </div>

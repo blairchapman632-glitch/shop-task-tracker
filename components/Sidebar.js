@@ -1,5 +1,6 @@
 // Shared left sidebar for the desktop pages (Tasks, Wages, Admin, Insights). The kiosk home page has its own.
 // active: key of the current page ("home" | "roster" | "insights" | "tasks" | "wages" | "requests" | "qspp" | "admin")
+// badges: optional { [key]: number } — a small count on that item (e.g. /qspp in manager mode: open incidents + feedback)
 import Link from "next/link";
 
 const LINKS = [
@@ -14,7 +15,7 @@ const LINKS = [
   { key: "banking", href: "/banking", icon: "🏦", label: "Banking" },
 ];
 
-export default function Sidebar({ active }) {
+export default function Sidebar({ active, badges }) {
   return (
     <aside className="w-[200px] min-w-[200px] h-screen bg-white border-r flex flex-col py-4 px-3 gap-1 shrink-0">
       <div className="text-sm font-bold text-gray-800 px-2 mb-3 leading-tight">
@@ -29,6 +30,10 @@ export default function Sidebar({ active }) {
           }`}
         >
           <span>{l.icon}</span> {l.label}
+          {badges?.[l.key] > 0 && (
+            <span className="ml-auto min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white text-[11px] font-bold leading-5 text-center"
+              title="Open incidents + open feedback">{badges[l.key]}</span>
+          )}
         </Link>
       ))}
     </aside>

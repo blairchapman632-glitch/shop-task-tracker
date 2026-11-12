@@ -1,5 +1,34 @@
 # Session notes
 
+## 2026-11-12 — QSPP incidents & feedback: manager alerts + manager-only review
+
+### Done
+- **QSPP managers** = `staff.is_qspp_manager`. "QSPP manager" tick added to the Admin staff profile (not for locums). Manager mode still unlocks with the admin PIN as before.
+- **Alerts:** logging an incident or feedback sends a phone push to every active QSPP manager except whoever logged it ("New incident #8 reported by Jasmine" / "New feedback logged by …" — no patient details). Tapping it opens /qspp, asks for the PIN, then opens that entry.
+- **Needs attention** (Admin → Staff): new "Incidents & feedback" group — "New incident / feedback to review" until first opened in QSPP manager mode (`manager_opened_at` recorded), then "Open X days" once past the stale-days setting, until resolved / closed. Existing #8 shows up.
+- **Manager-only review section:** staff can report an incident and, on an open incident, add the action taken / actioned by / follow-up until it's actioned. Quality improvements, clinical / non-clinical, third parties, open disclosure, feedback to staff, follow-up assigned to, date resolved and reopening need manager mode; staff see them read-only once filled, not at all while empty. The staff report form no longer has those fields. Feedback: staff log + add follow-up notes; closing / editing everything stays manager-only.
+- **Server check:** every incident / feedback save now goes through `/api/qspp/register` (`lib/qspp.js` field lists); manager fields, closing, hiding, deleting and the setting re-check the manager PIN on the server. Push sending moved into `lib/pushServer.js` (`/api/push` unchanged in behaviour).
+- **Manager mode on Incidents & feedback:** "Alerts go to: …" (red warning if no QSPP managers are ticked) and "Flag incidents open longer than X days" (default 14, can be turned off). List badges NEW / "Open X days". QSPP sidebar item shows open incidents + open feedback (manager mode only).
+- Unticked the inactive "Test Contract" staff record as a QSPP manager (only Blair is ticked now).
+- Tested the full flow against the real database (test incident #9, test feedback and a temporary manager record — all deleted).
+
+### Schema changes
+- `incidents.manager_opened_at` (timestamptz, empty by default)
+- `feedback.manager_opened_at` (timestamptz, empty by default)
+- `pharmacy_settings.qspp_stale_days` (integer, default 14, empty = off)
+- (added by Blair via Supabase; copy in `docs/sql/qspp_manager_alerts_2026-11-12.sql`)
+
+### New tables (add to RLS pass)
+- None new. Added `incidents` and `feedback` to the RLS-pass list — the server route checks the PIN, but while RLS is off they can still be written directly with the public key.
+
+### Follow-ups / parked
+- RLS on `incidents` / `feedback` (one table at a time) to close direct writes. Other manager-only QSPP actions (library edits, annual reviews) are still browser-only checks.
+- Paige isn't ticked as a QSPP manager — tick her in Admin if she should get alerts.
+- Report numbers: the deleted test incident used #9, so the next real one is #10.
+
+### Not committed
+- Nothing (committed and pushed).
+
 ## 2026-11-02 — Kiosk calendar "What's on"
 
 ### Done

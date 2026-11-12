@@ -2,8 +2,11 @@
 // (employment contract / induction checklist) and new starters (incl. inductions).
 // Reuses the same rules as QSPP → Reviews / Training (lib/performanceReview.js, lib/trainingPlan.js).
 // onOpen(staff, tab, reviewId?) opens that person on the right staff-form tab; onOpenPolicy(docId) opens that document in /qspp.
+// Incidents & feedback (lib/qspp.js qsppAttention): "New incident / feedback to review" until first opened in QSPP manager
+// mode, then "Open X days" once past the stale-days setting, until resolved / closed. onOpenQspp(kind, id) -> /qspp.
 import { useEffect, useState } from "react";
 import supabase from "../lib/supabaseClient";
+import { qsppAttention } from "../lib/qspp";
 import { reviewAttention, perthDateOf, fmtDateShort, todayPerth } from "../lib/performanceReview";
 import { loadTrainingData, trainingAttention, fetchAllRows, STATE_STYLE } from "../lib/trainingPlan";
 import { REQUEST_COLUMNS, docProgress } from "../lib/policyReads";
@@ -102,7 +105,7 @@ function inductionNotStartedAttention(staff, contracts, inductions, docs, today)
   return items.sort((a, b) => a.sort.localeCompare(b.sort));
 }
 
-export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy }) {
+export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy, onOpenQspp }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
 
@@ -110,12 +113,12 @@ export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy })
   const activeIds = active.map((s) => s.id).join(",");
 
   useEffect(() => {
-    if (!activeIds) { setData({ reviews: [], training: null, contracts: [], policyRequests: [], policyDocs: [], inductions: [], inductionItems: [] }); return; }
+    if (!activeIds) { setData({ reviews: [], training: null, contracts: [], policyRequests: [], policyDocs: [], inductions: [], inductionItems: [], incidents: [], feedback: [], staleDays: null }); return; }
     let cancelled = false;
     (async () => {
       try {
         const ids = activeIds.split(",").map(Number);
-        const [rv, training, ct, policyRequests, pd, ind] = await Promise.all([
+        const [rv, training, ct, policyRequests, pd, ind, inc, fb, ps] = await Promise.all([
           supabase.from("performance_reviews")
             .select("id, staff_id, status, review_type, meeting_date, signed_at, created_at, staff_comments, staff_comments_seen")
             .eq("pharmacy_id", PHARMACY_ID),
@@ -125,14 +128,21 @@ export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy })
           supabase.from("pharmacy_documents").select("id, title").eq("pharmacy_id", PHARMACY_ID).eq("active", true),
           // in_progress -> New starters; signed_off -> counts as the induction checklist being on file (Missing documents)
           supabase.from("staff_inductions").select("id, staff_id, due_date, status").eq("pharmacy_id", PHARMACY_ID).in("status", ["in_progress", "signed_off"]).in("staff_id", ids),
+          // Open incidents / feedback (hidden ones are left out)
+          supabase.from("incidents").select("id, report_number, created_at, incident_date, date_resolved, hidden, manager_opened_at").eq("pharmacy_id", PHARMACY_ID).is("date_resolved", null).eq("hidden", false),
+          supabase.from("feedback").select("id, feedback_type, created_at, received_date, closed_date, hidden, manager_opened_at").eq("pharmacy_id", PHARMACY_ID).is("closed_date", null).eq("hidden", false),
+          supabase.from("pharmacy_settings").select("qspp_stale_days").eq("pharmacy_id", PHARMACY_ID).maybeSingle(),
         ]);
-        if (rv.error || ct.error || pd.error || ind.error) throw rv.error || ct.error || pd.error || ind.error;
+        if (rv.error || ct.error || pd.error || ind.error || inc.error || fb.error) throw rv.error || ct.error || pd.error || ind.error || inc.error || fb.error;
         const indIds = (ind.data || []).filter((i) => i.status === "in_progress").map((i) => i.id);
         const inductionItems = indIds.length
           ? await fetchAllRows(() => supabase.from("staff_induction_items").select("id, induction_id, result").in("induction_id", indIds).order("id"))
           : [];
         if (!cancelled) {
-          setData({ reviews: rv.data || [], training, contracts: ct.data || [], policyRequests, policyDocs: pd.data || [], inductions: ind.data || [], inductionItems });
+          setData({
+            reviews: rv.data || [], training, contracts: ct.data || [], policyRequests, policyDocs: pd.data || [], inductions: ind.data || [], inductionItems,
+            incidents: inc.data || [], feedback: fb.data || [], staleDays: ps.data?.qspp_stale_days ?? null,
+          });
           setError("");
         }
       } catch (err) {
@@ -149,6 +159,11 @@ export default function StaffNeedsAttention({ staffList, onOpen, onOpenPolicy })
     const today = todayPerth();
     const t = data.training ? trainingAttention(data.training, today).items : [];
     groups = [
+      {
+        title: "Incidents & feedback", tab: null,
+        items: qsppAttention({ incidents: data.incidents, feedback: data.feedback, staleDays: data.staleDays, today })
+          .map((i) => ({ ...i, onClick: () => onOpenQspp?.(i.kind, i.id) })),
+      },
       {
         title: "Reviews", tab: "reviews",
         items: reviewAttention(active, data.reviews, today)

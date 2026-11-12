@@ -216,6 +216,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
     can_access_wages: member?.can_access_wages ?? false,
     no_lunch_deduction: member?.no_lunch_deduction ?? false,
     is_roster_manager: member?.is_roster_manager ?? false,
+    is_qspp_manager: member?.is_qspp_manager ?? false,
     is_driver: member?.is_driver ?? false,
     can_conduct_reviews: member?.can_conduct_reviews ?? false,
     exclude_from_reviews: member?.exclude_from_reviews ?? false,
@@ -537,6 +538,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
       can_access_wages: form.can_access_wages,
       no_lunch_deduction: form.no_lunch_deduction,
       is_roster_manager: form.is_roster_manager,
+      is_qspp_manager: !!form.is_qspp_manager,
       is_driver: form.is_driver,
       can_conduct_reviews: form.can_conduct_reviews,
       exclude_from_reviews: form.exclude_from_reviews,
@@ -795,6 +797,7 @@ function StaffForm({ member, onSave, onRefresh, onCancel, initialTab, initialRev
             { field: "can_access_wages", label: "Can access wages", desc: "PIN unlocks the full wages table for all staff" },
             { field: "no_lunch_deduction", label: "Never deduct lunch break", desc: "Skip the 30-min lunch deduction on all shifts and public holidays" },
             { field: "is_roster_manager", label: "Roster manager", desc: "Receives push notifications for leave requests and availability changes" },
+            ...(form.role !== "Locum" ? [{ field: "is_qspp_manager", label: "QSPP manager", desc: "Gets a phone alert when an incident or feedback is logged" }] : []),
             { field: "is_driver", label: "Delivery driver", desc: "Sees the Deliveries tab on their phone app" },
             { field: "can_conduct_reviews", label: "Can conduct performance reviews", desc: "Appears in the reviewer list when starting a review" },
             ...(form.role !== "Locum" ? [{ field: "can_sign_inductions", label: "Can sign off inductions", desc: "Can tick induction items for new starters in their staff app" }] : []),
@@ -3100,6 +3103,8 @@ export default function AdminPage() {
 
   // Needs attention "N still to read" -> that policy's side panel in /qspp (asks for the manager PIN there)
   const openPolicy = (docId) => { router.push(`/qspp?doc=${encodeURIComponent(docId)}`); };
+  // Needs attention "New incident / feedback to review" -> /qspp asks for the manager PIN, then opens it
+  const openQspp = (kind, id) => { router.push(`/qspp?${kind === "incident" ? "incident" : "feedback"}=${encodeURIComponent(id)}`); };
 
   // /admin?staff=<id>&staffTab=reviews&review=<id> (e.g. from /qspp → Reviews): open that person once unlocked
   useEffect(() => {
@@ -3282,7 +3287,7 @@ export default function AdminPage() {
             ) : tab === "locums" ? (
               <LocumsTab key={locumFormKey} />
             ) : !selected ? (
-              <StaffNeedsAttention staffList={staffList} onOpen={openStaff} onOpenPolicy={openPolicy} />
+              <StaffNeedsAttention staffList={staffList} onOpen={openStaff} onOpenPolicy={openPolicy} onOpenQspp={openQspp} />
             ) : (
               <StaffForm
                 key={formKey}
