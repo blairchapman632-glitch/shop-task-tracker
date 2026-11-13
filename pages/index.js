@@ -1261,6 +1261,19 @@ export default function HomePage() {
   const selectedStaffName = selectedStaff?.name || null;
   const staffById = useMemo(() => Object.fromEntries(staff.map((s) => [s.id, s])), [staff]);
 
+  // Who the PERSONAL cards load for (policy reads, inductions, review answers, staff memo "Add your section" / "Read
+  // the …"): active staff rostered on today, plus whoever is picked under "not working today" — their cards then show
+  // in their own list only, never under Everyone (lib/kioskJobs.js offPick). Nothing changes for rostered staff.
+  const offRosterPick = selectedStaffId != null && !todayRosteredIds.has(selectedStaffId) && !todayRosteredIds.has(Number(selectedStaffId))
+    ? Number(selectedStaffId) : null;
+  const cardIdsKey = useMemo(() => {
+    const activeIds = new Set(staff.map((st) => Number(st.id)));
+    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    if (offRosterPick != null && activeIds.has(offRosterPick) && !ids.includes(offRosterPick)) ids.push(offRosterPick);
+    return ids.join(",");
+  }, [todayRosteredIds, staff, offRosterPick]);
+  const cardStaffIds = useMemo(() => (cardIdsKey ? cardIdsKey.split(",").map(Number) : []), [cardIdsKey]);
+
   // Policy reads as Today's Jobs: projected from policy_read_requests (no task rows, no completions, no leaderboard).
   // Outstanding requests for ACTIVE staff rostered on today, on active documents. Cancelled/read ones never show.
   // Re-checked every minute so a policy ticked on someone's phone (/me) drops off the kiosk.
@@ -1271,8 +1284,7 @@ export default function HomePage() {
   }, []);
   useEffect(() => {
     if (!currentPharmacyId) return;
-    const activeIds = new Set(staff.map((st) => Number(st.id)));
-    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    const ids = cardStaffIds;
     if (!ids.length) { setPolicyJobs([]); return; }
     let cancelled = false;
     supabase.from("policy_read_requests")
@@ -1288,7 +1300,7 @@ export default function HomePage() {
         setPolicyJobs((data || []).filter((r) => r.document && r.document.active !== false && !r.induction_id));
       });
     return () => { cancelled = true; };
-  }, [todayRosteredIds, currentPharmacyId, staff, policyTick]);
+  }, [cardStaffIds, currentPharmacyId, policyTick]);
 
   // QSPP jobs: worked out live from open incidents / feedback (numbers + statuses only — no patient details are loaded)
   // and the active QSPP managers. Re-checked every minute with the policy jobs.
@@ -1327,8 +1339,7 @@ export default function HomePage() {
   const [memoTick, setMemoTick] = useState(0);
   useEffect(() => {
     if (!currentPharmacyId) return;
-    const activeIds = new Set(staff.map((st) => Number(st.id)));
-    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    const ids = cardStaffIds;
     if (!ids.length) { setMemoAskJobs([]); return; }
     let cancelled = false;
     adminFetch("/api/memos/contribute", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "kiosk-jobs", via: "kiosk", staff_ids: ids }) })
@@ -1336,21 +1347,20 @@ export default function HomePage() {
       .then((out) => { if (!cancelled) setMemoAskJobs(out.jobs || []); })
       .catch(() => { if (!cancelled) setMemoAskJobs([]); });
     return () => { cancelled = true; };
-  }, [currentPharmacyId, todayRosteredIds, staff, policyTick, memoTick]);
+  }, [currentPharmacyId, cardStaffIds, policyTick, memoTick]);
 
   // Sent staff memos not opened yet, for staff rostered on today: memo id + staff id + title only (/api/memos/read).
   // Re-checked every minute with the policy jobs and after a memo is closed here.
   useEffect(() => {
     if (!currentPharmacyId) return;
-    const activeIds = new Set(staff.map((st) => Number(st.id)));
-    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    const ids = cardStaffIds;
     if (!ids.length) { setMemoReadJobs([]); return; }
     let cancelled = false;
     readCall({ action: "kiosk-jobs", staff_ids: ids }, true)
       .then((out) => { if (!cancelled) setMemoReadJobs(out.jobs || []); })
       .catch(() => { if (!cancelled) setMemoReadJobs([]); });
     return () => { cancelled = true; };
-  }, [currentPharmacyId, todayRosteredIds, staff, policyTick, memoTick]);
+  }, [currentPharmacyId, cardStaffIds, policyTick, memoTick]);
 
   // Close the memo: opened = seen, for that person only (the job's person, or whoever is selected when opened from
   // What's on). The server ignores anyone who isn't a recipient.
@@ -1368,8 +1378,7 @@ export default function HomePage() {
   // Same rules as policy cards (no task rows, not in the progress count, no leaderboard).
   useEffect(() => {
     if (!currentPharmacyId) return;
-    const activeIds = new Set(staff.map((st) => Number(st.id)));
-    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    const ids = cardStaffIds;
     if (!ids.length) { setInductionJobs([]); return; }
     let cancelled = false;
     (async () => {
@@ -1424,7 +1433,7 @@ export default function HomePage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [todayRosteredIds, currentPharmacyId, staff]);
+  }, [cardStaffIds, currentPharmacyId]);
 
   const inductionCards = inductionJobs.filter((j) => j.confirm || j.requests.some((r) => r.status === "outstanding"));
 
@@ -2114,7 +2123,7 @@ const handleDeliveryTap = async (d) => {
             const monthStart = perthMonthStart();
             const jobs = loading ? [] : buildKioskJobs({
               tasks, offRosterTasks, monthCards, completedTaskIds, monthlyCompletions, staffById,
-              rosteredIds: new Set([...todayRosteredIds].map(Number)), sectionCleans, policyJobs, inductionCards,
+              rosteredIds: new Set([...todayRosteredIds].map(Number)), offPick: offRosterPick, sectionCleans, policyJobs, inductionCards,
               orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart, qsppJobs, reviewWaitingIds, memoAskJobs, memoReadJobs,
             });
             const roleOf = (id) => staffById[id]?.role || null;
