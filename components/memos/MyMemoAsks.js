@@ -2,7 +2,7 @@
 //   Not written yet → "Add your section to the …" (counts in the To do badge, like the kiosk job)
 //   Written         → "Your section for the …" — can still be opened and changed until the memo is sent (not counted)
 // Tapping opens only my section (ContributorSection) full screen.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { contributeCall } from "../../lib/memosClient";
 
@@ -25,8 +25,14 @@ export const fetchMyMemoAsks = async () => {
 
 export const memoAsksToDo = (asks) => (asks || []).filter((a) => !a.written).length;
 
-export function MyMemoAsksSection({ asks, onChanged }) {
+// openSectionId: from the "… asked you for a section" push (/me?tab=todo&section=<id>) — opened once it's in my asks
+export function MyMemoAsksSection({ asks, onChanged, openSectionId, onOpenedFromLink }) {
   const [open, setOpen] = useState(null); // section_id
+  useEffect(() => {
+    if (!openSectionId || !asks?.some((a) => String(a.section_id) === String(openSectionId))) return;
+    setOpen(String(openSectionId));
+    onOpenedFromLink?.();
+  }, [openSectionId, asks]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!asks?.length) return null;
   const todo = asks.filter((a) => !a.written);
   const done = asks.filter((a) => a.written);

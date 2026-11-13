@@ -7,6 +7,7 @@ import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib
 import { fetchMyReview, prepWaiting, MyReviewBanner, MyReviewSection } from "../components/MyReview";
 import { fetchMyPolicies, policiesToRead, MyPoliciesBanner, MyPoliciesSection } from "../components/MyPolicies";
 import { fetchMyMemoAsks, memoAsksToDo, MyMemoAsksSection } from "../components/memos/MyMemoAsks";
+import MyMemos, { fetchMyMemos } from "../components/memos/MyMemos";
 import MyTrainingTab from "../components/MyTraining";
 import { MyInductionsSection, fetchMyInductions } from "../components/MyInductions";
 import { fetchMyTrainingNudges, TrainingNudges } from "../components/MyCertificates";
@@ -852,8 +853,11 @@ const meFmtWhen = (d) =>
 
 const NOTE_REACTIONS = ["👍", "❤️", "🙂"];
 
-function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount, unreadCount }) {
-  const [sub, setSub] = useState("notes");
+// Messages: Chats (direct messages) | Memos (staff memos — Stage 3) | Wall
+function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount, unreadCount, myMemos, openMemoId, onMemoOpened, onMemosChanged }) {
+  const [sub, setSub] = useState(openMemoId ? "memos" : "notes");
+  useEffect(() => { if (openMemoId) setSub("memos"); }, [openMemoId]);
+  const memoUnread = myMemos?.unread || 0;
 
   const handleSubTab = (key) => {
     setSub(key);
@@ -867,7 +871,7 @@ function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount, unreadCount })
   return (
     <div className="max-w-lg mx-auto space-y-4">
       <div className="flex gap-1">
-        {[{ key: "direct", label: "💬 Messages" }, { key: "notes", label: "📌 Wall" }].map((t) => (
+        {[{ key: "direct", label: "💬 Chats" }, { key: "memos", label: "📰 Memos" }, { key: "notes", label: "📌 Wall" }].map((t) => (
           <button key={t.key} onClick={() => handleSubTab(t.key)}
             className={`relative flex-1 text-sm rounded-lg py-2 font-medium ${sub === t.key ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
             {t.label}
@@ -877,10 +881,15 @@ function MessagesCombinedTab({ staff, onBoardSeen, newBoardCount, unreadCount })
             {t.key === "direct" && unreadCount > 0 && sub !== "direct" && (
               <span className="absolute top-1 right-2 inline-flex items-center justify-center h-2 w-2 rounded-full bg-red-500" />
             )}
+            {t.key === "memos" && memoUnread > 0 && (
+              <span className="absolute top-1 right-1.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none">{memoUnread}</span>
+            )}
           </button>
         ))}
       </div>
-      {sub === "direct" ? <MessagesTab staff={staff} /> : <NotesTab staff={staff} />}
+      {sub === "direct" ? <MessagesTab staff={staff} />
+        : sub === "memos" ? <MyMemos data={myMemos} openId={openMemoId} onOpened={onMemoOpened} onChanged={onMemosChanged} />
+        : <NotesTab staff={staff} />}
     </div>
   );
 }
@@ -2220,13 +2229,13 @@ function DeliveriesCard({ onOpen }) {
 
 // To do: performance review (Section 2 prep / comments) + staff memo sections I've been asked for + policies to read
 // + Inductions (only for staff who can sign them off; not part of the badge count)
-function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, onPoliciesChanged, nudges, onOpenNudge, inductions, memoAsks, onMemoAsksChanged }) {
+function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, onPoliciesChanged, nudges, onOpenNudge, inductions, memoAsks, onMemoAsksChanged, openAskSectionId, onAskLinkOpened }) {
   const hasReview = !!(myReview?.mode && myReview.review);
   const hasPolicies = !!(myPolicies?.outstanding?.length || myPolicies?.read?.length);
   return (
     <div className="max-w-lg mx-auto space-y-4">
       <MyReviewSection data={myReview} onChanged={onReviewChanged} focus={focusReview} />
-      <MyMemoAsksSection asks={memoAsks} onChanged={onMemoAsksChanged} />
+      <MyMemoAsksSection asks={memoAsks} onChanged={onMemoAsksChanged} openSectionId={openAskSectionId} onOpenedFromLink={onAskLinkOpened} />
       <TrainingNudges items={nudges} onOpen={onOpenNudge} />
       <MyPoliciesSection data={myPolicies} focus={focusPolicies} onChanged={onPoliciesChanged} />
       {!hasReview && !hasPolicies && !nudges?.length && !memoAsks?.length && (
@@ -3385,13 +3394,28 @@ export default function MePage() {
   const [trainingTarget, setTrainingTarget] = useState(null); // { sub, section, n } — where a nudge opens Training
   const [myInductions, setMyInductions] = useState(null); // To do → Inductions list (signers only; false = hidden), preloaded
   const [myMemoAsks, setMyMemoAsks] = useState(null); // To do → staff memo sections I've been asked for (draft memos)
+  const [myMemos, setMyMemos] = useState(null);       // Messages → Memos: { memos, unread } (sent memos I received)
+  const [openMemoId, setOpenMemoId] = useState(null); // ?tab=messages&memo=<id> (the "New staff memo" push)
+  const [openAskSectionId, setOpenAskSectionId] = useState(null); // ?tab=todo&section=<id> (the "asked you for a section" push)
 
   // ?tab=todo (the performance review pushes): open straight on To do, at the review
+  // ?tab=messages&memo=<id> (the staff memo push): open that memo in Messages → Memos
   useEffect(() => {
     try {
-      if (new URLSearchParams(window.location.search).get("tab") === "todo") { setTab("todo"); setFocusReview(true); }
+      const q = new URLSearchParams(window.location.search);
+      // ?tab=todo&section=<id> (the "… asked you for a section" push): open that section, not the review
+      if (q.get("tab") === "todo") { setTab("todo"); if (q.get("section")) setOpenAskSectionId(q.get("section")); else setFocusReview(true); }
+      if (q.get("tab") === "messages") { setTab("messages"); if (q.get("memo")) setOpenMemoId(q.get("memo")); }
     } catch { /* ignore */ }
   }, []);
+
+  // Staff memos I received (Messages badge + Memos sub-tab) — loaded at start and whenever Messages is opened
+  const loadMyMemos = async () => { const r = await fetchMyMemos(); if (r) setMyMemos(r); };
+  useEffect(() => {
+    if (!staff?.id) return;
+    loadMyMemos();
+  }, [staff?.id, tab === "messages"]); // eslint-disable-line react-hooks/exhaustive-deps
+  const memoUnread = myMemos?.unread || 0;
 
   // Inductions list: loaded once when /me loads so the To do card is ready (the card refreshes itself when shown)
   useEffect(() => {
@@ -3706,7 +3730,8 @@ export default function MePage() {
         ) : tab === "wages" ? (
           <WagesTab staff={staff} />
         ) : tab === "messages" ? (
-          <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} newBoardCount={newBoardCount} unreadCount={unreadCount} />
+          <MessagesCombinedTab staff={staff} onBoardSeen={() => setNewBoardCount(0)} newBoardCount={newBoardCount} unreadCount={unreadCount}
+            myMemos={myMemos} openMemoId={openMemoId} onMemoOpened={setOpenMemoId} onMemosChanged={loadMyMemos} />
         ) : tab === "training" ? (
           <MyTrainingTab target={trainingTarget} />
         ) : tab === "todo" ? (
@@ -3717,6 +3742,7 @@ export default function MePage() {
             nudges={myNudges}
             inductions={myInductions}
             memoAsks={myMemoAsks}
+            openAskSectionId={openAskSectionId} onAskLinkOpened={() => setOpenAskSectionId(null)}
             onMemoAsksChanged={async () => { const r = await fetchMyMemoAsks(); if (r) setMyMemoAsks(r); }}
             onOpenNudge={(sub, section) => { setTrainingTarget((t) => ({ sub, section, n: (t?.n || 0) + 1 })); setTab("training"); }}
           />
@@ -3742,12 +3768,12 @@ export default function MePage() {
           >
             <span className="relative text-xl">
               {t.icon}
-              {t.key === "messages" && unreadCount > 0 && (
+              {t.key === "messages" && unreadCount + memoUnread > 0 && (
                 <span className="absolute -top-1 -right-2.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold leading-none">
-                  {unreadCount}
+                  {unreadCount + memoUnread}
                 </span>
               )}
-              {t.key === "messages" && unreadCount === 0 && newBoardCount > 0 && (
+              {t.key === "messages" && unreadCount + memoUnread === 0 && newBoardCount > 0 && (
                 <span className="absolute -top-1 -right-1 inline-flex items-center justify-center h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" />
               )}
               {t.key === "todo" && todoCount > 0 && (

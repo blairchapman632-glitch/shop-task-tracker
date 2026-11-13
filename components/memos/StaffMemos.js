@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ManagerPinModal from "../qspp/ManagerPinModal";
 import MemoView from "./MemoView";
 import MemoEditor from "./MemoEditor";
+import { PdfButton, SeenByPanel, seenCount, AddUpdate, ManagerReplies, KioskReply } from "./MemoExtras";
 import supabase from "../../lib/supabaseClient";
 import { memoCall } from "../../lib/memosClient";
 import { MEMO_TOPICS, defaultMemoTitle, fmtMemoDate, memoSearchText, memoPlainText } from "../../lib/memos";
@@ -17,6 +18,22 @@ import { todayPerth } from "../../lib/performanceReview";
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 const IDLE_LOCK_MS = 10 * 60 * 1000;
+
+// Under a sent memo. Replies are private:
+//   manager mode — "Add an update" (shown to everyone) and every person's reply thread ("💬 Replies (N, X new)")
+//   anyone else  — "💬 Reply": pick your name + your own PIN, then only your own thread (shop computer, no login)
+function UnderMemo({ memo, manager, staffList, onUpdates, onRepliesChanged }) {
+  if (memo.imported) return manager ? <AddUpdate memo={memo} manager={manager} onAdded={onUpdates} /> : null;
+  if (manager) {
+    return (
+      <>
+        <AddUpdate memo={memo} manager={manager} onAdded={onUpdates} />
+        <ManagerReplies memo={memo} manager={manager} onChanged={onRepliesChanged} />
+      </>
+    );
+  }
+  return <KioskReply key={memo.id} memoId={memo.id} staffList={staffList} />;
+}
 
 // First bit of plain text for the archive list
 function snippet(sections) {
@@ -41,11 +58,22 @@ export default function StaffMemos({ openMemoId, onCloseMemo }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const loadSent = () => memoCall({ action: "list" }).then(setSent).catch((err) => setError(err.message));
+  // Memos sent to roles / chosen people are private: listed here only in manager mode (the PIN is sent with the list)
+  const loadSent = (m = manager) => memoCall({ action: "list", ...(m ? { pin: m.pin } : {}) }).then(setSent).catch((err) => setError(err.message));
+  useEffect(() => { loadSent(); }, [manager]); // eslint-disable-line react-hooks/exhaustive-deps
   const loadDrafts = (m = manager) => (m ? memoCall({ action: "drafts", pin: m.pin }).then(({ memos }) => setDrafts(memos)).catch((err) => setError(err.message)) : setDrafts(null));
+  // Managers only: who has seen each sent memo ("Seen by 9 of 12")
+  const [seenBy, setSeenBy] = useState(null);
+  const loadSeenBy = (m = manager) => (m ? memoCall({ action: "seen-by", pin: m.pin }).then((r) => setSeenBy(r.seenBy || {})).catch(() => {}) : setSeenBy(null));
+  useEffect(() => { loadSeenBy(); }, [manager]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Managers only: replies per memo ({ [memoId]: { total, unread } }) for the "new replies" marker
+  const [replyInfo, setReplyInfo] = useState(null);
+  const loadReplyInfo = (m = manager) => (m ? memoCall({ action: "reply-summary", pin: m.pin }).then((r) => setReplyInfo(r.summary || {})).catch(() => {}) : setReplyInfo(null));
+  useEffect(() => { loadReplyInfo(); }, [manager]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A new update on a memo (manager mode) — shown straight away
+  const setUpdatesFor = (memoId, list) => setSent((s) => (s ? { ...s, updates: [...(s.updates || []).filter((u) => u.memo_id !== memoId), ...list] } : s));
 
   useEffect(() => {
-    loadSent();
     supabase.from("staff").select("id, name, role, active").eq("pharmacy_id", PHARMACY_ID).eq("active", true)
       .or("role.is.null,role.neq.Locum").order("name").then(({ data }) => setStaffList(data || []));
   }, []);
@@ -92,6 +120,47 @@ export default function StaffMemos({ openMemoId, onCloseMemo }) {
     onCloseMemo?.();
     loadDrafts();
     loadSent();
+    loadSeenBy();
+    loadReplyInfo();
+  };
+  // Managers: delete a sent memo whose only recipient is the manager who sent it (a test) — everything it created goes
+  const deleteOwnTest = async (m) => {
+    if (!window.confirm(`Delete "${m.title}"? It was only sent to you. The memo, its replies, updates, policy read requests, calendar dates and files will all be removed. This can't be undone.`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await memoCall({ action: "delete-sent", pin: manager.pin, id: m.id });
+      backToList();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const onlyToSender = (m) => {
+    const list = seenBy?.[m.id];
+    return !m.imported && list?.length === 1 && Number(list[0].staff_id) === Number(m.sent_by_staff_id);
+  };
+
+  // Managers: delete a memo imported from email (Chalkboard-sent memos can't be deleted)
+  const deleteImported = async (m) => {
+    if (!window.confirm("Delete this imported memo? This can't be undone.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await memoCall({ action: "delete-imported", pin: manager.pin, id: m.id });
+      backToList();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Just sent: show it as staff will see it
+  const afterSend = async (id) => {
+    await Promise.all([loadSent(), loadDrafts(), loadSeenBy()]);
+    setView({ kind: "read", id });
   };
 
   const sectionsByMemo = useMemo(() => {
@@ -125,14 +194,38 @@ export default function StaffMemos({ openMemoId, onCloseMemo }) {
       </div>
 
       {view.kind === "edit" && manager && (
-        <MemoEditor key={view.id} memoId={view.id} manager={manager} staffList={staffList} onBack={backToList} onDeleted={backToList} />
+        <MemoEditor key={view.id} memoId={view.id} manager={manager} staffList={staffList} onBack={backToList} onDeleted={backToList} onSent={afterSend} />
       )}
 
       {view.kind === "read" && (
         <div className="pb-16">
-          <button onClick={backToList} className="mb-3 min-h-[44px] px-3 rounded-[12px] text-sm font-medium text-slate-700 bg-white border border-[#E5E7EB] hover:bg-slate-50">← All memos</button>
-          {reading ? <MemoView memo={reading} sections={sectionsByMemo[reading.id] || []} />
-            : sent ? <p className="text-sm text-slate-500">That memo wasn&apos;t found.</p>
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+            <button onClick={backToList} className="min-h-[44px] px-3 rounded-[12px] text-sm font-medium text-slate-700 bg-white border border-[#E5E7EB] hover:bg-slate-50">← All memos</button>
+            {reading && (
+              <div className="flex flex-wrap items-start gap-2">
+                {manager && (reading.imported || onlyToSender(reading)) && (
+                  <button onClick={() => (reading.imported ? deleteImported(reading) : deleteOwnTest(reading))} disabled={busy}
+                    className="min-h-[44px] px-4 rounded-[12px] text-sm font-medium text-red-600 bg-white border border-red-200 hover:bg-red-50 disabled:opacity-40">
+                    {busy ? "Deleting…" : "Delete"}
+                  </button>
+                )}
+                <PdfButton memo={reading} pin={reading.imported ? null : manager?.pin || null} />
+              </div>
+            )}
+          </div>
+          {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+          {reading && manager && seenBy?.[reading.id] && <SeenByPanel list={seenBy[reading.id]} />}
+          {reading ? (
+            <>
+              <MemoView memo={reading} sections={sectionsByMemo[reading.id] || []}
+                policies={(sent?.policies || []).filter((p) => p.memo_id === reading.id)}
+                dates={(sent?.dates || []).filter((d) => d.memo_id === reading.id)}
+                updates={(sent?.updates || []).filter((u) => u.memo_id === reading.id)} />
+              {/* Imported memos are history from email — no replies (managers can still add an update) */}
+              <UnderMemo memo={reading} manager={manager} staffList={staffList}
+                onUpdates={(list) => setUpdatesFor(reading.id, list)} onRepliesChanged={() => loadReplyInfo()} />
+            </>
+          ) : sent ? <p className="text-sm text-slate-500">That memo wasn&apos;t found.</p>
             : <p className="text-sm text-slate-400">Loading…</p>}
         </div>
       )}
@@ -196,6 +289,16 @@ export default function StaffMemos({ openMemoId, onCloseMemo }) {
                           <span className="font-semibold text-slate-800">{m.title}</span>
                           <span className="text-xs text-slate-500">{fmtMemoDate(m.sent_at)}</span>
                         </div>
+                        {m.imported && <p className="text-xs text-slate-500 mt-0.5">📧 Imported from email{m.import_kind ? ` · ${m.import_kind}` : ""}</p>}
+                        {!m.imported && m.send_to && m.send_to !== "all" && (
+                          <p className="text-xs font-medium text-slate-600 mt-0.5">
+                            🔒 Only for {m.send_to === "roles" ? (m.send_to_roles || []).join(", ") : `${seenBy?.[m.id]?.length || "chosen"} ${seenBy?.[m.id]?.length === 1 ? "person" : "people"}`} — not shown to staff here
+                          </p>
+                        )}
+                        {manager && !m.imported && seenBy?.[m.id] && <p className="text-xs font-medium text-[#78350F] mt-0.5">👁 {seenCount(seenBy[m.id])}</p>}
+                        {manager && replyInfo?.[m.id]?.unread > 0 && (
+                          <p className="text-xs font-semibold text-red-600 mt-0.5">💬 {replyInfo[m.id].unread} new {replyInfo[m.id].unread === 1 ? "reply" : "replies"}</p>
+                        )}
                         {snip && <p className="text-sm text-slate-500 mt-1">{snip}</p>}
                         {(m.topics || []).length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2">

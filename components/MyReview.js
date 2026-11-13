@@ -69,14 +69,28 @@ export function MyReviewSection({ data, onChanged, focus }) {
     <div ref={ref} className="bg-white rounded-2xl shadow-sm border p-5 scroll-mt-20">
       <div className="text-base font-semibold text-gray-800">My performance review</div>
       {data.mode === "prep"
-        ? <PrepForm key={data.review.id} review={data.review} onChanged={onChanged} />
+        ? <PrepForm key={data.review.id} review={data.review} onChanged={onChanged}
+            send={(answers) => call("/api/reviews/save-prep", { id: data.review.id, answers })}
+            reload={fetchMyReview} />
         : <CommentForm key={data.review.id} review={data.review} onChanged={onChanged} />}
     </div>
   );
 }
 
-function PrepForm({ review, onChanged }) {
-  const [answers, setAnswers] = useState(() => Object.fromEntries(PREP_QUESTIONS.map((q) => [q.key, review.staff_prep?.[q.key] || ""])));
+// The answers the form starts from: their unsent draft (saved when the kiosk page closed) if there is one,
+// otherwise what they last sent.
+export const startingAnswers = (review) => {
+  const from = review.staff_prep_draft || review.staff_prep || {};
+  return Object.fromEntries(PREP_QUESTIONS.map((q) => [q.key, from[q.key] || ""]));
+};
+
+// Section 2 form — the same component on /me → To do and on the shop computer (components/KioskReview.js), so the
+// questions, wording and Send behaviour can't drift apart.
+//   send(answers)   -> the updated { review, ... } (or null when not logged in); throws on error
+//   reload()        -> fresh data after "no longer be changed"
+//   onAnswers(a)    -> optional: every change (the kiosk uses it to keep unsent answers)
+export function PrepForm({ review, onChanged, send, reload, onAnswers }) {
+  const [answers, setAnswers] = useState(() => startingAnswers(review));
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -85,17 +99,23 @@ function PrepForm({ review, onChanged }) {
   const handleSubmit = async () => {
     setSaving(true); setErr(""); setMsg("");
     try {
-      const out = await call("/api/reviews/save-prep", { id: review.id, answers });
+      const out = await send(answers);
       if (!out) throw new Error("Please log in with your email to fill in your review.");
       setMsg("✓ Thanks — your answers have been sent to your reviewer.");
       onChanged(out);
     } catch (e) {
       setErr(e?.message || String(e));
-      if (/no longer be changed/i.test(e?.message || "")) onChanged(await fetchMyReview());
+      if (reload && /no longer be changed/i.test(e?.message || "")) onChanged(await reload());
     } finally {
       setSaving(false);
     }
   };
+
+  const change = (key, value) => setAnswers((a) => {
+    const next = { ...a, [key]: value };
+    if (onAnswers) onAnswers(next);
+    return next;
+  });
 
   return (
     <div className="mt-1 space-y-4">
@@ -106,12 +126,17 @@ function PrepForm({ review, onChanged }) {
       <p className="text-sm text-gray-600">
         Please answer these before your meeting. You can come back and change your answers any time until the review is finished.
       </p>
+      {review.staff_prep_draft && !msg && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+          These include unsent answers from {fmtDateShort(perthDateOf(review.staff_prep_draft_at))}. Your reviewer can't see them until you press {submitted ? "Update my answers" : "Submit"}.
+        </div>
+      )}
       {PREP_QUESTIONS.map((q, i) => (
         <div key={q.key}>
           <label className="block text-sm font-medium text-gray-700 mb-1">{i + 1}. {q.label}</label>
           <textarea
             value={answers[q.key]}
-            onChange={(e) => setAnswers((a) => ({ ...a, [q.key]: e.target.value }))}
+            onChange={(e) => change(q.key, e.target.value)}
             rows={3}
             maxLength={4000}
             className="w-full border rounded-lg px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-blue-400"

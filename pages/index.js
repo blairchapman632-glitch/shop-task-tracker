@@ -20,7 +20,7 @@ import { missedCounts } from "../lib/bankingData";
 import { syncInductionAuto } from "../lib/inductionAuto";
 import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
 import { adminFetch } from "../lib/adminFetch";
-import { contributeCall } from "../lib/memosClient";
+import { contributeCall, readCall } from "../lib/memosClient";
 import { ensureSectionYear, perthYear, perthMonthStart } from "../lib/sectionCleans";
 import { hasShowFrom, showFromDate, prevMonthOf, monthShort, periodMonthOfCompletion } from "../lib/taskPeriods";
 import { buildKioskJobs, isMine, jobsFor, waitingCount, anyoneJobs, everyoneGroups, comingUpFor, dayMonth, TAG_STYLE } from "../lib/kioskJobs";
@@ -32,6 +32,12 @@ const KioskContributorSection = dynamic(() => import("../components/memos/Contri
   ssr: false,
   loading: () => <p className="text-sm text-slate-400">Loading…</p>,
 });
+
+// Staff memo full screen (job card / pinned Wall memo) — loaded only when opened
+const KioskMemoReader = dynamic(() => import("../components/memos/KioskMemoReader"), { ssr: false });
+
+// Performance review "Answer here" (PIN box + full-page form) — loaded only when opened
+const KioskReview = dynamic(() => import("../components/KioskReview"), { ssr: false });
 
 // Staff memo job: the person's own PIN before their section opens (PIN box styled like Messages → Chats).
 // The server checks it (/api/memos/contribute "get"); a wrong PIN keeps the section closed.
@@ -693,8 +699,12 @@ export default function HomePage() {
   const [qsppJobs, setQsppJobs] = useState([]);              // QSPP incident / feedback jobs (lib/qspp.js qsppKioskJobs)
   const [reviewWaitingIds, setReviewWaitingIds] = useState([]); // staff with review answers waiting (ids only — /api/kiosk/reviews-waiting)
   const [reviewPanel, setReviewPanel] = useState(null);        // staff id whose review job was tapped
+  const [reviewKiosk, setReviewKiosk] = useState(null);        // staff id answering their review here ("Answer here")
   const [memoAskJobs, setMemoAskJobs] = useState([]);           // staff memo sections asked of staff ({ section_id, staff_id, memo_title } — /api/memos/contribute)
   const [memoPanel, setMemoPanel] = useState(null);             // { sectionId, staffId } — "Add your section to the …" tapped
+  const [memoReadJobs, setMemoReadJobs] = useState([]);         // sent memos not opened yet ({ memo_id, staff_id, memo_title } — /api/memos/read)
+  const [memoReading, setMemoReading] = useState(null);         // { memoId, staffId|null } — memo open full screen (job card / What's on)
+  const [memoReadOther, setMemoReadOther] = useState(null);     // staff id — someone else tapped their "Read the …" card
   const [openPolicyJob, setOpenPolicyJob] = useState(null);  // policy card tapped (shows the "I have read and understood" panel)
   const [policyAckBusy, setPolicyAckBusy] = useState(false);
   // Monthly On the List tasks with a show-from day: taskId -> open months [{ ym, start: "YYYY-MM-01", overdue, carry }]
@@ -1327,6 +1337,32 @@ export default function HomePage() {
       .catch(() => { if (!cancelled) setMemoAskJobs([]); });
     return () => { cancelled = true; };
   }, [currentPharmacyId, todayRosteredIds, staff, policyTick, memoTick]);
+
+  // Sent staff memos not opened yet, for staff rostered on today: memo id + staff id + title only (/api/memos/read).
+  // Re-checked every minute with the policy jobs and after a memo is closed here.
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    const activeIds = new Set(staff.map((st) => Number(st.id)));
+    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    if (!ids.length) { setMemoReadJobs([]); return; }
+    let cancelled = false;
+    readCall({ action: "kiosk-jobs", staff_ids: ids }, true)
+      .then((out) => { if (!cancelled) setMemoReadJobs(out.jobs || []); })
+      .catch(() => { if (!cancelled) setMemoReadJobs([]); });
+    return () => { cancelled = true; };
+  }, [currentPharmacyId, todayRosteredIds, staff, policyTick, memoTick]);
+
+  // Close the memo: opened = seen, for that person only (the job's person, or whoever is selected when opened from
+  // What's on). The server ignores anyone who isn't a recipient.
+  const closeMemoReader = () => {
+    const r = memoReading;
+    setMemoReading(null);
+    if (!r?.staffId) return;
+    setMemoReadJobs((jobs) => jobs.filter((j) => !(String(j.memo_id) === String(r.memoId) && Number(j.staff_id) === Number(r.staffId))));
+    readCall({ action: "seen", memo_id: r.memoId, staff_id: Number(r.staffId) }, true)
+      .catch(() => {})
+      .finally(() => setMemoTick((n) => n + 1));
+  };
 
   // Induction card: one per rostered-on staff member with an in-progress induction and at least one policy still to read.
   // Same rules as policy cards (no task rows, not in the progress count, no leaderboard).
@@ -2079,7 +2115,7 @@ const handleDeliveryTap = async (d) => {
             const jobs = loading ? [] : buildKioskJobs({
               tasks, offRosterTasks, monthCards, completedTaskIds, monthlyCompletions, staffById,
               rosteredIds: new Set([...todayRosteredIds].map(Number)), sectionCleans, policyJobs, inductionCards,
-              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart, qsppJobs, reviewWaitingIds, memoAskJobs,
+              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart, qsppJobs, reviewWaitingIds, memoAskJobs, memoReadJobs,
             });
             const roleOf = (id) => staffById[id]?.role || null;
             const listFor = (id) => jobsFor(jobs, id, roleOf(id));
@@ -2159,9 +2195,9 @@ const handleDeliveryTap = async (d) => {
               else if (a.type === "induction") setOpenInductionId(a.id);
               else if (a.type === "followUp") setFollowUpOpen(a.which);
               else if (a.type === "qspp") router.push(a.url); // /qspp asks for the PIN where it's manager-only
-              else if (a.type === "review") setReviewPanel(a.staffId); // instructions only — answered on their phone
+              else if (a.type === "review") setReviewPanel(a.staffId); // "Answer here" (own PIN) or on their phone
               else if (a.type === "memoSection") setMemoPanel({ sectionId: a.sectionId, staffId: a.staffId });
-              else if (a.type === "memoSection") setMemoPanel({ sectionId: a.sectionId, staffId: a.staffId });
+              else if (a.type === "memoRead") { if (isSelf(a.staffId)) setMemoReading({ memoId: a.memoId, staffId: a.staffId }); else setMemoReadOther(a.staffId); }
             };
             const renderJob = (j) => (
               <button
@@ -2564,6 +2600,7 @@ const handleDeliveryTap = async (d) => {
             staffById={staffById}
             selectedStaffId={selectedStaffId}
             onJobsChanged={() => setTasksReloadKey((k) => k + 1)}
+            onOpenMemo={(memoId) => setMemoReading({ memoId, staffId: selectedStaffId ? Number(selectedStaffId) : null })}
           />
 
           {/* Notes card */}
@@ -3365,7 +3402,48 @@ const handleDeliveryTap = async (d) => {
         document.body
       )}
 
-      {/* Performance review job: instructions only (answers stay on the person's phone — never on the kiosk) */}
+      {/* Staff memo full screen (their own Read the … card, or What's on "From the …"). Closing marks it seen for that person. */}
+      {memoReading && createPortal(
+        <KioskMemoReader memoId={memoReading.memoId} staffId={memoReading.staffId}
+          person={memoReading.staffId ? staffById[memoReading.staffId] : null}
+          forName={memoReading.staffId ? staffById[memoReading.staffId]?.name : null}
+          onClose={closeMemoReader} />,
+        document.body
+      )}
+
+      {/* Someone else's "Read the …" card */}
+      {memoReadOther && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setMemoReadOther(null)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="font-semibold text-gray-800">📰 Read the staff memo</h2>
+                <button onClick={() => setMemoReadOther(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                Only {staffById[memoReadOther]?.name?.split(" ")[0] || "they"} can mark this read — tap their photo.
+              </div>
+              <button onClick={() => setMemoReadOther(null)} className="w-full border border-gray-300 rounded-lg py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50">Close</button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
+      {/* Performance review job: their own PIN, then the full-page form (components/KioskReview.js — the server re-checks
+          the PIN on every save and Send; PIN and answers are dropped when it closes). */}
+      {reviewKiosk && createPortal(
+        <KioskReview staffId={reviewKiosk} person={staffById[reviewKiosk]}
+          onClose={(sent) => {
+            const id = Number(reviewKiosk);
+            setReviewKiosk(null);
+            if (sent) setReviewWaitingIds((ids) => ids.filter((x) => Number(x) !== id));
+          }} />,
+        document.body
+      )}
+
+      {/* Performance review job: answer here (own PIN) or on their phone */}
       {reviewPanel && createPortal(
         <>
           <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setReviewPanel(null)} />
@@ -3376,9 +3454,14 @@ const handleDeliveryTap = async (d) => {
                 <button onClick={() => setReviewPanel(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
               </div>
               {isSelf(reviewPanel) ? (
-                <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5 text-sm text-blue-900">
-                  Open Chalkboard on your phone → <span className="font-semibold">To do</span> → <span className="font-semibold">My performance review</span>.
-                </div>
+                <>
+                  <button onClick={() => { setReviewKiosk(reviewPanel); setReviewPanel(null); }} className="w-full bg-blue-600 text-white rounded-lg py-3 text-sm font-semibold hover:bg-blue-700">
+                    Answer here
+                  </button>
+                  <p className="text-sm text-gray-600 text-center">
+                    Or on your phone: Open Chalkboard → <span className="font-semibold">To do</span> → <span className="font-semibold">My performance review</span>.
+                  </p>
+                </>
               ) : (
                 <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
                   Only {staffById[reviewPanel]?.name?.split(" ")[0] || "they"} can do this — tap their photo.

@@ -1,5 +1,41 @@
 # Session notes
 
+## 2026-11-13 — Staff memos Stages 1–2 (live), till count EFTPOS order
+
+### Done
+- **Staff memos Stages 1–2 built and live** (Stage 3 — Send, push, seen-by, kiosk "Read the memo", Wall pin, PDF — is next).
+  - **Where:** Messages → "💬 Chats | 📰 Staff memos" (`/messages?tab=memos`, `&memo=<id>`). `/memos` redirects there; no sidebar item. Stage 3 plan for /me: the Messages tab gets "Chats | Memos" sub-tabs (no separate News tab).
+  - **Writing (QSPP managers only):** 🔒 Manager / "New staff memo" → own PIN ("QSPP manager" switch), re-checked by `/api/memos` on every save. Drafts: title, topic tags, sections (heading, formatted text, several images, PDF attachments, written by + signature), ▲▼, Remove, Preview (same display staff will see), Delete draft. Saves as you type. Archive of sent memos with search + topic filter (empty until Stage 3 / Stage 5 import).
+  - **Editor:** TipTap (what you see is what you get — bold, headings, bullets, numbered, links, emoji). Saved as Markdown; the display (and the Stage 3 PDF) read it with `lib/memos.js` `parseMemoText` — never shown as raw HTML.
+  - **Asking for a section:** "Ask for a section from…" → tick staff (this memo only), optional note per person ("Same note for everyone" fills all). Each gets a slot with their last heading (else "Message from [first name]") and their signature. Draft shows Waiting / Written / Nothing this month, note + "asked by", Remove the ask, Ask again.
+  - **The asked person:** kiosk Memo card "Add your section to the [title]" (rostered on, built like policy cards; **their own PIN** before it opens — checked on the server on every save) and /me → To do (badge; note's first line shown). They see only their own section: "[Manager] asked: …" box, heading, text, images, Save, "Nothing this month". Job clears once something's written; they can still edit from /me until sent.
+  - **No overwriting:** section saves are version-checked — if the other side saved first, nothing is written and they get "Load their version / Keep mine". The manager's draft re-checks every 20 s.
+  - **Manager mode locks** with 🔒 Lock, after 10 min idle, and on leaving the tab/page (like /qspp); unsaved text is saved first (keepalive on page close).
+  - Notes to the asked person are never part of the memo (not in Preview, stripped from sent memos by the server).
+- **Till count EFTPOS:** order is now Left till, Right till, "Previous settlement report — Right till" (no help line; printed during the count; same report − previous right till = Closing EFTPOS working line). Banking → Month label renamed to match. Arthur's export unchanged (fixed by key).
+- **Messages → Chats PIN box** now `type="text"` shown as dots (CLAUDE.md rule).
+- **CLAUDE.md:** Claude now always shows database-changing SQL and waits for OK before running it (even in an APPROVED PLAN, even additive).
+- New packages: `@tiptap/react`, `@tiptap/pm`, `@tiptap/core`, `@tiptap/starter-kit`, `@tiptap/markdown` (3.33.1), `marked` (17.0.6). The editor only loads when a memo section is opened.
+
+### Schema changes
+- 5 staff memo tables, `kiosk_notes.memo_id`, `calendar_events.memo_id`, `staff-memos` storage bucket (public) — run by Blair; copy in `docs/sql/staff_memos_2026-11-13.sql`.
+- `staff_memo_sections.declined_at` (timestamptz) — "Nothing this month". `docs/sql/staff_memos_stage2_2026-11-13.sql`
+- `staff_memo_sections.request_note` (text) and `staff_memo_sections.requested_by_staff_id` (bigint → staff, on delete set null) — the note to the asked person and who asked. `docs/sql/staff_memos_ask_note_2026-11-13.sql`
+- Data: `banking_payment_types.sort_order` eftpos_t2 = 1, eftpos_t1 = 2, eftpos_t3 = 3 (was 3/2/1); Closing EFTPOS `help_text` cleared. Backup table `banking_payment_types_backup_20261113`. `docs/sql/banking_eftpos_order_2026-11-13.sql`
+
+### New tables (add to RLS pass)
+- `staff_memos`, `staff_memo_sections`, `staff_memo_recipients`, `staff_memo_seen`, `staff_memo_policies`. All saves go through `/api/memos` (manager PIN) and `/api/memos/contribute` (staff login / kiosk + own PIN), but while RLS is off drafts, sections and notes can still be read/written directly with the public key — RLS must close that (drafts and `request_note` readable only through the routes).
+- `staff-memos` storage bucket is **public** for now (uploads only via one-time tokens from the routes) — revisit in the RLS pass (draft images are reachable by URL).
+- New columns on existing tables: `kiosk_notes.memo_id`, `calendar_events.memo_id`.
+
+### Follow-ups / parked
+- Staff memos Stage 3 (Send to all / roles, push, /me Chats | Memos sub-tabs with unread, kiosk "Read the [title]" card, Wall pin 14 days, Seen by X of Y, replies via `kiosk_notes.memo_id`, Download PDF), then Stage 4 (policies to read, calendar dates), Stage 5 (import 14 past email memos — SQL to Blair first).
+- Kiosk memo PIN has no attempt limit (same as other kiosk PIN screens).
+- `banking_payment_types_backup_20261113` can be dropped once the new order is confirmed.
+
+### Not committed
+- Nothing (committed and pushed: `212621a`, `c09bf89`). This notes update itself isn't committed.
+
 ## 2026-11-12 (2) — QSPP: kiosk jobs instead of push, Follow-up done, feedback to staff "Given by"
 
 ### Done

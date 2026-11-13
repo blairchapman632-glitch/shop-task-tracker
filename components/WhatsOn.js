@@ -21,6 +21,7 @@ import {
   loadEvents, loadEventJobs, ensureYearlyJobs, dayMarks, onNowItems,
 } from "../lib/calendar";
 import { CARD, CARD_HEAD, CARD_TITLE } from "../lib/kioskStyle";
+import { memoCall } from "../lib/memosClient";
 
 const WK = ["M", "T", "W", "T", "F", "S", "S"];
 const GREY = "#94a3b8";
@@ -28,7 +29,9 @@ const colourOf = (item) => item.category?.colour || GREY;
 // Range shading: a very pale tint (~6%) of the event's legend colour (Promotion = pale orange, like its dot)
 const tintOf = (item) => `${colourOf(item)}0F`;
 
-export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId, onJobsChanged }) {
+// Events added by a sent staff memo (calendar_events.memo_id) show "From the [memo title]" — tapping opens the memo
+// (onOpenMemo, the kiosk's full-screen reader).
+export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId, onJobsChanged, onOpenMemo }) {
   const today = todayPerth();
   const [ym, setYm] = useState(today.slice(0, 7));
   const [selDay, setSelDay] = useState(null);     // the tapped day (closed on load)
@@ -45,6 +48,14 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
   const [sheet, setSheet] = useState(null);       // { event, date } — the Add / edit sheet open
   const [manager, setManager] = useState(null);   // admin PIN unlocked for this sheet { id, name }
   const [pinFor, setPinFor] = useState(null);     // event waiting for the manager PIN before editing
+
+  // Titles of the memos the shown events came from (sent memos only)
+  const [memoTitles, setMemoTitles] = useState({});
+  useEffect(() => {
+    const ids = [...new Set(events.map((e) => e.memo_id).filter(Boolean))].filter((id) => !(id in memoTitles));
+    if (!ids.length) return;
+    memoCall({ action: "titles", ids }).then((r) => setMemoTitles((t) => ({ ...t, ...(r.titles || {}) }))).catch(() => {});
+  }, [events]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const grid = useMemo(() => monthGrid(ym), [ym]);
   const from = grid[0];
@@ -261,6 +272,11 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
                       <div className="text-[13px] font-semibold text-gray-800 truncate">{i.title}</div>
                       {line && <div className="text-[11px] text-gray-500 truncate">{line}</div>}
                       {i.note && <div className="text-[11px] text-gray-600 truncate">{i.note}</div>}
+                      {ev?.memo_id && memoTitles[ev.memo_id] && (
+                        <button onClick={() => onOpenMemo?.(ev.memo_id)} className="block text-left text-[11px] text-sky-700 hover:underline truncate max-w-full">
+                          📰 From the {memoTitles[ev.memo_id]}
+                        </button>
+                      )}
                     </div>
                     {/* Own events: Edit. Anyone else's (or a manager-only category): manager PIN first */}
                     {ev && (
