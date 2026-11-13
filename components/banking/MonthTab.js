@@ -106,7 +106,7 @@ export default function MonthTab({ pharmacyId, manager, limit }) {
   // "Balanced" cell: green tick / what's out in red / amber Not confirmed / grey dash (lib/banking.js dayBalance)
   const balanceCell = (b) => {
     if (b.state === "balanced") return <span className="text-green-600 font-bold" title="Balanced — cash, EFTPOS and total all within the limit">✓</span>;
-    if (b.state === "unconfirmed") return <span className="text-amber-600 font-semibold">Not conf.</span>;
+    if (b.state === "unconfirmed") return <span className="text-amber-600 font-semibold"><span className="block">Not</span><span className="block">confirmed</span></span>;
     if (b.state === "nocheck") return <span className="text-gray-300" title="No Z report figures to check">—</span>;
     if (b.state !== "out") return null;
     const lines = [!b.cash.ok && `Cash ${fmtDiffShort(b.cash.diff)}`, !b.eftpos.ok && `EFTPOS ${fmtDiffShort(b.eftpos.diff)}`].filter(Boolean);
