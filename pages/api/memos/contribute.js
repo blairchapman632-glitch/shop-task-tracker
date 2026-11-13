@@ -9,17 +9,19 @@
 //     mine        { }                                -> { asks: [{ section_id, memo_title, heading, written, note }] } (draft memos,
 //                                                       not "Nothing this month")
 //     get         { section_id }                     -> { section, memo_title, note, asked_by } (the manager's note + their first name)
-//     save        { section_id, base, patch }        heading / text / images. Version-checked like the manager's saves:
+//     save        { section_id, base, patch }        heading / text / images / PDF attachments. Version-checked like the manager's saves:
 //                                                     409 + { conflict, section } if someone saved since `base`
 //     nothing     { section_id }                     "Nothing this month": clears their text / images, marks the slot
 //                                                     declined (the manager sees it; the job clears)
-//     upload-url  { section_id, ext }                -> { path, token, url } (images only)
+//     upload-url  { section_id, kind: "image" | "pdf", ext } -> { path, token, url } — a file for THEIR section only
+//                                                     (named <memoId>/s-<sectionId>-…; a save only accepts new files
+//                                                     with that name, so nobody can attach another section's files)
 import { staffFromRequest } from "../../../lib/reviewServer";
 import { requireDashboard, assertSamePharmacy } from "../../../lib/adminAuth";
 import { CONTRIBUTOR_FIELDS, sectionHasContent } from "../../../lib/memos";
 import {
   supabaseAdmin, PHARMACY_ID, httpError, pick, now, sendError, loadDraft, loadSection,
-  removeFiles, filePaths, uploadTicket, cleanSectionPatch, saveSectionChecked, touchMemo, openAsks,
+  removeFiles, filePaths, uploadTicket, cleanSectionPatch, saveSectionChecked, touchMemo, openAsks, contributorFileTag,
 } from "../../../lib/memosServer";
 
 async function whoIs(req, db, b) {
@@ -50,7 +52,7 @@ async function ownSlot(db, staff, sectionId) {
 }
 
 // Only what the asked person needs to see of their slot
-const ownView = (s) => pick(s, ["id", "memo_id", "heading", "body", "images", "signature_name", "signature_role", "updated_at", "submitted_at"]);
+const ownView = (s) => pick(s, ["id", "memo_id", "heading", "body", "images", "attachments", "signature_name", "signature_role", "updated_at", "submitted_at"]);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -93,10 +95,18 @@ export default async function handler(req, res) {
       return res.status(200).json({ section: ownView(section), memo_title: memo.title, note: section.request_note || null, asked_by: askedBy });
     }
 
-    if (b.action === "upload-url") return res.status(200).json(await uploadTicket(db, memo.id, "image", b.ext));
+    if (b.action === "upload-url") {
+      return res.status(200).json(await uploadTicket(db, memo.id, b.kind === "pdf" ? "pdf" : "image", b.ext, contributorFileTag(section.id)));
+    }
 
     if (b.action === "save") {
       const patch = cleanSectionPatch(db, section, pick(b.patch || {}, CONTRIBUTOR_FIELDS));
+      // Files already in the section may stay / go; any NEW file must be one this person uploaded for this section
+      const had = new Set(filePaths(section));
+      const own = `${memo.id}/${contributorFileTag(section.id)}`;
+      for (const f of [...(patch.images || []), ...(patch.attachments || [])]) {
+        if (!had.has(f.path) && !f.path.startsWith(own)) throw httpError(403, "That file isn't from your section.");
+      }
       const next = { ...section, ...patch };
       const extra = { author_staff_id: Number(staff.id), submitted_at: sectionHasContent(next) ? now() : null };
       try {
