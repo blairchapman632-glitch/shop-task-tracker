@@ -2014,7 +2014,7 @@ const handleDeliveryTap = async (d) => {
                 >
                   <div className="flex items-start justify-between gap-2">
                     {/* <wbr> after "/" lets "Sweep/Vacuum" wrap there instead of running into the tick */}
-                    <div className={`text-[15px] leading-tight break-normal flex-1 min-w-0 ${isDone ? "text-[#5E7366] font-normal" : "text-gray-900 font-bold"}`}>
+                    <div className={`text-[15px] leading-tight break-normal flex-1 min-w-0 ${isDone ? "text-[#5E7366] font-normal" : "text-gray-900 font-semibold"}`}>
                       {String(task.title || "").split("/").map((part, i, arr) => <React.Fragment key={i}>{part}{i < arr.length - 1 && <>/<wbr /></>}</React.Fragment>)}
                     </div>
                     {isDone
