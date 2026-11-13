@@ -1,5 +1,5 @@
 // Admin → Settings → Calendar categories (kiosk "What's on"): name, colour, manager-only, order, active, and
-// "Shade the days of a date range" (calendar_categories.shade_ranges — off for things that run all the time).
+// "Shade the day" (calendar_categories.shade_ranges — tint vs dot for every item in the category; lib/calendar.js dayMarks).
 // Categories are switched off (Active), never deleted, so events always keep theirs. The built-in ones keep their
 // key: 'closure' (public holidays show under it) and 'staff' (birthdays / anniversaries).
 import { useEffect, useState } from "react";
@@ -68,11 +68,11 @@ export default function CalendarCategoriesAdmin({ pharmacyId }) {
                   className="w-full border rounded px-2 py-1 text-sm"
                 />
                 {BUILT_IN[c.key] && <div className="text-[10px] text-gray-400 mt-0.5">{BUILT_IN[c.key]}</div>}
-                <label className="mt-1 flex items-start gap-1.5 text-xs text-gray-600" title="Turn off for things that run all the time, like promotions. The calendar then shows a dot on the start day and an 'on now' line instead.">
+                <label className="mt-1 flex items-start gap-1.5 text-xs text-gray-600">
                   <input type="checkbox" className="mt-0.5" checked={c.shade_ranges !== false} onChange={(e) => save(c, { shade_ranges: e.target.checked })} />
                   <span>
-                    Shade the days of a date range
-                    <span className="block text-[10px] text-gray-400">Turn off for things that run all the time, like promotions. The calendar then shows a dot on the start day and an &lsquo;on now&rsquo; line instead.</span>
+                    Shade the day
+                    <span className="block text-[10px] text-gray-400">On: days with this category are shaded on the calendar. Off: they show as a dot. If two shaded categories fall on the same day, the one higher in this list is shaded and the other shows as a dot.</span>
                   </span>
                 </label>
               </div>

@@ -1,9 +1,11 @@
 // Kiosk "What's on" — the pharmacy calendar (above the Wall). Things that happen, not things to do: no completion.
-// Month grid (Monday first, ‹ ›, today = solid blue circle): a dot per category on days with one-day items, very pale
-// shading behind every day of a date range (rounded at its start / end and at week edges) — unless its category has
-// "Shade the days of a date range" off (e.g. back-to-back promotions): then a dot on the start day only, and an
-// "[Category] now: [title] · ends [date]" line under the legend while it runs (always today). Legend, "Next up" (next 2),
-// tap a day to expand its items inline (tap again to close).
+// Month grid (Monday first, ‹ ›, today = solid blue circle). Each category's "Shade the day" switch (Admin):
+//   on  — every day of its items is tinted very pale in the category colour (one-day items rounded both sides; ranges
+//         rounded at their start / end and at week edges);
+//   off — a dot on the day, or on a range's first day only, plus an "[Category] now: [title] · ends [date]" line under
+//         the legend while a range runs (always today).
+// One tint per day (the category highest in Admin order); other categories on that day show as dots. Rules in
+// lib/calendar.js dayMarks. Legend, "Next up" (next 2), tap a day to expand its items inline (tap again to close).
 // Events: any staff member adds (their photo selected), edits / deletes their own; a manager (admin PIN) edits any,
 // uses manager-only categories (Closure) and attaches jobs. Public holidays, birthdays and anniversaries are read
 // live and are read-only. The tapped day is a compact list (3 rows, "+N more") that closes itself after 30 seconds
