@@ -2,7 +2,9 @@
 //   Anyone: the archive of sent memos, newest first — search title / text, filter by topic, open one to read.
 //   "🔒 Manager" / "New staff memo" → the person's own PIN, if they're ticked "QSPP manager" in Admin
 //   (lib/adminPin checkQsppManagerPin, re-checked by /api/memos on every save) → Drafts: start, edit, preview, delete.
-//   Manager mode lives in memory only: auto-locks after 10 minutes with no activity, and on leaving / reloading.
+//   Manager mode lives in memory only (same as /qspp): it locks with 🔒 Lock, after 10 minutes with no taps / typing /
+//   scrolling, and when leaving the Staff memos tab or the Messages page (or reloading) — this component unmounts and the
+//   PIN is gone. Text typed but not yet saved is saved first (MemoEditor: on unmount, and on pagehide with keepalive).
 // openMemoId (from /messages?tab=memos&memo=<id>) opens that sent memo; onCloseMemo clears it from the address.
 import { useEffect, useMemo, useRef, useState } from "react";
 import ManagerPinModal from "../qspp/ManagerPinModal";

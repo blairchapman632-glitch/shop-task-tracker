@@ -37,6 +37,17 @@ function useSaveQueue(onStatus) {
   return run;
 }
 
+// Runs fn when the page is being closed or left (pagehide — React doesn't unmount then)
+function useOnPageHide(fn) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    const h = () => ref.current();
+    window.addEventListener("pagehide", h);
+    return () => window.removeEventListener("pagehide", h);
+  }, []);
+}
+
 function SaveBadge({ status }) {
   if (!status) return null;
   if (status === "saving") return <span className="text-xs text-slate-400">Saving…</span>;
@@ -64,6 +75,7 @@ export default function MemoEditor({ memoId, manager, staffList, onBack, onDelet
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const titleTimer = useRef(null);
+  const titlePending = useRef(null); // a title typed but not saved yet
   const queue = useSaveQueue(setStatus);
 
   useEffect(() => {
@@ -90,17 +102,28 @@ export default function MemoEditor({ memoId, manager, staffList, onBack, onDelet
   }, [memo, memoId, manager.pin]);
 
   const saveMemo = (patch) => queue(async () => {
-    const { memo: m } = await memoCall({ action: "update-memo", pin: manager.pin, id: memoId, patch });
+    if ("title" in patch) titlePending.current = null;
+    const { memo: m } = await memoCall({ action: "update-memo", pin: manager.pin, id: memoId, patch }, { keepalive: true });
     setMemo((prev) => ({ ...prev, ...m }));
   });
 
   const onTitle = (v) => {
     setTitle(v);
     clearTimeout(titleTimer.current);
+    titlePending.current = v.trim() ? v : null;
     if (!v.trim()) { setStatus("The title can't be empty"); return; }
     titleTimer.current = setTimeout(() => saveMemo({ title: v }), TEXT_SAVE_MS);
   };
-  useEffect(() => () => clearTimeout(titleTimer.current), []);
+  // Locking / leaving the tab or page: save a title typed in the last second (keepalive, so it survives the page going)
+  const saveTitleNow = () => {
+    clearTimeout(titleTimer.current);
+    const v = titlePending.current;
+    if (v === null) return;
+    titlePending.current = null;
+    memoCall({ action: "update-memo", pin: manager.pin, id: memoId, patch: { title: v } }, { keepalive: true }).catch(() => {});
+  };
+  useEffect(() => () => saveTitleNow(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useOnPageHide(saveTitleNow);
 
   const toggleTopic = (t) => {
     const next = (memo.topics || []).includes(t) ? memo.topics.filter((x) => x !== t) : [...(memo.topics || []), t];
@@ -350,7 +373,7 @@ function AskNote({ section, manager, askedName, askedByName, onSaved }) {
     pending.current = null;
     setStatus("saving");
     try {
-      const { section: s } = await memoCall({ action: "update-note", pin: manager.pin, id: section.id, note: v });
+      const { section: s } = await memoCall({ action: "update-note", pin: manager.pin, id: section.id, note: v }, { keepalive: true });
       onSaved(s);
       setStatus("saved");
     } catch (err) {
@@ -358,6 +381,7 @@ function AskNote({ section, manager, askedName, askedByName, onSaved }) {
     }
   };
   useEffect(() => () => { saveNow(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useOnPageHide(saveNow);
   const first = String(askedName || "").split(" ")[0];
   return (
     <div className="mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
@@ -397,7 +421,7 @@ function SectionEditor({ section, index, count, memoId, manager, staffList, aske
 
   const save = (patch) => queue(async () => {
     try {
-      const { section: s } = await memoCall({ action: "update-section", pin: manager.pin, id: section.id, base: base.current, patch });
+      const { section: s } = await memoCall({ action: "update-section", pin: manager.pin, id: section.id, base: base.current, patch }, { keepalive: true });
       base.current = s.updated_at;
       onSaved(s);
     } catch (err) {
@@ -424,8 +448,18 @@ function SectionEditor({ section, index, count, memoId, manager, staffList, aske
     clearTimeout(timer.current);
     timer.current = setTimeout(flush, TEXT_SAVE_MS);
   };
-  // Leaving the page / section: save what's typed
+  // Locking (Lock button, 10 minutes idle, leaving the Staff memos tab) unmounts this: save what's typed
   useEffect(() => () => flush(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Closing / leaving the page doesn't unmount — send what's typed straight away (keepalive), not behind other saves.
+  // Still version-checked, so it can never overwrite someone else's newer text.
+  useOnPageHide(() => {
+    clearTimeout(timer.current);
+    if (conflictRef.current) return;
+    const patch = pendingText.current;
+    if (!Object.keys(patch).length) return;
+    pendingText.current = {};
+    memoCall({ action: "update-section", pin: manager.pin, id: section.id, base: base.current, patch }, { keepalive: true }).catch(() => {});
+  });
 
   // Show someone else's version (theirs replaces what's on screen)
   const adopt = (s) => {
