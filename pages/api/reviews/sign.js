@@ -1,11 +1,13 @@
 // POST { id, signed_name } -> signs an in-progress review: generates + stores the PDF, then sets status 'signed',
 // signed_at, signed_by_staff_id (the reviewer), comment_window_ends (signed date + pharmacy setting) and pdf_path.
-// The client saves the manager fields first; this route signs whatever is saved.
+// The client saves the manager fields first; this route signs whatever is saved. Then a push to the staff member
+// ("signed off — you can add a comment in To do until …"); a failed push never fails the signing.
 // Dashboard login required (lib/adminAuth.js); per-person admin rights are the #11 auth pass.
 import supabaseAdmin from "../../../lib/supabaseAdmin";
 import { loadReview, renderAndStoreReviewPdf, fail } from "../../../lib/reviewServer";
-import { FORM_VERSION, perthDateOf, addDaysStr } from "../../../lib/performanceReview";
+import { FORM_VERSION, perthDateOf, addDaysStr, fmtDateShort } from "../../../lib/performanceReview";
 import { requireDashboard, assertSamePharmacy } from "../../../lib/adminAuth";
+import { sendPushToStaff } from "../../../lib/pushServer";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -46,6 +48,17 @@ export default async function handler(req, res) {
       .select("id");
     if (error) throw error;
     if (!updated?.length) return res.status(409).json({ error: "This review was signed by someone else just now." });
+
+    // Tell the staff member (phone push only — comments are optional). Never fails the signing.
+    try {
+      await sendPushToStaff(db, [review.staff_id], {
+        title: "Your performance review has been signed off",
+        body: `You can add a comment in To do until ${fmtDateShort(signedFields.comment_window_ends)}.`,
+        url: "/me?p=byford&tab=todo",
+      });
+    } catch (e) {
+      console.error("[reviews/sign] push failed", e);
+    }
 
     res.status(200).json({ ok: true, warnings });
   } catch (err) {

@@ -194,6 +194,12 @@ function StartReview({ member, reviews, people, adminUser, onCancel, onStarted }
     }]).select("id").single();
     setSaving(false);
     if (err) { setError("Couldn't start the review: " + err.message); return; }
+    // Tell the staff member (their phone, if they've turned on notifications). Never waits on it or shows an error —
+    // the kiosk "Answer your review questions" job is the backup.
+    fetch("/api/push", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ staff_ids: [member.id], title: "Your performance review has started", body: "Please answer the review questions in To do.", url: "/me?p=byford&tab=todo" }),
+    }).catch(() => {});
     onStarted(data.id);
   };
 

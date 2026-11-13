@@ -3383,6 +3383,13 @@ export default function MePage() {
   const [trainingTarget, setTrainingTarget] = useState(null); // { sub, section, n } — where a nudge opens Training
   const [myInductions, setMyInductions] = useState(null); // To do → Inductions list (signers only; false = hidden), preloaded
 
+  // ?tab=todo (the performance review pushes): open straight on To do, at the review
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("tab") === "todo") { setTab("todo"); setFocusReview(true); }
+    } catch { /* ignore */ }
+  }, []);
+
   // Inductions list: loaded once when /me loads so the To do card is ready (the card refreshes itself when shown)
   useEffect(() => {
     if (!staff?.id) return;

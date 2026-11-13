@@ -633,6 +633,8 @@ export default function HomePage() {
   const [leaveUpdateIds, setLeaveUpdateIds] = useState(new Set()); // staff with unseen leave status changes
   const [policyJobs, setPolicyJobs] = useState([]);          // outstanding policy reads for staff rostered on today
   const [qsppJobs, setQsppJobs] = useState([]);              // QSPP incident / feedback jobs (lib/qspp.js qsppKioskJobs)
+  const [reviewWaitingIds, setReviewWaitingIds] = useState([]); // staff with review answers waiting (ids only — /api/kiosk/reviews-waiting)
+  const [reviewPanel, setReviewPanel] = useState(null);        // staff id whose review job was tapped
   const [openPolicyJob, setOpenPolicyJob] = useState(null);  // policy card tapped (shows the "I have read and understood" panel)
   const [policyAckBusy, setPolicyAckBusy] = useState(false);
   // Monthly On the List tasks with a show-from day: taskId -> open months [{ ym, start: "YYYY-MM-01", overdue, carry }]
@@ -1234,6 +1236,18 @@ export default function HomePage() {
       if (inc.error || fb.error || mg.error) { console.error("[qspp jobs]", inc.error || fb.error || mg.error); setQsppJobs([]); return; }
       setQsppJobs(qsppKioskJobs({ incidents: inc.data || [], feedback: fb.data || [], managerIds: (mg.data || []).map((m) => m.id) }));
     });
+    return () => { cancelled = true; };
+  }, [currentPharmacyId, policyTick]);
+
+  // Performance review answers waiting: staff ids only, from the server (no review content in the kiosk browser).
+  // Re-checked every minute with the policy jobs, so the job goes once they submit Section 2 on their phone.
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    let cancelled = false;
+    adminFetch("/api/kiosk/reviews-waiting")
+      .then((r) => (r.ok ? r.json() : { staffIds: [] }))
+      .then((out) => { if (!cancelled) setReviewWaitingIds(out.staffIds || []); })
+      .catch(() => { if (!cancelled) setReviewWaitingIds([]); });
     return () => { cancelled = true; };
   }, [currentPharmacyId, policyTick]);
 
@@ -1988,7 +2002,7 @@ const handleDeliveryTap = async (d) => {
             const jobs = loading ? [] : buildKioskJobs({
               tasks, offRosterTasks, monthCards, completedTaskIds, monthlyCompletions, staffById,
               rosteredIds: new Set([...todayRosteredIds].map(Number)), sectionCleans, policyJobs, inductionCards,
-              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart, qsppJobs,
+              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart, qsppJobs, reviewWaitingIds,
             });
             const roleOf = (id) => staffById[id]?.role || null;
             const listFor = (id) => jobsFor(jobs, id, roleOf(id));
@@ -2068,6 +2082,7 @@ const handleDeliveryTap = async (d) => {
               else if (a.type === "induction") setOpenInductionId(a.id);
               else if (a.type === "followUp") setFollowUpOpen(a.which);
               else if (a.type === "qspp") router.push(a.url); // /qspp asks for the PIN where it's manager-only
+              else if (a.type === "review") setReviewPanel(a.staffId); // instructions only — answered on their phone
             };
             const renderJob = (j) => (
               <button
@@ -3268,6 +3283,32 @@ const handleDeliveryTap = async (d) => {
             </>
           );
         })(),
+        document.body
+      )}
+
+      {/* Performance review job: instructions only (answers stay on the person's phone — never on the kiosk) */}
+      {reviewPanel && createPortal(
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setReviewPanel(null)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3">
+                <h2 className="font-semibold text-gray-800">📝 Answer your review questions</h2>
+                <button onClick={() => setReviewPanel(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              {isSelf(reviewPanel) ? (
+                <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5 text-sm text-blue-900">
+                  Open Chalkboard on your phone → <span className="font-semibold">To do</span> → <span className="font-semibold">My performance review</span>.
+                </div>
+              ) : (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                  Only {staffById[reviewPanel]?.name?.split(" ")[0] || "they"} can do this — tap their photo.
+                </div>
+              )}
+              <button onClick={() => setReviewPanel(null)} className="w-full border border-gray-300 rounded-lg py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50">Close</button>
+            </div>
+          </div>
+        </>,
         document.body
       )}
 
