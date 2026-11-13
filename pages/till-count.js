@@ -1,10 +1,11 @@
 // Kiosk → Till count (Daily Banking, Stage 2). Two staff count the till together at till close (~30–60 min before the
 // shop closes): the coins in the till, the spare coins from the dispensary bag (each by coin or as one total), the
-// notes, the Z report figures, the EFTPOS printouts (Closing EFTPOS = last night's final printout from the right till,
-// kept in the till; Right till + Left till = tonight's readings), then both confirm with their name + PIN.
-// Names and help under each EFTPOS field come from banking_payment_types (name, help_text — Admin → Settings).
-// From 9 Nov 2026 staff enter the right till's closing RECEIPT total (whole day, required — reprint the last settlement
-// if there's no receipt); Closing EFTPOS = receipt − the previous Right till reading ($0 is valid). With no earlier
+// notes, the Z report figures, the EFTPOS printouts (in order: Left till + Right till = tonight's readings, then the
+// Previous settlement report — Right till, printed during the count), then both confirm with their name + PIN.
+// Names, help and ORDER of the EFTPOS fields come from banking_payment_types (name, help_text, sort_order — Admin →
+// Settings); Enter / Tab follow that order.
+// From 9 Nov 2026 staff enter the Previous settlement report — Right till total (whole day, required; printed during
+// the count); Closing EFTPOS = report total − the previous Right till reading ($0 is valid). With no earlier
 // reading, Closing EFTPOS is entered directly (also required). daily_takings.no_closing_eftpos is no longer used.
 // Soft warnings (never block): Closing EFTPOS over 3× its 60-day average; Left till
 // higher than Right till when Right is usually higher (80%+ of the last 60 counted days).
@@ -67,7 +68,7 @@ export default function TillCountPage() {
   const [confirming, setConfirming] = useState(false);
   const [saveState, setSaveState] = useState(""); // "", "Saving…", "Saved"
   const [hist, setHist] = useState([]);                // last 60 counted days: [{ [payment_type_id]: amount }]
-  const [receipt, setReceipt] = useState("");          // closing receipt total (right till, last night) — from 9 Nov 2026
+  const [receipt, setReceipt] = useState("");          // Previous settlement report — Right till total (stored as daily_takings.closing_receipt_total) — from 9 Nov 2026
   const [prevRight, setPrevRight] = useState(undefined); // previous Right till reading { date, amount } | null (undefined = looking)
   const dayRef = useRef(null);
   const creating = useRef(null);
@@ -189,12 +190,12 @@ export default function TillCountPage() {
   const eftVar = hasZEftpos ? eftposVariance(tenderList, types, Number(z.z_eftpos)) : null;
   const reasonNeeded = needsReason(cashVar || 0, eftVar || 0, settings.limit);
 
-  // Closing EFTPOS (last night's final printout from the right till) and the two tonight readings, by key
+  // Closing EFTPOS (from the previous settlement report, right till) and the two tonight readings, by key
   const tClosing = eftposTypes.find((t) => t.key === "eftpos_t3");
   const tRight = eftposTypes.find((t) => t.key === "eftpos_t1");
   const tLeft = eftposTypes.find((t) => t.key === "eftpos_t2");
   const amt = (t) => (t && tenders[t.id] !== undefined && tenders[t.id] !== "" ? Number(tenders[t.id]) : null);
-  // From 9 Nov 2026: staff enter the closing RECEIPT total (whole day); Closing EFTPOS = receipt − previous Right till
+  // From 9 Nov 2026: staff enter the previous settlement report total (whole day); Closing EFTPOS = report − previous Right till
   // reading, kept in the eftpos_t3 tender as before. No earlier reading -> a direct Closing EFTPOS box instead.
   const receiptDay = !!tClosing && !!date && date >= CLOSING_RECEIPT_FROM;
   const receiptMode = receiptDay && !!prevRight;
@@ -213,7 +214,7 @@ export default function TillCountPage() {
   const rightUsuallyHigher = enoughHist && tRight && tLeft && hist.filter((h) => (h[tRight.id] || 0) > (h[tLeft.id] || 0)).length / hist.length >= 0.8;
   const leftHigher = rightUsuallyHigher && amt(tRight) !== null && amt(tLeft) !== null && amt(tLeft) > amt(tRight);
   const softWarn = {
-    ...(tClosing && closingHigh ? { [tClosing.id]: "Closing EFTPOS is higher than usual — check it's last night's printout from the right till." } : {}),
+    ...(tClosing && closingHigh ? { [tClosing.id]: "Closing EFTPOS is higher than usual — check the previous settlement report from the right till." } : {}),
     ...(tLeft && leftHigher ? { [tLeft.id]: "Left till is higher than right till — check they aren't swapped." } : {}),
   };
 
@@ -260,10 +261,10 @@ export default function TillCountPage() {
     if (!hasZCash || !hasZEftpos) { setError("Enter the Z report Cash and EFTPOS first."); return; }
     if (counted <= 0) { setError("Count the cash first."); return; }
     if (reasonNeeded && !reason.trim()) { setError("Give a reason for the difference."); return; }
-    if (receiptNegative) { setError(`Receipt total is less than the right till reading on ${dayLabel(prevRight.date)} — check the receipt.`); return; }
+    if (receiptNegative) { setError(`Previous settlement report total is less than the right till reading on ${dayLabel(prevRight.date)} — check the report.`); return; }
     // The closing figure is required: the receipt total (or, with no earlier right till reading, Closing EFTPOS itself)
     if (receiptDay && prevRight === undefined) { setError("Still looking up the last right till reading — try again in a moment."); return; }
-    if (receiptMode && receipt === "") { setError("Enter the closing receipt total (reprint the last settlement if there's no receipt)."); return; }
+    if (receiptMode && receipt === "") { setError("Enter the Previous settlement report — Right till total."); return; }
     if (tClosing && !receiptMode && amt(tClosing) === null) { setError("Enter the Closing EFTPOS."); return; }
     people.forEach((p, i) => {
       if (!p.staffId) errs[i] = "Pick your name.";
@@ -547,16 +548,16 @@ export default function TillCountPage() {
                     if (prevRight === undefined) return <div key={t.id} className="row-span-3 text-sm text-gray-400">Looking up the last right till reading…</div>;
                     if (!receiptMode) return direct("No earlier right till reading found — enter Closing EFTPOS directly");
                     return cell({
-                      label: "Closing receipt total (right till, last night)",
-                      help: "Whole-day total on the receipt kept in the till — or print the previous settlement",
+                      label: "Previous settlement report — Right till",
+                      help: "",
                       value: receipt, onChange: onReceipt, warn: receiptNegative ? null : softWarn[t.id],
                       below: receiptNum === null ? null : receiptNegative ? (
                         <p className="mt-1 rounded-lg bg-red-50 border border-red-200 px-2 py-1.5 text-xs font-semibold text-red-700">
-                          Receipt total is less than the right till reading on {dayLabel(prevRight.date)} — check the receipt
+                          Report total is less than the right till reading on {dayLabel(prevRight.date)} — check the report
                         </p>
                       ) : (
                         <p className="mt-1 text-xs text-gray-600">
-                          Receipt total {money(receiptNum)} − right till reading on {dayLabel(prevRight.date)} {money(prevRight.amount)} = <span className="font-semibold text-gray-900">Closing EFTPOS {money(receiptCalc)}</span>
+                          Report total {money(receiptNum)} − right till reading on {dayLabel(prevRight.date)} {money(prevRight.amount)} = <span className="font-semibold text-gray-900">Closing EFTPOS {money(receiptCalc)}</span>
                         </p>
                       ),
                     });

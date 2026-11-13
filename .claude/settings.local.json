@@ -3,5 +3,8 @@
     "allow": [
       "Bash(npm run *)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
 }

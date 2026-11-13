@@ -6,6 +6,7 @@ import { getShiftConflict, getDayAvailability } from "../lib/availability";
 import { LeaveCalendar, dayState, blackoutOn, leaveOn, nextDayStr } from "../lib/leaveCalendar";
 import { fetchMyReview, prepWaiting, MyReviewBanner, MyReviewSection } from "../components/MyReview";
 import { fetchMyPolicies, policiesToRead, MyPoliciesBanner, MyPoliciesSection } from "../components/MyPolicies";
+import { fetchMyMemoAsks, memoAsksToDo, MyMemoAsksSection } from "../components/memos/MyMemoAsks";
 import MyTrainingTab from "../components/MyTraining";
 import { MyInductionsSection, fetchMyInductions } from "../components/MyInductions";
 import { fetchMyTrainingNudges, TrainingNudges } from "../components/MyCertificates";
@@ -2217,17 +2218,18 @@ function DeliveriesCard({ onOpen }) {
   );
 }
 
-// To do: performance review (Section 2 prep / comments) + policies to read
+// To do: performance review (Section 2 prep / comments) + staff memo sections I've been asked for + policies to read
 // + Inductions (only for staff who can sign them off; not part of the badge count)
-function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, onPoliciesChanged, nudges, onOpenNudge, inductions }) {
+function TodoTab({ myReview, onReviewChanged, focusReview, myPolicies, focusPolicies, onPoliciesChanged, nudges, onOpenNudge, inductions, memoAsks, onMemoAsksChanged }) {
   const hasReview = !!(myReview?.mode && myReview.review);
   const hasPolicies = !!(myPolicies?.outstanding?.length || myPolicies?.read?.length);
   return (
     <div className="max-w-lg mx-auto space-y-4">
       <MyReviewSection data={myReview} onChanged={onReviewChanged} focus={focusReview} />
+      <MyMemoAsksSection asks={memoAsks} onChanged={onMemoAsksChanged} />
       <TrainingNudges items={nudges} onOpen={onOpenNudge} />
       <MyPoliciesSection data={myPolicies} focus={focusPolicies} onChanged={onPoliciesChanged} />
-      {!hasReview && !hasPolicies && !nudges?.length && (
+      {!hasReview && !hasPolicies && !nudges?.length && !memoAsks?.length && (
         <div className="bg-white rounded-2xl shadow-sm border p-6 text-center text-sm text-gray-400">
           Nothing to do right now.
         </div>
@@ -3382,6 +3384,7 @@ export default function MePage() {
   const [myNudges, setMyNudges] = useState(null); // To do → Training items (Admin's Needs attention rules, mine only)
   const [trainingTarget, setTrainingTarget] = useState(null); // { sub, section, n } — where a nudge opens Training
   const [myInductions, setMyInductions] = useState(null); // To do → Inductions list (signers only; false = hidden), preloaded
+  const [myMemoAsks, setMyMemoAsks] = useState(null); // To do → staff memo sections I've been asked for (draft memos)
 
   // ?tab=todo (the performance review pushes): open straight on To do, at the review
   useEffect(() => {
@@ -3407,6 +3410,7 @@ export default function MePage() {
     let cancelled = false;
     fetchMyReview().then((r) => { if (!cancelled) setMyReview(r || { mode: null, review: null }); });
     fetchMyPolicies().then((r) => { if (!cancelled) setMyPolicies(r || { outstanding: [], read: [] }); });
+    fetchMyMemoAsks().then((r) => { if (!cancelled) setMyMemoAsks(r || []); });
     fetchMyTrainingNudges().then((r) => {
       if (cancelled) return;
       setMyNudges(r || []);
@@ -3621,7 +3625,7 @@ export default function MePage() {
     { key: "training", label: "Training", icon: "🎓" },
     { key: "todo", label: "To do", icon: "☑️" },
   ];
-  const todoCount = (prepWaiting(myReview) ? 1 : 0) + policiesToRead(myPolicies) + (myNudges?.length || 0);
+  const todoCount = (prepWaiting(myReview) ? 1 : 0) + policiesToRead(myPolicies) + (myNudges?.length || 0) + memoAsksToDo(myMemoAsks);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -3712,6 +3716,8 @@ export default function MePage() {
             onPoliciesChanged={async () => { const r = await fetchMyPolicies(); if (r) setMyPolicies(r); }}
             nudges={myNudges}
             inductions={myInductions}
+            memoAsks={myMemoAsks}
+            onMemoAsksChanged={async () => { const r = await fetchMyMemoAsks(); if (r) setMyMemoAsks(r); }}
             onOpenNudge={(sub, section) => { setTrainingTarget((t) => ({ sub, section, n: (t?.n || 0) + 1 })); setTab("training"); }}
           />
         ) : (

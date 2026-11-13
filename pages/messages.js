@@ -1,5 +1,16 @@
+// /messages — two tabs: Chats (direct messages: pick your name, PIN, inbox) and Staff memos (components/memos/StaffMemos —
+// the memo archive, and drafts in QSPP manager mode). ?tab=memos opens Staff memos; &memo=<id> opens that memo.
+// /memos redirects here (next.config.js).
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/router";
+import dynamic from "next/dynamic";
 import supabase from "../lib/supabaseClient";
+
+// Loaded only when the Staff memos tab opens (the editor library is big — keeps Chats quick on phones)
+const StaffMemos = dynamic(() => import("../components/memos/StaffMemos"), {
+  ssr: false,
+  loading: () => <p className="text-sm text-slate-400">Loading…</p>,
+});
 
 const PHARMACY_ID = "81ab394f-d642-4246-b896-e71938b25671";
 
@@ -7,6 +18,10 @@ const fmtWhen = (d) =>
   new Date(d).toLocaleString("en-AU", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 export default function MessagesPage() {
+  const router = useRouter();
+  const tab = router.query.tab === "memos" ? "memos" : "chats";
+  const setTab = (t) => router.replace({ pathname: "/messages", query: t === "memos" ? { tab: "memos" } : {} }, undefined, { shallow: true });
+
   // ── Identity ──
   const [staffList, setStaffList] = useState([]);
   const [step, setStep] = useState("select"); // select → pin → inbox
@@ -194,16 +209,34 @@ export default function MessagesPage() {
   // ── Render ──
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center py-8 px-4">
-      <div className="w-full max-w-lg">
+      <div className={`w-full ${tab === "memos" ? "max-w-3xl" : "max-w-lg"}`}>
         <div className="mb-2">
           <a href="/" className="text-sm text-blue-600 hover:underline">← Back to home</a>
         </div>
-        <div className="text-center mb-6">
+        <div className="text-center mb-4">
           <div className="text-3xl mb-1">💬</div>
           <h1 className="text-xl font-bold text-gray-800">Byford Pharmacy</h1>
           <p className="text-sm text-gray-500">Messages</p>
         </div>
 
+        {/* Chats | Staff memos */}
+        <div className="flex justify-center mb-5">
+          <div className="inline-flex p-1 rounded-[12px] bg-white border border-[#E5E7EB]">
+            {[{ k: "chats", l: "💬 Chats" }, { k: "memos", l: "📰 Staff memos" }].map((o) => (
+              <button key={o.k} onClick={() => setTab(o.k)}
+                className={`min-h-[40px] px-5 rounded-[9px] text-sm ${tab === o.k ? "bg-[#EFF6FF] text-[#1E3A8A] font-semibold" : "text-slate-600 hover:bg-slate-50"}`}>
+                {o.l}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {tab === "memos" && (
+          <StaffMemos openMemoId={router.query.memo ? String(router.query.memo) : null}
+            onCloseMemo={() => { if (router.query.memo) router.replace({ pathname: "/messages", query: { tab: "memos" } }, undefined, { shallow: true }); }} />
+        )}
+
+        {tab === "chats" && (<>
         {/* Step: select staff */}
         {step === "select" && (
           <div className="bg-white rounded-2xl shadow-sm border p-5">
@@ -226,7 +259,9 @@ export default function MessagesPage() {
             <img src={me.photo_url || "/placeholder.png"} alt={me.name} className="w-14 h-14 rounded-full object-cover mx-auto mb-2" />
             <div className="font-medium text-gray-800 mb-4">{me.name}</div>
             <input
-              type="password" inputMode="numeric" maxLength={4} value={pin}
+              type="text" inputMode="numeric" maxLength={4} value={pin}
+              autoComplete="off" name="messages_pin" data-1p-ignore data-lpignore="true"
+              style={{ WebkitTextSecurity: "disc", textSecurity: "disc" }}
               onChange={(e) => { setPin(e.target.value.replace(/\D/g, "")); setPinError(""); }}
               onKeyDown={(e) => e.key === "Enter" && handlePin()}
               placeholder="••••" autoFocus
@@ -375,6 +410,7 @@ export default function MessagesPage() {
             )}
           </div>
         )}
+        </>)}
       </div>
     </div>
   );

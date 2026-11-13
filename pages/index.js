@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import { recordCompletion, undoCompletion } from "../lib/recordCompletion.js";
 import supabase from "../lib/supabaseClient";
 import Avatar from "../components/Avatar";
@@ -19,11 +20,68 @@ import { missedCounts } from "../lib/bankingData";
 import { syncInductionAuto } from "../lib/inductionAuto";
 import { SECTIONS as INDUCTION_SECTIONS, inductionReadiness, pickProbationReview, answerLabel, signerLabel } from "../lib/induction";
 import { adminFetch } from "../lib/adminFetch";
+import { contributeCall } from "../lib/memosClient";
 import { ensureSectionYear, perthYear, perthMonthStart } from "../lib/sectionCleans";
 import { hasShowFrom, showFromDate, prevMonthOf, monthShort, periodMonthOfCompletion } from "../lib/taskPeriods";
 import { buildKioskJobs, isMine, jobsFor, waitingCount, anyoneJobs, everyoneGroups, comingUpFor, dayMonth, TAG_STYLE } from "../lib/kioskJobs";
 import { fetchAllRows } from "../lib/trainingPlan";
 import { CARD, CARD_HEAD, CARD_TITLE, COUNT_PILL, SECTION_LABEL, HOVER_ONLY, HOVER_SHOW } from "../lib/kioskStyle";
+
+// Staff memo "Add your section" editor — loaded only when the job is opened (the editor library is big)
+const KioskContributorSection = dynamic(() => import("../components/memos/ContributorSection"), {
+  ssr: false,
+  loading: () => <p className="text-sm text-slate-400">Loading…</p>,
+});
+
+// Staff memo job: the person's own PIN before their section opens (PIN box styled like Messages → Chats).
+// The server checks it (/api/memos/contribute "get"); a wrong PIN keeps the section closed.
+function MemoPinBox({ person, sectionId, staffId, onOk, onClose }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
+  const submit = async () => {
+    if (pin.length !== 4) { setError("Enter your 4-digit PIN."); return; }
+    setChecking(true);
+    setError("");
+    try {
+      await contributeCall({ action: "get", section_id: sectionId }, { staffId, pin });
+      onOk(pin);
+    } catch (err) {
+      setError(err.status === 401 ? "Incorrect PIN." : err.message);
+      setPin("");
+      setChecking(false);
+    }
+  };
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="flex justify-end -mt-2 -mr-2">
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+          </div>
+          <p className="text-sm font-semibold text-gray-800 mb-3">📰 Add your section to the staff memo</p>
+          <img src={person?.photo_url || "/placeholder.png"} alt={person?.name || ""} className="w-14 h-14 rounded-full object-cover mx-auto mb-2" />
+          <div className="font-medium text-gray-800 mb-4">{person?.name || "Staff member"}</div>
+          <input
+            type="text" inputMode="numeric" maxLength={4} value={pin}
+            autoComplete="off" name="memo_section_pin" data-1p-ignore data-lpignore="true"
+            style={{ WebkitTextSecurity: "disc", textSecurity: "disc" }}
+            onChange={(e) => { setPin(e.target.value.replace(/\D/g, "")); setError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            placeholder="••••" autoFocus
+            className="w-full border rounded-lg px-4 py-3 text-center text-2xl tracking-widest mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+          {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+          <div className="flex gap-2">
+            <button onClick={onClose} className="flex-1 border border-gray-300 rounded-lg py-2.5 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+            <button onClick={submit} disabled={checking} className="flex-1 bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium disabled:opacity-40">{checking ? "Checking…" : "Continue"}</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -635,6 +693,8 @@ export default function HomePage() {
   const [qsppJobs, setQsppJobs] = useState([]);              // QSPP incident / feedback jobs (lib/qspp.js qsppKioskJobs)
   const [reviewWaitingIds, setReviewWaitingIds] = useState([]); // staff with review answers waiting (ids only — /api/kiosk/reviews-waiting)
   const [reviewPanel, setReviewPanel] = useState(null);        // staff id whose review job was tapped
+  const [memoAskJobs, setMemoAskJobs] = useState([]);           // staff memo sections asked of staff ({ section_id, staff_id, memo_title } — /api/memos/contribute)
+  const [memoPanel, setMemoPanel] = useState(null);             // { sectionId, staffId } — "Add your section to the …" tapped
   const [openPolicyJob, setOpenPolicyJob] = useState(null);  // policy card tapped (shows the "I have read and understood" panel)
   const [policyAckBusy, setPolicyAckBusy] = useState(false);
   // Monthly On the List tasks with a show-from day: taskId -> open months [{ ym, start: "YYYY-MM-01", overdue, carry }]
@@ -1250,6 +1310,23 @@ export default function HomePage() {
       .catch(() => { if (!cancelled) setReviewWaitingIds([]); });
     return () => { cancelled = true; };
   }, [currentPharmacyId, policyTick]);
+
+  // Staff memo sections asked of staff rostered on today: section id + staff id + memo title only (no memo content in
+  // the kiosk browser). Re-checked every minute with the policy jobs, so the job goes once they've written something
+  // (here or on their phone) or said "Nothing this month".
+  const [memoTick, setMemoTick] = useState(0);
+  useEffect(() => {
+    if (!currentPharmacyId) return;
+    const activeIds = new Set(staff.map((st) => Number(st.id)));
+    const ids = [...todayRosteredIds].map(Number).filter((id) => activeIds.has(id));
+    if (!ids.length) { setMemoAskJobs([]); return; }
+    let cancelled = false;
+    adminFetch("/api/memos/contribute", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "kiosk-jobs", via: "kiosk", staff_ids: ids }) })
+      .then((r) => (r.ok ? r.json() : { jobs: [] }))
+      .then((out) => { if (!cancelled) setMemoAskJobs(out.jobs || []); })
+      .catch(() => { if (!cancelled) setMemoAskJobs([]); });
+    return () => { cancelled = true; };
+  }, [currentPharmacyId, todayRosteredIds, staff, policyTick, memoTick]);
 
   // Induction card: one per rostered-on staff member with an in-progress induction and at least one policy still to read.
   // Same rules as policy cards (no task rows, not in the progress count, no leaderboard).
@@ -2002,7 +2079,7 @@ const handleDeliveryTap = async (d) => {
             const jobs = loading ? [] : buildKioskJobs({
               tasks, offRosterTasks, monthCards, completedTaskIds, monthlyCompletions, staffById,
               rosteredIds: new Set([...todayRosteredIds].map(Number)), sectionCleans, policyJobs, inductionCards,
-              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart, qsppJobs, reviewWaitingIds,
+              orderFollowUps, ownerStaffId: consumablesSettings.ownerStaffId, checklistProgress, todayStr, monthStart, qsppJobs, reviewWaitingIds, memoAskJobs,
             });
             const roleOf = (id) => staffById[id]?.role || null;
             const listFor = (id) => jobsFor(jobs, id, roleOf(id));
@@ -2083,6 +2160,8 @@ const handleDeliveryTap = async (d) => {
               else if (a.type === "followUp") setFollowUpOpen(a.which);
               else if (a.type === "qspp") router.push(a.url); // /qspp asks for the PIN where it's manager-only
               else if (a.type === "review") setReviewPanel(a.staffId); // instructions only — answered on their phone
+              else if (a.type === "memoSection") setMemoPanel({ sectionId: a.sectionId, staffId: a.staffId });
+              else if (a.type === "memoSection") setMemoPanel({ sectionId: a.sectionId, staffId: a.staffId });
             };
             const renderJob = (j) => (
               <button
@@ -3309,6 +3388,25 @@ const handleDeliveryTap = async (d) => {
             </div>
           </div>
         </>,
+        document.body
+      )}
+
+      {/* Staff memo: "Add your section to the …" — the job's person enters their OWN staff PIN first (same rule as
+          Messages → Chats; /api/memos/contribute re-checks it on every save, incl. "Nothing this month"). Wrong PIN =
+          stays closed. They only ever see their own section (components/memos/ContributorSection). The PIN is held in
+          memory only while the panel is open. */}
+      {memoPanel && createPortal(
+        memoPanel.pin ? (
+          <div className="fixed inset-0 z-50 bg-[#F8FAFC] overflow-y-auto">
+            <div className="max-w-3xl mx-auto px-4 py-6 pb-16">
+              <KioskContributorSection sectionId={memoPanel.sectionId} kiosk={{ staffId: memoPanel.staffId, pin: memoPanel.pin }}
+                onClose={(changed) => { setMemoPanel(null); if (changed) setMemoTick((n) => n + 1); }} />
+            </div>
+          </div>
+        ) : (
+          <MemoPinBox person={staffById[memoPanel.staffId]} sectionId={memoPanel.sectionId} staffId={memoPanel.staffId}
+            onOk={(pin) => setMemoPanel((p) => (p ? { ...p, pin } : p))} onClose={() => setMemoPanel(null)} />
+        ),
         document.body
       )}
 

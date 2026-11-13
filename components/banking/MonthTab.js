@@ -297,7 +297,7 @@ export function DayEditor({ pharmacyId, manager, limit = 5, date, day, types, co
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
   const [deposit, setDeposit] = useState(null);
-  // Days counted with the closing RECEIPT total (from 9 Nov 2026): Closing EFTPOS = receipt − previous Right till reading.
+  // Days counted with the previous settlement report total (from 9 Nov 2026): Closing EFTPOS = report − previous Right till reading.
   // Earlier days have no receipt total and just show Closing EFTPOS as entered.
   const tClosing = types.find((t) => t.key === "eftpos_t3");
   const receiptMode = !!day && day.closing_receipt_total !== null && day.closing_receipt_total !== undefined && !!tClosing;
@@ -472,7 +472,7 @@ export function DayEditor({ pharmacyId, manager, limit = 5, date, day, types, co
               {receiptMode && (
                 <div className="rounded-lg bg-[#F8FAFC] border border-[#E7EAF0] px-3 py-2 space-y-1">
                   <label className="block max-w-[14rem]">
-                    <span className="block text-xs font-semibold text-gray-600 mb-0.5">Closing receipt total (right till)</span>
+                    <span className="block text-xs font-semibold text-gray-600 mb-0.5">Previous settlement report — Right till</span>
                     <input inputMode="decimal" value={receiptIn} onChange={(e) => onReceipt(e.target.value.replace(/[^\d.]/g, ""))} className={input} />
                   </label>
                   <p className={`text-xs ${receiptCalc !== null && receiptCalc < 0 ? "text-red-700 font-semibold" : "text-gray-600"}`}>
