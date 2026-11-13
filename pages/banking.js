@@ -105,7 +105,7 @@ export default function BankingPage() {
                 ⚠ No confirmed till count for: {missed.map((d) => dayLabelShort(d)).join(", ")}
               </div>
             )}
-            {tab === "banking" && <BankingTab manager={manager} />}
+            {tab === "banking" && <BankingTab manager={manager} limit={limit} />}
             {tab === "month" && <MonthTab pharmacyId={PHARMACY_ID} manager={manager} limit={limit} />}
             {tab === "insights" && <InsightsTab pharmacyId={PHARMACY_ID} limit={limit} />}
           </>
@@ -115,7 +115,7 @@ export default function BankingPage() {
   );
 }
 
-function BankingTab({ manager }) {
+function BankingTab({ manager, limit }) {
   const today = todayPerth();
   const [staffNames, setStaffNames] = useState({});
   const [waiting, setWaiting] = useState(null);   // confirmed, not banked, cash takings > 0 (oldest first)
@@ -292,7 +292,7 @@ function BankingTab({ manager }) {
     <div className="space-y-4">
       {editing && (
         <DayEditor
-          pharmacyId={PHARMACY_ID} manager={manager} date={editing.date} day={editing.day} types={editing.types} cols={editing.cols}
+          pharmacyId={PHARMACY_ID} manager={manager} limit={limit} date={editing.date} day={editing.day} types={editing.types} cols={editing.cols}
           staffName={(id) => staffNames[id] || "—"}
           onClose={() => setEditing(null)} onSaved={() => { loadWaiting(); }}
         />

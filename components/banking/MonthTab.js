@@ -5,7 +5,7 @@
 // missing / Reopen). Export for Arthur: this month or the financial year (lib/bankingExport.js).
 import { useEffect, useState } from "react";
 import supabase from "../../lib/supabaseClient";
-import { round2, fmtVariance, cashVariance, eftposVariance, closingFromReceipt } from "../../lib/banking";
+import { round2, fmtVariance, cashVariance, eftposVariance, closingFromReceipt, dayBalance, fmtDiffShort, fmtOverUnder } from "../../lib/banking";
 import {
   loadPeriod, loadPaymentTypes, weeksOfMonth, dayFigures, countsInTotals, columnTypes, dayLabel, WD, MON_LONG, previousRightTill,
   addMonthsYm, monthStart, monthEnd, fyOf, weekdayOf,
@@ -101,7 +101,18 @@ export default function MonthTab({ pharmacyId, manager, limit }) {
   const sum = (fn) => round2(figs.reduce((s, x) => s + (fn(x) || 0), 0));
   const custDays = figs.filter((x) => x.f.customers > 0);
   const avgCust = custDays.length ? Math.round(custDays.reduce((s, x) => s + x.f.customers, 0) / custDays.length) : null;
-  const colCount = 4 + cols.length + 4;
+  const colCount = 5 + cols.length + 4; // Date, Day, Balanced, Till, Cash, …types…, Bendigo, GST, Cust., status
+  const isEftposCol = (t) => t.kind === "eftpos" && t.active !== false; // the columns in the EFTPOS check
+  // "Balanced" cell: green tick / what's out in red / amber Not confirmed / grey dash (lib/banking.js dayBalance)
+  const balanceCell = (b) => {
+    if (b.state === "balanced") return <span className="text-green-600 font-bold" title="Balanced — cash, EFTPOS and total all within the limit">✓</span>;
+    if (b.state === "unconfirmed") return <span className="text-amber-600 font-semibold">Not conf.</span>;
+    if (b.state === "nocheck") return <span className="text-gray-300" title="No Z report figures to check">—</span>;
+    if (b.state !== "out") return null;
+    const lines = [!b.cash.ok && `Cash ${fmtDiffShort(b.cash.diff)}`, !b.eftpos.ok && `EFTPOS ${fmtDiffShort(b.eftpos.diff)}`].filter(Boolean);
+    if (!lines.length) lines.push(`Total ${fmtDiffShort(b.total.diff)}`);
+    return <span className="text-red-600 font-semibold">{lines.map((l) => <span key={l} className="block">{l}</span>)}</span>;
+  };
 
   return (
     <div className="space-y-3">
@@ -136,6 +147,7 @@ export default function MonthTab({ pharmacyId, manager, limit }) {
                 <tbody key={wk.start} className="border-b-4 border-[#EEF1F5]">
                   <tr className="bg-gray-50 text-gray-500 text-[11px] uppercase">
                     <th className="px-2 py-1.5 text-left">Date</th><th className="px-2 py-1.5 text-left">Day</th>
+                    <th className="px-1 py-1.5 text-center" title="Balanced against the Z report">Bal.</th>
                     <th className="px-2 py-1.5 text-right">Till</th><th className="px-2 py-1.5 text-right">Cash</th>
                     {cols.map((t) => <th key={t.id} className="px-2 py-1.5 text-right whitespace-nowrap">{t.name}</th>)}
                     <th className="px-2 py-1.5 text-right whitespace-nowrap">Total Bendigo</th><th className="px-2 py-1.5 text-right">GST Sales</th>
@@ -148,16 +160,20 @@ export default function MonthTab({ pharmacyId, manager, limit }) {
                     const f = day && countsInTotals(day) ? dayFigures(day, types) : null;
                     if (f) { wkTill += f.till; wkGst += f.gst || 0; }
                     const flagged = day && (past(day.cash_variance) || past(day.eftpos_variance));
+                    const bal = dayBalance(day, types, limit);
+                    const out = bal.state === "out";
+                    const red = "bg-red-50";
                     return (
                       <FragmentRow key={d}>
                         <tr onClick={() => setOpenDate(d)} className="border-t border-[#F0F2F5] hover:bg-blue-50/40 cursor-pointer">
                           <td className="px-2 py-1.5 whitespace-nowrap">{Number(d.slice(8))}/{Number(d.slice(5, 7))}</td>
                           <td className="px-2 py-1.5">{WD[weekdayOf(d)]}</td>
+                          <td className="px-1 py-1 text-center text-[10px] leading-tight whitespace-nowrap">{balanceCell(bal)}</td>
                           {f ? (
                             <>
-                              <td className="px-2 py-1.5 text-right font-semibold">{money(f.till)}</td>
-                              <td className="px-2 py-1.5 text-right">{money(f.cash)}</td>
-                              {cols.map((t) => <td key={t.id} className="px-2 py-1.5 text-right">{day.tenders[t.id] ? money(day.tenders[t.id]) : ""}</td>)}
+                              <td className={`px-2 py-1.5 text-right font-semibold ${out && bal.cash.ok && bal.eftpos.ok ? red : ""}`}>{money(f.till)}</td>
+                              <td className={`px-2 py-1.5 text-right ${out && !bal.cash.ok ? red : ""}`}>{money(f.cash)}</td>
+                              {cols.map((t) => <td key={t.id} className={`px-2 py-1.5 text-right ${out && !bal.eftpos.ok && isEftposCol(t) ? red : ""}`}>{day.tenders[t.id] ? money(day.tenders[t.id]) : ""}</td>)}
                               <td className="px-2 py-1.5 text-right">{money(f.bendigo)}</td>
                               <td className="px-2 py-1.5 text-right">{f.gst === null ? "" : money(f.gst)}</td>
                               <td className="px-2 py-1.5 text-right">{f.customers ?? ""}</td>
@@ -184,15 +200,15 @@ export default function MonthTab({ pharmacyId, manager, limit }) {
                     );
                   })}
                   <tr className="border-t border-[#E7EAF0] bg-[#F8FAFC] font-semibold">
-                    <td className="px-2 py-1.5" colSpan={2}>Total Weekly</td>
+                    <td className="px-2 py-1.5" colSpan={3}>Total Weekly</td>
                     <td className="px-2 py-1.5 text-right">{money(wkTill)}</td>
                     <td colSpan={cols.length + 2} />
                     <td className="px-2 py-1.5 text-right">{money(wkGst)}</td>
                     <td colSpan={2} />
                   </tr>
                   <tr className="text-gray-600">
-                    <td className="px-2 py-1.5" colSpan={2}>Cash Banking</td>
-                    <td className="px-2 py-1.5" colSpan={colCount - 2}>
+                    <td className="px-2 py-1.5" colSpan={3}>Cash Banking</td>
+                    <td className="px-2 py-1.5" colSpan={colCount - 3}>
                       {deps.length ? deps.map((x) => `${dayLabel(x.deposit_date)} ${$(x.amount)}${x.note ? ` (${x.note})` : ""}`).join(" · ") : <span className="text-gray-300">—</span>}
                     </td>
                   </tr>
@@ -201,7 +217,7 @@ export default function MonthTab({ pharmacyId, manager, limit }) {
             })}
             <tfoot>
               <tr className="bg-gray-800 text-white font-semibold">
-                <td className="px-2 py-2" colSpan={2}>Monthly total</td>
+                <td className="px-2 py-2" colSpan={3}>Monthly total</td>
                 <td className="px-2 py-2 text-right">{money(sum((x) => x.f.till))}</td>
                 <td className="px-2 py-2 text-right">{money(sum((x) => x.f.cash))}</td>
                 {cols.map((t) => <td key={t.id} className="px-2 py-2 text-right">{money(sum((x) => x.d.tenders[t.id]))}</td>)}
@@ -217,7 +233,7 @@ export default function MonthTab({ pharmacyId, manager, limit }) {
 
       {openDate && (
         <DayEditor
-          pharmacyId={pharmacyId} manager={manager} date={openDate} day={byDate[openDate] || null} types={types} cols={cols}
+          pharmacyId={pharmacyId} manager={manager} limit={limit} date={openDate} day={byDate[openDate] || null} types={types} cols={cols}
           staffName={(id) => staffNames[id] || "—"} first={first}
           onClose={() => setOpenDate(null)} onSaved={() => setReload((n) => n + 1)}
         />
@@ -243,8 +259,35 @@ const FIELDS = [
 const toIn = (v) => (v === null || v === undefined ? "" : String(v));
 const toNum = (v, int) => (String(v).trim() === "" ? null : int ? Math.round(Number(v)) : round2(Number(v)));
 
+// Day panel result strip: Cash / EFTPOS / Total boxes, green within the limit, red past it (lib/banking.js dayBalance).
+// Not confirmed: whatever can be worked out + an amber label. Imported days: one grey line. Closed / missing: nothing.
+function BalanceStrip({ bal, reason }) {
+  if (bal.state === "none") return null;
+  if (bal.state === "nocheck") return <p className="text-sm text-gray-500">Imported day — no Z report figures to check.</p>;
+  const box = (title, ok, lines, diff) => (
+    <div className={`rounded-lg border px-2.5 py-2 ${ok === null ? "bg-gray-50 border-gray-200" : ok ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"}`}>
+      <div className={`text-xs font-bold ${ok === null ? "text-gray-500" : ok ? "text-green-800" : "text-red-700"}`}>{title} {ok === null ? "" : ok ? "✓" : "✗"}</div>
+      {lines.map(([k, v]) => (
+        <div key={k} className="flex justify-between gap-1 text-[11px] text-gray-600 tabular-nums"><span>{k}</span><span>{v === null ? "—" : $(v)}</span></div>
+      ))}
+      <div className={`mt-0.5 text-sm font-semibold tabular-nums ${ok === null ? "text-gray-400" : ok ? "text-green-800" : "text-red-700"}`}>{diff === null ? "—" : fmtOverUnder(diff)}</div>
+    </div>
+  );
+  return (
+    <div className="space-y-1.5">
+      {bal.state === "unconfirmed" && <span className="inline-block text-[11px] font-semibold px-2 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">Not confirmed</span>}
+      <div className="grid grid-cols-3 gap-2">
+        {box("Cash", bal.cash.ok, [["Z report", bal.cash.z], ["Counted", bal.cash.counted]], bal.cash.diff)}
+        {box("EFTPOS", bal.eftpos.ok, [["Z report", bal.eftpos.z], ["Entered", bal.eftpos.entered]], bal.eftpos.diff)}
+        {box("Total", bal.total.ok, [], bal.total.diff)}
+      </div>
+      {reason && <p className="text-xs text-gray-600"><span className="font-semibold">Reason:</span> {reason}</p>}
+    </div>
+  );
+}
+
 // Also opened from the Banking tab's "Cash not yet banked" list (pages/banking.js)
-export function DayEditor({ pharmacyId, manager, date, day, types, cols, staffName, onClose, onSaved }) {
+export function DayEditor({ pharmacyId, manager, limit = 5, date, day, types, cols, staffName, onClose, onSaved }) {
   const editTypes = types.filter((t) => cols.some((c) => c.id === t.id) || Number(day?.tenders?.[t.id]));
   const [form, setForm] = useState(() => Object.fromEntries(FIELDS.map((fl) => [fl.key, toIn(day?.[fl.key])])));
   const [tenders, setTenders] = useState(() => Object.fromEntries(editTypes.map((t) => [t.id, toIn(day?.tenders?.[t.id] ?? "")])));
@@ -278,6 +321,12 @@ export function DayEditor({ pharmacyId, manager, date, day, types, cols, staffNa
   }, [day, pharmacyId]);
 
   const hasFigures = day && dayFigures(day, types).hasFigures;
+  // The balance check from what's in the boxes now (updates as figures are edited) — lib/banking.js dayBalance
+  const liveBal = day ? dayBalance({
+    ...day,
+    z_cash: form.z_cash, z_eftpos: form.z_eftpos, counted_cash: form.counted_cash,
+    tenders: { ...day.tenders, ...Object.fromEntries(Object.entries(tenders).map(([id, v]) => [id, Number(v) || 0])) },
+  }, types, limit) : { state: "none" };
 
   const save = async () => {
     setError("");
@@ -378,6 +427,7 @@ export function DayEditor({ pharmacyId, manager, date, day, types, cols, staffNa
           <button onClick={onClose} className="text-gray-400 text-xl">✕</button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <BalanceStrip bal={liveBal} reason={reason.trim()} />
           {error && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{error}</div>}
           {deposit && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
@@ -434,9 +484,6 @@ export function DayEditor({ pharmacyId, manager, date, day, types, cols, staffNa
                   </p>
                 </div>
               )}
-              <div className="text-sm text-gray-600">
-                Variances now: Cash {day.cash_variance === null ? "—" : fmtVariance(day.cash_variance)} · EFTPOS {day.eftpos_variance === null ? "—" : fmtVariance(day.eftpos_variance)} (recalculated when you save)
-              </div>
               <label className="block">
                 <span className="block text-xs font-semibold text-gray-600 mb-0.5">Reason for the difference</span>
                 <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
