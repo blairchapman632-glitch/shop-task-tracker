@@ -1,6 +1,9 @@
 // Kiosk "What's on" — the pharmacy calendar (above the Wall). Things that happen, not things to do: no completion.
 // Month grid (Monday first, ‹ ›, today = solid blue circle): a dot per category on days with one-day items, very pale
-// shading behind every day of a date range (rounded at its start / end and at week edges). Legend, "Next up" (next 2), tap a day to expand its items inline (tap again to close).
+// shading behind every day of a date range (rounded at its start / end and at week edges) — unless its category has
+// "Shade the days of a date range" off (e.g. back-to-back promotions): then a dot on the start day only, and an
+// "[Category] now: [title] · ends [date]" line under the legend while it runs (always today). Legend, "Next up" (next 2),
+// tap a day to expand its items inline (tap again to close).
 // Events: any staff member adds (their photo selected), edits / deletes their own; a manager (admin PIN) edits any,
 // uses manager-only categories (Closure) and attaches jobs. Public holidays, birthdays and anniversaries are read
 // live and are read-only. The tapped day is a compact list (3 rows, "+N more") that closes itself after 30 seconds
@@ -13,7 +16,7 @@ import CalendarEventSheet from "./CalendarEventSheet";
 import { todayPerth, addMonthsStr } from "../lib/performanceReview";
 import {
   monthGrid, monthLabel, shortDate, longDate, fmtTime, daysBetween, itemsBetween, loadCategories, loadHolidays,
-  loadEvents, loadEventJobs, ensureYearlyJobs,
+  loadEvents, loadEventJobs, ensureYearlyJobs, dayMarks, onNowItems,
 } from "../lib/calendar";
 import { CARD, CARD_HEAD, CARD_TITLE } from "../lib/kioskStyle";
 
@@ -32,6 +35,7 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
   const [categories, setCategories] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [events, setEvents] = useState([]);
+  const [todayEvents, setTodayEvents] = useState([]); // events running today (the "on now" line, whatever month is shown)
   const [jobs, setJobs] = useState([]);
   const [reload, setReload] = useState(0);
   const [error, setError] = useState("");
@@ -83,12 +87,24 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pharmacyId, from, to, reload]);
 
+  // Today's events for the "on now" line (independent of the month on screen)
+  useEffect(() => {
+    if (!pharmacyId) return;
+    let cancelled = false;
+    loadEvents(supabase, pharmacyId, today, today, today)
+      .then((evs) => { if (!cancelled) setTodayEvents(evs); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [pharmacyId, today, reload]);
+
   const staffList = staff || [];
   const monthItems = useMemo(() => itemsBetween({ events, categories, holidays, staff: staffList, from, to, pharmacyName }),
     [events, categories, holidays, staffList, from, to, pharmacyName]);
   const nextUp = useMemo(() => itemsBetween({ events, categories, holidays, staff: staffList, from: today, to: addMonthsStr(today, 12), pharmacyName })
     .filter((i) => i.start >= today).slice(0, 2), [events, categories, holidays, staffList, today, pharmacyName]);
   const onDay = (d) => monthItems.filter((i) => i.start <= d && i.end >= d);
+  const onNow = useMemo(() => onNowItems(itemsBetween({ events: todayEvents, categories, holidays: [], staff: [], from: today, to: today, pharmacyName }), today),
+    [todayEvents, categories, today, pharmacyName]);
 
   // The day panel closes itself after 30 seconds without a tap on the card (not while the sheet / PIN is open)
   useEffect(() => {
@@ -149,8 +165,7 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
             const isSel = d === selDay;
             const isToday = d === today;
             const items = onDay(d);
-            const dots = [...new Map(items.filter((i) => !i.range).map((i) => [colourOf(i), i])).keys()].slice(0, 4);
-            const shade = items.find((i) => i.range);
+            const { shade, dots } = dayMarks(items, d, colourOf); // unshaded ranges: a start-day dot, never a tint
             const weekend = idx % 7 >= 5;
             const [, , dn] = d.split("-").map(Number);
             return (
@@ -190,6 +205,20 @@ export default function WhatsOn({ pharmacyId, staff, staffById, selectedStaffId,
             <span key={c.id} className="flex items-center gap-1 whitespace-nowrap"><span className="w-1.5 h-1.5 rounded-full" style={{ background: c.colour }} />{c.name}</span>
           ))}
         </div>
+
+        {/* On now — unshaded ranges running today, e.g. "Promotion now: …" (nothing shown when there's none) */}
+        {onNow.length > 0 && (
+          <div className="mt-1.5 space-y-0.5">
+            {onNow.map((i) => (
+              <div key={i.key} className="flex items-start gap-2 text-[13px] leading-5">
+                <span className="w-2 h-2 mt-1.5 rounded-full shrink-0" style={{ background: colourOf(i) }} />
+                <span className="text-gray-700 min-w-0">{/* wraps on a narrow screen so the end date always shows */}
+                  <span className="font-semibold text-gray-800">{i.category?.name || "Event"} now:</span> {i.title} · ends {shortDate(i.end)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Next up — light grey box */}
         <div className="mt-2 rounded-lg bg-[#F8FAFC] px-3 py-2">
