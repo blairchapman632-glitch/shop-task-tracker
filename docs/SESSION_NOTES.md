@@ -1,5 +1,41 @@
 # Session notes
 
+## 2026-11-13/14 — Staff memos complete (Stages 3–5 + additions), review answers on the shop computer, kiosk "not working today" cards
+
+### Done
+- **Staff memos complete (Stages 1–5).** What each stage does:
+  1. **Writing** — QSPP managers draft memos in Messages → Staff memos (manager PIN, TipTap editor, sections with images / PDFs / signatures, Preview).
+  2. **Asking for a section** — staff write their own section from a kiosk card (own PIN) or /me → To do; version-checked saves. **New:** one push when asked ("[Manager] asked you for a section in the …" → opens their section); they can now **attach PDFs** too (server only accepts files uploaded for their own section).
+  3. **Sending and reading** — Send to all active staff / chosen roles / **chosen people**, confirm step (count, names, waiting asks, policies, dates). Push to each recipient → /me. /me Messages = **Chats | Memos | Wall** (unread in badge). Kiosk "Read the [title]" card (self-only, no PIN; closing = seen). Seen by X of Y (managers: who, when, kiosk/phone). Download PDF (manager copy adds seen-by page). Memos to roles / people are **private** (recipients + manager mode only, enforced on the server). **No Wall post** for memos. **Private replies:** each staff member has their own thread on the memo (kiosk: Reply + own PIN; desktop: pick name + PIN; /me: no PIN); managers see all threads ("💬 Replies (N, X new)", answer per person, "new replies" marker in the list); pushes both ways. **"Add an update"** (managers) shown under the memo to everyone + in the PDF, push only if "Notify recipients". **Delete** a sent memo only when its one recipient is the sender (removes everything it created).
+  4. **Policies to read, dates, topics** — add current QSPP library policies (Send creates normal policy read requests, no duplicates); add dates (What's on events made on Send, only for all-staff memos; kiosk calendar shows "From the [memo]"); topic tags (chips, archive + /me filter, PDF) stored in `staff_memos.topics` for the Governance log.
+  5. **Import** — 14 past email memos (13/05/2023 – 14/06/2026) imported as "Imported from email" (type, sent-to, attachment names; no push / recipients / seen / cards). Managers can Delete an imported memo. Retail Excellence memo re-signed to Ashleigh Devlin, Retail Manager.
+- **Performance review on the shop computer:** kiosk "Answer your review questions" → "Answer here" (own PIN, checked on the server on every save and Send) or on the phone. Same form as /me. Unsent answers kept as a draft (never shown to the reviewer) — saved 10 s after typing stops and when the page closes (Close, or 3 min idle with a 30 s warning).
+- **Kiosk personal cards** (policy reads, inductions, review, both memo cards) now also load for a person picked under "not working today" — their own list only, never under Everyone. Nothing changed for rostered staff.
+
+### Schema changes
+- `performance_reviews.staff_prep_draft` (jsonb), `staff_prep_draft_at` (timestamptz) — `docs/sql/review_prep_draft_2026-11-13.sql`
+- `staff_memo_dates` (new table) — `docs/sql/staff_memos_stage4_dates_2026-11-13.sql`
+- `staff_memos.send_to` ('all' | 'roles' | 'people', default 'all') — `docs/sql/staff_memos_send_to_2026-11-13.sql`
+- `staff_memo_replies`, `staff_memo_updates` (new tables) — `docs/sql/staff_memos_replies_updates_2026-11-13.sql`
+- Data: 14 imported memos + 14 sections (`docs/sql/staff_memos_stage5_import_2026-11-13.sql`, safe to re-run); signature fix (`…stage5_fix_signature…`); test memos removed; memo Wall post 96 removed.
+- Backup tables (droppable): `staff_memo_test_backup_20261113`, `staff_memo_sections_backup_20261113`, `kiosk_notes_memo_backup_20261113`.
+
+### New tables (add to RLS pass)
+- Staff memo tables: `staff_memos`, `staff_memo_sections`, `staff_memo_recipients`, `staff_memo_seen`, `staff_memo_policies`, `staff_memo_dates`, `staff_memo_replies`, `staff_memo_updates`. All access goes through `/api/memos`, `/api/memos/read`, `/api/memos/contribute`, `/api/memos/pdf` — RLS must block direct reads/writes with the public key, especially: drafts and `request_note`; private memos (`send_to` roles/people); replies (a staff member may only read their own thread).
+- **`staff-memos` storage bucket is public** for now — must be made private with signed links in the RLS pass.
+- New columns: `performance_reviews.staff_prep_draft` / `_at`, `staff_memos.send_to`. `kiosk_notes.memo_id` is now unused.
+
+### Follow-ups / parked
+- **Next QSPP stage: the Governance log** — reads tagged memos from `staff_memos.topics` as staff communication evidence.
+- PDF limits: emoji are left out (PDF font); WebP / GIF images shown by name only (JPG / PNG printed).
+- Delete the old test files: Storage → staff-memos → folder `bcabb301-…` (2 files). Drop the 3 backup tables above when happy (and `banking_payment_types_backup_20261113`).
+- Phone checks still to do: memo push, reply / answer pushes, "Update" push, "asked for a section" push, PDF on phone.
+- Kiosk PIN screens have no attempt limit (memo reply, section, review) — for the auth pass.
+- Deleting data through Claude's database tool is blocked in this setup — Blair runs delete SQL in the Supabase editor.
+
+### Not committed
+- Nothing (pushed: `d4f12d8`, `fa005f1`, `5144a70`). This notes update itself isn't committed.
+
 ## 2026-11-13 — Staff memos Stages 1–2 (live), till count EFTPOS order
 
 ### Done

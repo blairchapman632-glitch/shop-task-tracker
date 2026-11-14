@@ -3,6 +3,7 @@
 //   Written         → "Your section for the …" — can still be opened and changed until the memo is sent (not counted)
 // Tapping opens only my section (ContributorSection) full screen.
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { contributeCall } from "../../lib/memosClient";
 
@@ -56,12 +57,17 @@ export function MyMemoAsksSection({ asks, onChanged, openSectionId, onOpenedFrom
       </div>
       {done.length > 0 && <p className="text-[11px] text-gray-400 mt-2">You can change your section until the memo is sent.</p>}
 
-      {open && (
-        <div className="fixed inset-0 z-50 bg-[#F8FAFC] overflow-y-auto">
-          <div className="max-w-lg mx-auto px-4 py-4 pb-16">
+      {/* Full screen, on top of /me (portal, so nothing on the page can sit over it). On an iPhone home-screen app the
+          page runs under the status bar: a solid strip the height of the status bar stays at the top, and the section's
+          header (title + Close) sticks just below it. */}
+      {open && typeof document !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-50 bg-[#F8FAFC] overflow-y-auto overscroll-contain">
+          <div className="sticky top-0 z-20 bg-[#F8FAFC]" style={{ height: "env(safe-area-inset-top, 0px)" }} />
+          <div className="max-w-lg mx-auto px-4 pt-2" style={{ paddingBottom: "calc(4rem + env(safe-area-inset-bottom, 0px))" }}>
             <ContributorSection sectionId={open} onClose={(changed) => { setOpen(null); if (changed) onChanged?.(); }} />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
